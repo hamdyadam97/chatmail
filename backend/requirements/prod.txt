@@ -1,0 +1,6 @@
+-r base.txt
+psycopg[binary]==3.2.3
+# Redis: cross-process channel layer (WebSocket fan-out) + shared cache
+# (one-time WS tickets, rate-limit counters) — required in production.
+channels-redis==4.2.1
+redis==5.2.1

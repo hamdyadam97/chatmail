@@ -1,0 +1,10 @@
+{
+  "name": "mls-spike",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MLS (RFC 9420) spike: mls-rs compiled to WASM, scenarios S1-S6 per docs/phase1/02 §2.5",
+  "scripts": {
+    "build:wasm": "wsl.exe -d Ubuntu -- bash /mnt/g/tmp/spikes/mls/wsl/build.sh",
+    "test": "node --test"
+  }
+}

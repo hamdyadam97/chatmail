@@ -1,0 +1,6 @@
+# The sparse index (index.crates.io) returns S3 NoSuchKey for most crate paths
+# through this network's egress. The crates.io download endpoint and GitHub both
+# work, so we force the (deprecated but functional) git index protocol.
+[registries.crates-io]
+protocol = "git"
+

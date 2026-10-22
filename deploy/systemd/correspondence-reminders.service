@@ -1,0 +1,16 @@
+[Unit]
+Description=Correspondence System — announcement acknowledgement reminders
+After=postgresql.service redis-server.service
+
+[Service]
+Type=oneshot
+User=correspondence
+Group=correspondence
+EnvironmentFile=/etc/correspondence/correspondence.env
+WorkingDirectory=/opt/correspondence/backend
+ExecStart=/opt/correspondence/.venv/bin/python manage.py send_announcement_reminders
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/correspondence

@@ -1,0 +1,66 @@
+# AGENTS.md — Correspondence System (E2EE)
+
+مشروع نظام مراسلات داخلي لمجموعة معاهد، بتشفير طرف-لطرف. التصميم المعتمد موثق في `docs/phase1/` ويجب قراءته قبل أي عمل: ERD في `04-erd.md`، الصلاحيات في `05-permissions-design.md`، هيكل المشروع في `06-project-structure.md`، الاختبارات في `07-test-plan.md`. المراسلات الرسمية (المرحلة الثانية): `docs/phase2/09-correspondence-e2ee.md`. الموافقات والإشعارات: `docs/phase2/10-approvals-notifications.md`. التعاميم: `docs/phase2/11-announcements.md`. التقارير والتدقيق: `docs/phase2/12-reports-audit.md`. البحث المحلي: `docs/phase2/13-local-search.md`. إدارة الموظفين: `docs/phase2/14-employee-admin.md`.
+
+## البيئة
+
+- Windows + Git Bash. لا يوجد `python`/`python3` في PATH — استخدم المُشغّل: `py` (Python 3.13.5).
+- الـ venv في جذر المستودع: `.venv` — الثنائي: `.venv/Scripts/python.exe` (وليس bin/).
+- Node 22 + npm متوفران.
+
+## الأوامر
+
+```bash
+# Backend
+.venv/Scripts/python.exe backend/manage.py migrate
+.venv/Scripts/python.exe backend/manage.py runserver
+.venv/Scripts/python.exe -m pytest backend/tests -q
+
+# Frontend
+cd frontend && npm install && npm run dev
+cd frontend && npm run build && npx tsc -b
+cd frontend && npm run test:unit        # فهرس البحث المحلي
+
+# إثباتات e2e (كل تشغيل على قاعدة مؤقتة جديدة، منفذ 8001 — لا تلمس db.sqlite3)
+sh frontend/scripts/run-e2e-fresh.sh e2e-correspondence.mjs
+sh frontend/scripts/run-e2e-fresh.sh e2e-approvals.mjs
+sh frontend/scripts/run-e2e-fresh.sh e2e-announcements.mjs
+
+# تذكيرات التعاميم المجدولة (cron كل ساعة)
+.venv/Scripts/python.exe backend/manage.py send_announcement_reminders
+sh frontend/scripts/run-e2e-fresh.sh e2e-chat.mjs
+sh frontend/scripts/run-e2e-fresh.sh e2e-multidevice.mjs
+```
+
+ملاحظة: سكربتات e2e تولّد هويات جديدة لحسابات seed_demo؛ على قاعدة سبق تشغيلها عليها يرفض الخادم اعتماد الجهاز (403) لأن الهوية موجودة ومفتاحها ضاع — هذا سلوك صحيح، لذا استخدم `run-e2e-fresh.sh`.
+
+## قواعد غير قابلة للكسر
+
+1. لا نصوص Plaintext ولا مفاتيح خاصة تُخزن في قاعدة البيانات أو السجلات (انظر SEC-03/09/10 في خطة الاختبار).
+2. قائمة المنع: لا وجود لأي صلاحية `view_all_messages` / `decrypt_all_messages` أو ما يشابها — فحص SEC-14 ثابت في CI.
+3. إعادة تعيين كلمة المرور (صلاحية دخول فقط) منفصلة تقنيًا عن أي شيء متعلق بالتشفير (SEC-08).
+4. لا Plaintext يُقبل في أي endpoint مصنّف E2EE عند بنائه لاحقًا.
+5. أي endpoint جديد يمرّ بنفس بوابة object-permission (ممنوع كسر العزل لـ «راحة المدير»).
+
+## الوضع الحالي
+
+- تم: المرحلة الأولى (حزمة التصميم في `docs/phase1/`).
+- تم: أساس الـ backend — الحسابات المستقلة + الهيكل التنظيمي (مبذور بخمسة معاهد) + المصادقة/MFA + الجلسات الدوّارة + RBAC بالنطاق التنظيمي + سجل تدقيق append-only + اختبارات بوابة 1 (SEC-01/02/08/14 وغيرها، 63 اختبارًا خضراء في `backend/tests`).
+- تم: هيكل الـ frontend (Vite/React/TS/Tailwind RTL) + تدفق المصادقة الكامل (login ← MFA ← refresh بكوكي httpOnly، access token في الذاكرة فقط) + الصدفة والقوائم — تطابق عقد `/api/v1` موثق أعلاه (`/users/me/`).
+- تم: Spike تشفير MLS — `mls-rs 0.56` + `mls-rs-crypto-rustcrypto` (pure-Rust) → wasm-bindgen 0.2.129، سيناريوهات S1–S6 كلها خضراء تحت Node (SEC-06/07/15/17 تشفيريًا، commit عند 100 عضو ≈15ms). التوصية: PROCEED. النتائج الكاملة في `docs/phase1/08-mls-spike-results.md`، الكود في `spikes/mls/` (البناء داخل WSL — لا رابط C على الويندوز المضيف؛ فهرس crates.io الـsparse معطوب عبر الشبكة فنستخدم بروتوكول git).
+- تم: طبقة التشفير الفعلية + الشات المشفر E2EE — تطبيقا `crypto_keys` (هوية/أجهزة/KeyPackages/شفافية hash-chain موقعة) و`messaging` (محادثات/رسائل/أجيال/WS بتذكرة) + طبقة `frontend/src/crypto` (keystore IndexedDB مشفر، WASM مُرقّى، موجه MLS) + واجهة الشات RTL. **154 اختبارًا خضراء** و**إثبات e2e حقيقي 17/17** (`frontend/scripts/e2e-chat.mjs`: مستخدمان عبر خادم Django فعلي يتبادلان رسائل MLS ويفكّانها). التشغيل: `manage.py seed_demo` (ahmed/Ahmed@12345…) ثم الخادمان.
+- تم: **متعدد الأجهزة** — اعتماد الجهاز الجديد يشترط جهازًا موثّقًا بالمفاتيح فعلًا (services.approve_device)، و`syncNewDeviceToGroups` على العميل تُدخل الجهاز المعتمد في كل مجموعات MLS الموجودة (claim KP ← add_member ← Welcome ثم Commit بلا metadata عضوية)، ولحاق الجهاز الجديد يتخطى أجيال ما قبل انضمامه. إثبات `scripts/e2e-multidevice.mjs` **36/36** (A1+A2 لنفس المستخدم + B؛ أربعة اتجاهات فك صحيحة)، وتراجع `e2e-chat.mjs` 17/17.
+- تم: **المراسلات الرسمية E2EE** (المرحلة الثانية) — تطبيق `correspondence`: كل خيط مراسلة = مجموعة MLS (`Conversation(type=correspondence)`)، والمحتوى {عنوان، نص، مفاتيح المرفقات} رسالة MLS واحدة؛ إعداد ← إرسال يجمّد الصف ويُصدر رقمًا مرجعيًا بقفل صف (`AHL-RYD-2026-000001`)؛ الرد داخل الخيط، والإحالة خيط جديد بمحتوى مُعاد تشفيره؛ مرفقات AES-256-GCM على العميل (`/api/v1/attachments/` يرفض الصيغ الصريحة)؛ مجلدات الوارد/الصادر/المؤرشفة/المهمة/بانتظار ردي، ومسودات محلية مشفرة؛ العميل يتحقق من مرسل MLS الموثّق ومن ربط المحتوى بالصف. **196 اختبارًا خضراء** و**e2e حقيقي 49/49** (`scripts/e2e-correspondence.mjs`). demo users لديهم الآن دور `employee` (شرط `correspondence.send`).
+- تم: **الموافقات + الإشعارات** — تطبيق `approvals`: خطوات متسلسلة (`all`/`any`)، المعتمد يجب أن يكون مستلمًا للمراسلة (لا مسار قراءة جديد)، قرار موقّع Ed25519 بمفتاح الجهاز على حمولة قانونية تربطه ببصمة SHA-256 للـciphertext المراجع (توقيع سلامة، **ليس** توقيعًا نظاميًا قانونيًا)، منع التكرار بـUNIQUE(step, slot_user)، تفويض مؤقت (≤90 يومًا، لا يمنح اطلاعًا)، ومسارات معرّفة بمحدِّدات دور/نطاق. تطبيق `notifications`: عناوين ثابتة فقط (SEC-11)، `/ws/notifications/` و`/ws/correspondences/` بتذكرة، تنبيه أجهزة عند الإضافة/الاعتماد/الإبطال. **228 اختبارًا** و**e2e 26/26** (`scripts/e2e-approvals.mjs`). مساعدات e2e للمراسلات انتقلت إلى `e2e-lib.mjs`.
+- تم: **التعاميم** — تطبيق `announcements`: كل تعميم مجموعة MLS بجمهور يحله الخادم من الهيكل (مستخدمون/قسم/فرع/معهد/الكل) ومعلن لكل مستلم (العميل يطابقه مع روستر MLS — لا مستلم خفي)، `announcements.publish` بنطاق الهدف، رقم `AHL-TAM-2026-00001`، استلام/اطلاع، إقرار موقّع بمفتاح الجهاز مربوط ببصمة الـciphertext، تقرير التزام وصفي (الناشر + `track_ack`)، تذكير يدوي ومجدول، وسحب. وفي التوصيل: **Welcome واحد لعدة أجهزة** (`welcome_recipients`) وحد مصافحة 1MB (قياس: 335 بايت/عضو). **247 اختبارًا** و**e2e 35/35** (`scripts/e2e-announcements.mjs`). حساب تجريبي `manager / Manager@12345` (مدير فرع الرياض).
+- تم: **التقارير + سجل التدقيق** — `/api/v1/reports/`: أعداد وأزمنة مجمّعة فقط (مرسلة، مغلقة، متأخرة، زمن أول رد، الاعتماد، التعاميم، الاستخدام، سلسلة شهرية) بنطاق `reports.view_metadata`، دمج الوحدات الأصغر من 3 موظفين، وكل عرض مُدقَّق؛ `/reports/health/` يتحقق من الخدمات وسلسلة الشفافية. `/api/v1/audit-logs/` لـ`audit.view` المركزي (والاطلاع نفسه مُسجَّل) و`/mine/` لأحداث أمان كل مستخدم. **257 اختبارًا**.
+- تم: **البحث المحلي** — فهرس مقلوب في الذاكرة فقط من سجلات IndexedDB المغلّفة (مراسلات، تعاميم، شات)، توحيد عربي، إبراز آمن، الاستعلام خارج العنوان، وزر فك وفهرسة الكل. وإصلاح: رسائل الشات المستلمة صارت تُخزن مغلّفة في `chatlog` (كانت تضيع بعد إعادة التحميل، ورسائل أجهزتي الأخرى لا تُعرض).
+- تم: **إدارة الموظفين والهيكل والأدوار** — API: `/users/managed/` (نطاق `manage_users`)، العضويات (إضافية/نقل/رئيسية/إنهاء بـ`org.manage_structure` في كل وحدة معنية)، `revoke-sessions` (`manage_sessions`)، `/roles/catalog/`؛ لا شيء منها يلمس الأجهزة أو المفاتيح (SEC-08). الواجهة: صفحات الموظفين والمعاهد والفروع والأقسام والأدوار. **265 اختبارًا**.
+- تم: **حزمة النشر بلا Docker** (`deploy/`): خدمة Daphne مقيّدة بـsystemd خلف nginx (TLS، CSP صارمة تسمح بـWASM فقط، سجلات بلا query string)، مؤقتات systemd للتذكيرات والنسخ الاحتياطي، دوران في PostgreSQL (`corr_owner` للترحيل، `corr_app` للتشغيل بلا UPDATE/DELETE على سجل التدقيق والشفافية؛ رابط المالك في `migrate.env` root-only)، `prod.py` يرفض الإقلاع بلا الأسرار ويضع الكاش في Redis، `manage.py verify_integrity` (ترحيلات، شفافية، بصمات المرفقات، لا نص صريح، العدادات) و`restore-test.sh`، و`manage.py bootstrap_admin` لأول مسؤول (فصل الواجبات). **275 اختبارًا**. لم يُجرَّب التثبيت على Ubuntu فعلي بعد.
+- حدود هذه المرحلة (معلنة): BCC غير مبني (روستر MLS مكشوف للأعضاء؛ يحتاج خيطًا لكل مستلم مخفي — الخادم يرفضه)، المسودات لا تتزامن بين الأجهزة، والأرشفة المؤسسية لم تُبنَ بعد، ولا تصدير للتقارير، والتعاميم محدودة بـ1000 مستلم وبلا مرفقات، ولا Celery/مجدول (لا تذكيرات مهل)، حجم wasm ‏2.1MB (تخفيض لاحق بـwasm-opt)، النسخ الاحتياطي للاستعادة محلي فقط (`pending_endpoint`)، والتصليب الأمني المستقبلي: تأكيد قبول الدعوة قبل معالجة Welcome لمجموعة مجهولة (إضافة غير المرغوبة حاليًا تظهر كمحادثة جديدة — يُدار بالسياسة مؤقتًا).
+
+## قرارات افتراضية معتمدة (قابلة للرجوع)
+
+- BCC: مبني لكن معطّل افتراضيًا (feature flag) حتى طلب صريح.
+- الأرشيف المؤسسي: بتصنيف صريح من المرسل (`institutional_archive_eligible`) وليس تلقائيًا.
+- الاستضافة: On-prem على **Ubuntu 24.04 بتثبيت مباشر بلا Docker** (قرار المستخدم): PostgreSQL + Redis + nginx + خدمات systemd. الملفات في `deploy/` ودليلها `deploy/README.md`.

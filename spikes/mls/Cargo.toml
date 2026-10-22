@@ -1,0 +1,23 @@
+[package]
+name = "mls-spike"
+version = "0.1.0"
+edition = "2021"
+description = "MLS (RFC 9420) E2EE spike: mls-rs compiled to WASM for the internal correspondence system"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Versions resolved against the crates.io git index; see Cargo.lock and
+# docs/phase1/08-mls-spike-results.md for the exact pins this spike was run with.
+mls-rs = "0.56"
+mls-rs-crypto-rustcrypto = "0.22"
+wasm-bindgen = "=0.2.129"
+js-sys = "0.3"
+zeroize = "1"
+mls-rs-core = "0.27"
+ed25519-dalek = "2"
+
+[profile.release]
+opt-level = 3

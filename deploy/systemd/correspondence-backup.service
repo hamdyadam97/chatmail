@@ -1,0 +1,13 @@
+[Unit]
+Description=Correspondence System — nightly backup (PostgreSQL dump + encrypted blobs)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/correspondence/correspondence.env
+EnvironmentFile=/etc/correspondence/migrate.env
+EnvironmentFile=-/etc/correspondence/backup.env
+ExecStart=/opt/correspondence/deploy/scripts/backup.sh
+Nice=10
+IOSchedulingClass=idle

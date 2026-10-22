@@ -1,0 +1,41 @@
+[Unit]
+Description=Correspondence System — ASGI app (Daphne: HTTP API + WebSockets)
+After=network.target postgresql.service redis-server.service
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=correspondence
+Group=correspondence
+EnvironmentFile=/etc/correspondence/correspondence.env
+WorkingDirectory=/opt/correspondence/backend
+RuntimeDirectory=correspondence
+RuntimeDirectoryMode=0750
+# Unix socket only: nginx is the sole entry point (TLS, headers, limits).
+ExecStart=/opt/correspondence/.venv/bin/daphne --unix-socket /run/correspondence/daphne.sock --proxy-headers config.asgi:application
+# nginx (www-data) must reach the socket.
+ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do [ -S /run/correspondence/daphne.sock ] && break; sleep 0.5; done; chmod 0660 /run/correspondence/daphne.sock'
+Restart=on-failure
+RestartSec=3
+
+# --- hardening ---
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+UMask=0027
+ReadWritePaths=/var/lib/correspondence
+
+[Install]
+WantedBy=multi-user.target
