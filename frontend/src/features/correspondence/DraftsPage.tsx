@@ -42,7 +42,7 @@ function Drafts() {
         <Card className="overflow-hidden">
           {drafts.map((d) => (
             <div key={d.id} className="flex items-center gap-3 border-b border-gray-100 px-4 py-3 text-sm last:border-0">
-              <Link to={`/compose?draft=${d.id}`} className="min-w-0 flex-1 hover:text-primary-700">
+              <Link to={`/mail/drafts/compose?draft=${d.id}`} className="min-w-0 flex-1 hover:text-primary-700">
                 <p className="truncate font-medium text-gray-900">{d.subject || '(بلا عنوان)'}</p>
                 <p className="truncate text-xs text-gray-500">{d.body.slice(0, 120)}</p>
               </Link>

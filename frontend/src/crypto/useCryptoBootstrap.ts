@@ -43,7 +43,13 @@ export function runCryptoBootstrap(user: { id: number | string }): Promise<Crypt
         }
         return { status: 'pending_approval', deviceId: result.device.deviceId };
       }
-      await ensureKeyPackage();
+      try {
+        await ensureKeyPackage();
+      } catch (err) {
+        // تكملة مخزون KPs ليست شرطًا لاستخدام الجهاز (الموجود يكفي غالبًا)؛
+        // فشلها (حد معدل، انقطاع) لا يعطّل التطبيق وتُعاد في الزيارة التالية.
+        console.warn('key package top-up deferred', err);
+      }
       return { status: 'ready', deviceId: result.device.deviceId };
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {

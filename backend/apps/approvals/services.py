@@ -234,7 +234,7 @@ def _notify_step(req, step_order) -> None:
         for d in active_delegations(now).filter(delegator_id__in=approvers)
         if can_read(d.delegate, req.correspondence)
     ]
-    notify(approvers + delegates, "approval_requested", ref_type="approval_request", ref_id=req.id)
+    notify(approvers + delegates, "approval_requested", ref_type="approval_request", ref_id=req.id, actor=req.requested_by)
 
 
 # --- delegation ------------------------------------------------------------------------------
@@ -411,7 +411,7 @@ def _advance(req, step, decision) -> None:
         req.status = decision.decision
         req.decided_at = now
         req.save(update_fields=["status", "decided_at"])
-        notify([req.requested_by_id], "approval_decided", ref_type="approval_request", ref_id=req.id)
+        notify([req.requested_by_id], "approval_decided", ref_type="approval_request", ref_id=req.id, actor=decision.approver)
         return
     approved_slots = step.decisions.filter(decision="approved").count()
     if step.step_type == "all" and approved_slots < step.approvers.count():
@@ -429,7 +429,7 @@ def _advance(req, step, decision) -> None:
     req.status = "approved"
     req.decided_at = now
     req.save(update_fields=["status", "decided_at"])
-    notify([req.requested_by_id], "approval_decided", ref_type="approval_request", ref_id=req.id)
+    notify([req.requested_by_id], "approval_decided", ref_type="approval_request", ref_id=req.id, actor=decision.approver)
 
 
 # --- requester actions ---------------------------------------------------------------------------

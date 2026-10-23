@@ -17,7 +17,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
-import { Button, Card, Label, Spinner } from '../../shared/ui';
+import { Avatar, Button, Card, Label, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
 import { useAuth } from '../auth/AuthContext';
@@ -185,7 +185,7 @@ function ReplyBox({ detail, onSent }: { detail: CorrespondenceDetail; onSent: (i
   }, [detail]);
   const recipients = detail.participants.filter((p) => p.kind !== 'bcc').length;
   return (
-    <Card className="space-y-3 p-5">
+    <Card id="reply-box" className="space-y-3 p-5">
       <div className="flex items-center justify-between">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
           <Reply className="h-4 w-4" />
@@ -278,9 +278,11 @@ function ThreadList({ detail, names }: { detail: CorrespondenceDetail; names: Ma
   );
 }
 
-function Details({ id }: { id: string }) {
+export function Details({ id, embedded = false }: { id: string; embedded?: boolean }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  // المجلد الحالي في البريد (/mail/:folder/:id) — الإحالة تُكتب في لوحة القراءة نفسها.
+  const { folder: folderSlug } = useParams<{ folder?: string }>();
   const queryClient = useQueryClient();
   const [opened, setOpened] = useState<OpenResult | null>(null);
   const [showEvents, setShowEvents] = useState(false);
@@ -333,7 +335,7 @@ function Details({ id }: { id: string }) {
     mutationFn: () => correspondenceApi.discard(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['correspondences'] });
-      navigate('/drafts', { replace: true });
+      navigate('/mail/drafts', { replace: true });
     },
   });
 
@@ -367,92 +369,104 @@ function Details({ id }: { id: string }) {
   const canReply = detail.status === 'sent';
   const canForward = detail.status !== 'draft' && opened?.state === 'ok';
 
+  const toolbarButton =
+    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40';
+
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
-      <Card className="space-y-4 p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 space-y-2">
-            <h2 className="break-words text-xl font-semibold text-gray-900">
-              {subject ?? (
-                <span className="flex items-center gap-2 text-gray-400">
-                  <Lock className="h-5 w-5" />
-                  مشفّرة
-                </span>
-              )}
-            </h2>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-              <span dir="ltr" className="font-mono">
-                {detail.reference_number ?? 'بلا رقم (لم تُرسل)'}
+    <div className={cn(embedded ? 'space-y-4 px-6 pb-8' : 'mx-auto max-w-4xl space-y-4')}>
+      {/* شريط الأوامر — أسلوب Outlook */}
+      <div className={cn('flex flex-wrap items-center gap-1 border-b border-gray-200 bg-white py-1.5', embedded ? 'sticky top-0 z-10 -mx-6 px-4' : 'rounded-t-xl px-2')}>
+        {canReply && (
+          <button type="button" className={toolbarButton} onClick={() => document.getElementById('reply-box')?.scrollIntoView({ behavior: 'smooth' })}>
+            <Reply className="h-4 w-4 text-primary-600" />
+            رد على الجميع
+          </button>
+        )}
+        {canForward && (
+          <button type="button" className={toolbarButton} onClick={() => navigate(`/mail/${folderSlug ?? 'inbox'}/compose?forward=${detail.id}`)}>
+            <Forward className="h-4 w-4 text-primary-600" />
+            إحالة
+          </button>
+        )}
+        {detail.status !== 'draft' && (
+          <>
+            <button type="button" className={toolbarButton} onClick={() => flags.mutate({ archived: !detail.archived })}>
+              {detail.archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
+              {detail.archived ? 'إلغاء الأرشفة' : 'أرشفة'}
+            </button>
+            <button
+              type="button"
+              className={toolbarButton}
+              onClick={() => flags.mutate({ important: !detail.is_important })}
+              aria-label={detail.is_important ? 'إزالة من المهمة' : 'تعليم كمهمة'}
+            >
+              <Star className={cn('h-4 w-4', detail.is_important && 'fill-amber-400 text-amber-400')} />
+              {detail.is_important ? 'مهمة' : 'تعليم كمهمة'}
+            </button>
+          </>
+        )}
+        {isSender && detail.status === 'sent' && (
+          <button type="button" className={toolbarButton} onClick={() => close.mutate()} disabled={close.isPending}>
+            <XCircle className="h-4 w-4" />
+            إغلاق المعاملة
+          </button>
+        )}
+        {isSender && detail.status === 'draft' && (
+          <button type="button" className={cn(toolbarButton, 'text-red-600')} onClick={() => discard.mutate()} disabled={discard.isPending}>
+            <Trash2 className="h-4 w-4" />
+            حذف
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="space-y-2">
+          <h2 className="break-words text-xl font-semibold text-gray-900">
+            {subject ?? (
+              <span className="flex items-center gap-2 text-gray-400">
+                <Lock className="h-5 w-5" />
+                مشفّرة
               </span>
-              <PriorityBadge priority={detail.priority} />
-              <ClassificationBadge classification={detail.classification} />
-              {detail.status === 'closed' && <span className="rounded-full bg-gray-100 px-2 py-0.5">مغلقة</span>}
-              {detail.is_forward && detail.forwarded_from_reference && (
-                <span>
-                  إحالة من <span dir="ltr">{detail.forwarded_from_reference}</span>
-                </span>
-              )}
-              {detail.reply_to_id && (
-                <Link to={`/correspondence/${detail.reply_to_id}`} className="text-primary-700 hover:underline">
-                  رد على مراسلة سابقة
-                </Link>
-              )}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {detail.status !== 'draft' && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => flags.mutate({ important: !detail.is_important })}
-                  aria-label={detail.is_important ? 'إزالة من المهمة' : 'تعليم كمهمة'}
-                >
-                  <Star className={cn('h-4 w-4', detail.is_important && 'fill-amber-400 text-amber-400')} />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => flags.mutate({ archived: !detail.archived })}>
-                  {detail.archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
-                  {detail.archived ? 'إلغاء الأرشفة' : 'أرشفة'}
-                </Button>
-              </>
             )}
-            {canForward && (
-              <Button variant="outline" size="sm" onClick={() => navigate(`/compose?forward=${detail.id}`)}>
-                <Forward className="h-4 w-4" />
-                إحالة
-              </Button>
+          </h2>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+            <span dir="ltr" className="font-mono">
+              {detail.reference_number ?? 'بلا رقم (لم تُرسل)'}
+            </span>
+            <PriorityBadge priority={detail.priority} />
+            <ClassificationBadge classification={detail.classification} />
+            {detail.status === 'closed' && <span className="rounded-full bg-gray-100 px-2 py-0.5">مغلقة</span>}
+            {detail.is_forward && detail.forwarded_from_reference && (
+              <span>
+                إحالة من <span dir="ltr">{detail.forwarded_from_reference}</span>
+              </span>
             )}
-            {isSender && detail.status === 'sent' && (
-              <Button variant="outline" size="sm" onClick={() => close.mutate()} loading={close.isPending}>
-                <XCircle className="h-4 w-4" />
-                إغلاق المعاملة
-              </Button>
-            )}
-            {isSender && detail.status === 'draft' && (
-              <Button variant="danger" size="sm" onClick={() => discard.mutate()} loading={discard.isPending}>
-                <Trash2 className="h-4 w-4" />
-                حذف
-              </Button>
+            {detail.reply_to_id && (
+              <Link to={`/correspondence/${detail.reply_to_id}`} className="text-primary-700 hover:underline">
+                رد على مراسلة سابقة
+              </Link>
             )}
           </div>
         </div>
 
-        <div className="space-y-1 border-y border-gray-100 py-3">
-          <p className="text-sm text-gray-600">
-            <span className="text-gray-500">من: </span>
-            {detail.sender.full_name}
-          </p>
-          <ParticipantsLine label="إلى" people={to} showReceipts={isSender} />
-          <ParticipantsLine label="نسخة" people={cc} showReceipts={isSender} />
-          <p className="text-xs text-gray-500">
-            {detail.sent_at ? `أُرسلت ${formatDate(detail.sent_at)}` : `أُنشئت ${formatDate(detail.created_at)}`}
-            {detail.due_date && ` · الاستحقاق ${formatDay(detail.due_date)}`}
-          </p>
+        <div className="flex items-start gap-3 border-b border-gray-100 pb-4">
+          <Avatar name={detail.sender.full_name || detail.sender.username} size="lg" />
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="font-semibold text-gray-900">{detail.sender.full_name}</span>
+              <span className="text-xs text-gray-500">
+                {detail.sent_at ? formatDate(detail.sent_at) : `أُنشئت ${formatDate(detail.created_at)}`}
+              </span>
+            </div>
+            <ParticipantsLine label="إلى" people={to} showReceipts={isSender} />
+            <ParticipantsLine label="نسخة" people={cc} showReceipts={isSender} />
+            {detail.due_date && <p className="text-xs text-gray-500">الاستحقاق {formatDay(detail.due_date)}</p>}
+          </div>
         </div>
 
         <ContentView opened={opened} />
         <E2EENote />
-      </Card>
+      </div>
 
       <ThreadList detail={detail} names={names} />
 
@@ -463,7 +477,7 @@ function Details({ id }: { id: string }) {
           detail={detail}
           onSent={(newId) => {
             refresh();
-            navigate(`/correspondence/${newId}`);
+            navigate(`/mail/sent/${newId}`);
           }}
         />
       )}

@@ -451,7 +451,7 @@ def send_correspondence(
             else "correspondence_reply" if locked.reply_to_id
             else "new_correspondence"
         )
-        notify(recipients, kind, ref_type="correspondence", ref_id=locked.id)
+        notify(recipients, kind, ref_type="correspondence", ref_id=locked.id, actor=requester)
     log(
         actor=requester,
         action="correspondence_sent",

@@ -145,10 +145,11 @@ function extractErrorMessage(data: unknown): string | undefined {
 export function toUserMessage(error: unknown, fallback = 'حدث خطأ غير متوقع، حاول مرة أخرى'): string {
   if (error instanceof ApiError) {
     if (error.status === 401 && error.message.startsWith('انتهت الجلسة')) return error.message;
+    // جسم 5xx قد يكون صفحة خطأ/traceback كاملة — لا تُعرض للمستخدم.
+    if (error.status >= 500) return 'خطأ في الخادم، حاول لاحقًا';
     const fromData = extractErrorMessage(error.data);
     if (fromData) return fromData;
     if (error.status === 401) return 'بيانات الدخول غير صحيحة';
-    if (error.status >= 500) return 'خطأ في الخادم، حاول لاحقًا';
   }
   return fallback;
 }

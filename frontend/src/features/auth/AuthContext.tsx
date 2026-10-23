@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { authApi, isMfaChallenge, setAccessToken, type User } from '../../shared/api';
 import { setAuthBridge } from '../../crypto/authBridge';
+import { disablePush } from '../notifications/push';
 
 export type AuthStatus = 'booting' | 'authenticated' | 'guest';
 
@@ -66,6 +67,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // هذا المتصفح لا يستقبل إشعارات الحساب بعد الخروج (جهاز مشترك).
+    await disablePush().catch(() => undefined);
     try {
       await authApi.logout();
     } catch {

@@ -102,30 +102,53 @@ def get_session_by_refresh_token(raw_token: str) -> UserSession | None:
     return session
 
 
-# A refresh token rotated moments ago and presented again is a benign race
-# (two tabs, or a double-fired page boot), not theft: the browser already
-# holds the newer cookie. The refresh endpoint answers 401 WITHOUT clearing
-# that cookie so the winner's session survives.
+# Reuse interval. A refresh token rotated moments ago and presented again
+# means the rotation's response never reached the browser (page reloaded or
+# closed mid-request, two tabs racing, a dropped connection) — the cookie jar
+# still holds the old token. Within this window, and only while the chain of
+# successors still ends in a live session, the presenter gets that successor
+# rotated instead of being logged out.
+#
+# Trade-off (declared): a stolen refresh token stays usable for at most this
+# many seconds after a legitimate rotation. Outside the window, or once the
+# successor was revoked (logout, admin sign-out, password reset), the old
+# token is refused as before.
 ROTATION_GRACE_SECONDS = 30
+_MAX_CHAIN = 10
 
 
-def recently_rotated(raw_token: str) -> bool:
+def live_successor_within_grace(raw_token: str) -> UserSession | None:
     if not raw_token:
-        return False
+        return None
     digest = sha256(raw_token.encode()).hexdigest()
-    return UserSession.objects.filter(
-        refresh_token_hash=digest,
-        revoked_reason="rotated",
-        revoked_at__gte=timezone.now() - timedelta(seconds=ROTATION_GRACE_SECONDS),
-    ).exists()
+    session = UserSession.objects.filter(refresh_token_hash=digest).first()
+    cutoff = timezone.now() - timedelta(seconds=ROTATION_GRACE_SECONDS)
+    if (
+        session is None
+        or session.revoked_reason != "rotated"
+        or session.revoked_at is None
+        or session.revoked_at < cutoff
+    ):
+        return None
+    for _ in range(_MAX_CHAIN):
+        successor = session.replaced_by
+        if successor is None:
+            return None
+        if successor.revoked_at is None:
+            return successor if successor.expires_at > timezone.now() else None
+        if successor.revoked_reason != "rotated":
+            return None  # ended by logout / revocation — never resurrect
+        session = successor
+    return None
 
 
 def rotate_session(session: UserSession, request) -> tuple[UserSession, str]:
     """Revoke the presented session and mint a fresh one (rotation)."""
     revoke_session(session, reason="rotated")
-    return create_session(
-        session.user, request, device=session.device
-    )
+    new_session, raw = create_session(session.user, request, device=session.device)
+    session.replaced_by = new_session
+    session.save(update_fields=["replaced_by"])
+    return new_session, raw
 
 
 def revoke_session(session: UserSession, reason: str) -> None:

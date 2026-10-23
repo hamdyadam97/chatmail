@@ -5,6 +5,7 @@ import { Bell, CheckCheck } from 'lucide-react';
 import { Button, Card, EmptyState, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { notificationTarget, notificationsApi, type AppNotification } from './api';
+import { PushSettingsCard } from './PushControls';
 
 function formatDate(iso: string): string {
   return new Intl.DateTimeFormat('ar', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
@@ -55,6 +56,7 @@ export function Notifications() {
       <p className="text-xs text-gray-500">
         الإشعارات لا تحمل أي محتوى (لا عناوين ولا نصوص) — تُفتح المراسلة نفسها لفك محتواها على جهازك.
       </p>
+      <PushSettingsCard />
       {isLoading ? (
         <div className="flex justify-center py-16">
           <Spinner size="lg" />

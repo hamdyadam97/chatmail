@@ -52,6 +52,11 @@ export function NotificationBell() {
   }, [queryClient]);
 
   const unread = data?.unread ?? 0;
+  // العدد في عنوان التبويب يظهر حتى والتبويب في الخلفية.
+  useEffect(() => {
+    const base = 'نظام المراسلات الداخلية';
+    document.title = unread > 0 ? `(${unread > 99 ? '99+' : unread}) ${base}` : base;
+  }, [unread]);
   return (
     <Link
       to="/notifications"

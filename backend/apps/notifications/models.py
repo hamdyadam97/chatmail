@@ -44,6 +44,28 @@ class Notification(models.Model):
         return f"{self.user_id}:{self.kind}"
 
 
+class PushSubscription(models.Model):
+    """A browser's Web Push subscription (RFC 8030/8291). One per browser
+    profile: the endpoint is unique, and re-subscribing from the same browser
+    under another account moves it (no cross-account notifications on a
+    shared computer). Payloads are encrypted to the browser's p256dh key."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="push_subscriptions"
+    )
+    endpoint = models.URLField(max_length=1000, unique=True)
+    p256dh = models.CharField(max_length=200)
+    auth = models.CharField(max_length=100)
+    user_agent = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    failures = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = "push_subscriptions"
+
+
 class NotificationPreference(models.Model):
     """Per-user delivery preferences. Today only ``muted_kinds`` is honoured
     (muted kinds are still stored, just not pushed over WebSocket)."""

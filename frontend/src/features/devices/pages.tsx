@@ -95,11 +95,17 @@ function DeviceRow({
         <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', STATUS_COLORS[device.status] ?? 'bg-gray-100 text-gray-600')}>
           {deviceStatusLabel(device.status)}
         </span>
-        {device.status === 'pending' && (
+        {device.status === 'pending' && !isCurrent && (
           <Button size="sm" onClick={() => approveMutation.mutate()} loading={approveMutation.isPending}>
             <ShieldCheck className="h-4 w-4" />
             اعتماد
           </Button>
+        )}
+        {device.status === 'pending' && isCurrent && (
+          // الجهاز لا يعتمد نفسه (حماية من إضافة جهاز بصمت): الاعتماد من جهاز موثّق آخر.
+          <span className="max-w-xs text-xs text-gray-500">
+            اعتمده من أحد أجهزتك الموثّقة، أو استعد حسابك بمفتاح الاستعادة
+          </span>
         )}
         {(device.status === 'active' || device.status === 'pending') && !isCurrent && (
           <>

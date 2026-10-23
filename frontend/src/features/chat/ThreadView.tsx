@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Reply, RotateCcw, Send, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Hash, Lock, Reply, RotateCcw, Send, ShieldAlert, Users } from 'lucide-react';
 import { cn } from '../../shared/lib/cn';
-import { Button, Card, Input, Spinner } from '../../shared/ui';
+import { Avatar, Button, Spinner } from '../../shared/ui';
 import { ApiError } from '../../shared/api';
 import { useAuth } from '../auth/AuthContext';
 import {
@@ -42,6 +42,17 @@ interface ViewMessage {
 interface ThreadViewProps {
   conversation: Conversation;
   currentDeviceId: number | string;
+  membersOpen?: boolean;
+  onToggleMembers?: () => void;
+}
+
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86_400_000);
+  if (d.toDateString() === today.toDateString()) return 'اليوم';
+  if (d.toDateString() === yesterday.toDateString()) return 'أمس';
+  return d.toLocaleDateString('ar', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
 function isEpochConflict(err: unknown): boolean {
@@ -117,7 +128,7 @@ async function viewFromMessages(
   return out;
 }
 
-export function ThreadView({ conversation, currentDeviceId }: ThreadViewProps) {
+export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggleMembers }: ThreadViewProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -130,6 +141,10 @@ export function ThreadView({ conversation, currentDeviceId }: ThreadViewProps) {
   const [revoked, setRevoked] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const socketRef = useRef<ChatSocket | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const names = new Map((conversation.members ?? []).map((m) => [String(m.id), m.full_name || m.username]));
+  const nameOf = (userId: number | string) =>
+    String(userId) === String(user?.id) ? user?.full_name || 'أنا' : names.get(String(userId)) ?? 'عضو';
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
 
@@ -140,7 +155,13 @@ export function ThreadView({ conversation, currentDeviceId }: ThreadViewProps) {
       const page = await chatApi.getMessages(current.id, 0, 200);
       const feed = await feedMessages(current, page.messages, currentDeviceId);
       const view = await viewFromMessages(current, page.messages, feed.decrypted, user!.id, currentDeviceId);
-      setMessages(view);
+      // إعادة المزامنة (مثلًا عند اتصال WS) لا تمحو رسائل ما زالت تُرسل أو فشلت
+      // ولم يعرفها الخادم بعد — وإلا اختفت رسالة المستخدم لحظة إرسالها.
+      setMessages((prev) => {
+        const known = new Set(view.map((m) => m.key));
+        const pending = prev.filter((m) => m.state !== 'sent' && !known.has(m.key));
+        return [...view, ...pending];
+      });
       const maxSeq = page.messages.reduce((m, msg) => Math.max(m, msg.seq), 0);
       if (maxSeq > 0) {
         await setLastReadSeq(current.id, maxSeq);
@@ -226,6 +247,12 @@ export function ThreadView({ conversation, currentDeviceId }: ThreadViewProps) {
     return () => socket.close();
   }, [conversation.id, loadInitial, handleIncoming, queryClient]);
 
+  // أحدث رسالة في الأسفل ظاهرة دائمًا (كما في Slack).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length, loading]);
+
   const doSend = useCallback(
     async (text: string, clientMsgId: string, replyToSeq: number | null) => {
       const optimistic: ViewMessage = {
@@ -243,6 +270,16 @@ export function ThreadView({ conversation, currentDeviceId }: ThreadViewProps) {
         senderUserId: user!.id,
       };
       setMessages((prev) => [...prev, optimistic]);
+      // النص يُحفظ (مغلّفًا) قبل الإرسال: صدى WS لرسالتنا قد يصل قبل اكتمال
+      // الطلب، ومن دون النص المحفوظ يُعرض «…» بدل رسالتنا.
+      await saveSentMessage({
+        client_msg_id: clientMsgId,
+        conversation_id: conversation.id,
+        seq: null,
+        plaintext: text,
+        reply_to_seq: replyToSeq,
+        created_at: optimistic.createdAt,
+      });
       try {
         const encrypted = await encryptMessage(conversation, text);
         await chatApi.postMessage(conversation.id, {
@@ -252,14 +289,6 @@ export function ThreadView({ conversation, currentDeviceId }: ThreadViewProps) {
           epoch: encrypted.epoch,
           sender_device_id: currentDeviceId,
           reply_to_seq: replyToSeq ?? undefined,
-        });
-        await saveSentMessage({
-          client_msg_id: clientMsgId,
-          conversation_id: conversation.id,
-          seq: null,
-          plaintext: text,
-          reply_to_seq: replyToSeq,
-          created_at: optimistic.createdAt,
         });
         // إن سبقتنا أحداث WS فالحالة أُقرت sent هناك؛ وإلا نحدّث الآن.
         setMessages((prev) =>
@@ -280,14 +309,6 @@ export function ThreadView({ conversation, currentDeviceId }: ThreadViewProps) {
               epoch: encrypted.epoch,
               sender_device_id: currentDeviceId,
               reply_to_seq: replyToSeq ?? undefined,
-            });
-            await saveSentMessage({
-              client_msg_id: clientMsgId,
-              conversation_id: conversation.id,
-              seq: null,
-              plaintext: text,
-              reply_to_seq: replyToSeq,
-              created_at: optimistic.createdAt,
             });
             setMessages((prev) =>
               prev.map((m) => (m.clientMsgId === clientMsgId ? { ...m, state: 'sent' as const } : m)),
@@ -327,112 +348,201 @@ export function ThreadView({ conversation, currentDeviceId }: ThreadViewProps) {
 
   if (revoked) {
     return (
-      <Card className="flex h-full flex-col items-center justify-center gap-3 p-10 text-center">
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-10 text-center">
         <ShieldAlert className="h-10 w-10 text-red-500" />
         <h3 className="text-lg font-semibold text-gray-900">تم إبطال هذا الجهاز</h3>
         <p className="text-sm text-gray-500">أُغلقت قناة الاتصال من الخادم. راجع صفحة الأجهزة للتفاصيل.</p>
         <Button variant="outline" onClick={() => navigate('/devices')}>
           الانتقال إلى الأجهزة
         </Button>
-      </Card>
+      </div>
     );
   }
 
+  const isDm = conversation.type === 'dm';
+  const heading = isDm ? title : `# ${title}`;
+
   return (
-    <Card className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <h3 className="truncate text-base font-semibold text-gray-900">{title}</h3>
-        <span className="text-xs text-gray-400">جيل {conversation.current_epoch}</span>
+    <div className="flex h-full min-w-0 flex-1 flex-col bg-white">
+      {/* رأس القناة — أسلوب Slack */}
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-5">
+        <div className="flex min-w-0 items-center gap-2">
+          {isDm && <Avatar name={title} size="sm" square />}
+          <h3 className="truncate text-base font-bold text-gray-900">{heading}</h3>
+          <Lock className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-label="مشفّرة طرفًا لطرف" />
+        </div>
+        {!isDm && onToggleMembers && (
+          <button
+            type="button"
+            onClick={onToggleMembers}
+            className={cn(
+              'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs',
+              membersOpen ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-gray-300 text-gray-600 hover:bg-gray-50',
+            )}
+          >
+            <Users className="h-3.5 w-3.5" />
+            {conversation.member_count}
+          </button>
+        )}
       </div>
 
       {banner && (
-        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           {banner}
         </div>
       )}
 
-      <div className="flex-1 space-y-2 overflow-y-auto p-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto py-3">
         {loading && (
           <div className="flex h-full items-center justify-center">
             <Spinner size="lg" />
           </div>
         )}
         {!loading && messages.length === 0 && (
-          <p className="py-10 text-center text-sm text-gray-400">لا رسائل بعد — ابدأ المحادثة بأمان طرف-لطرف</p>
+          <div className="px-5 pt-10">
+            <div className="mb-3">{isDm ? <Avatar name={title} size="lg" square /> : <Hash className="h-10 w-10 text-gray-300" />}</div>
+            <h4 className="text-xl font-bold text-gray-900">{isDm ? title : `مرحبًا بك في ${heading}`}</h4>
+            <p className="mt-1 text-sm text-gray-500">
+              {isDm ? `هذه بداية محادثتك المباشرة مع ${title}.` : 'هذه بداية القناة.'} كل الرسائل مشفّرة طرفًا لطرف — لا يقرؤها الخادم ولا
+              أي مسؤول.
+            </p>
+          </div>
         )}
-        {messages.map((message) => (
-          <div key={message.key} className={cn('flex', message.mine ? 'justify-start' : 'justify-end')}>
-            <div
-              className={cn(
-                'max-w-[75%] rounded-2xl px-4 py-2 text-sm shadow-sm',
-                message.mine ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-900',
-                message.state === 'sending' && 'opacity-70',
-                message.state === 'failed' && 'border border-red-300 bg-red-50 text-red-900',
-              )}
-            >
-              {message.replyToSeq !== null && message.replyToSeq !== undefined && (
-                <div className={cn('mb-1 border-s-2 ps-2 text-xs', message.mine ? 'border-primary-200 text-primary-100' : 'border-gray-300 text-gray-500')}>
-                  ردًّا على الرسالة رقم {message.replyToSeq}
+        {messages.map((message, index) => {
+          const prev = messages[index - 1];
+          const day = new Date(message.createdAt).toDateString();
+          const newDay = !prev || new Date(prev.createdAt).toDateString() !== day;
+          const grouped =
+            !newDay &&
+            prev &&
+            String(prev.senderUserId) === String(message.senderUserId) &&
+            new Date(message.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000 &&
+            (message.replyToSeq === null || message.replyToSeq === undefined);
+          const name = nameOf(message.senderUserId);
+          const time = new Date(message.createdAt).toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit' });
+          const quoted =
+            message.replyToSeq !== null && message.replyToSeq !== undefined
+              ? messages.find((m) => m.seq === message.replyToSeq)
+              : undefined;
+          return (
+            <div key={message.key}>
+              {newDay && (
+                <div className="relative my-3 flex items-center justify-center">
+                  <div className="absolute inset-x-0 top-1/2 border-t border-gray-200" />
+                  <span className="relative rounded-full border border-gray-200 bg-white px-3 py-0.5 text-xs font-semibold text-gray-700">
+                    {dayLabel(message.createdAt)}
+                  </span>
                 </div>
               )}
-              {message.failed ? (
-                <span className="italic">تعذر فك التشفير</span>
-              ) : (
-                <p className="whitespace-pre-wrap break-words">{message.plaintext ?? (message.mine ? 'رسالة من جهاز آخر' : '…')}</p>
-              )}
-              <div className={cn('mt-1 flex items-center gap-2 text-[11px]', message.mine ? 'text-primary-100' : 'text-gray-400')}>
-                <span>{new Date(message.createdAt).toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit' })}</span>
-                {message.state === 'sending' && <span>جارٍ الإرسال…</span>}
-                {message.state === 'failed' && (
-                  <>
-                    <span>فشل الإرسال</span>
-                    <button type="button" onClick={() => onRetry(message)} className="inline-flex items-center gap-1 underline">
-                      <RotateCcw className="h-3 w-3" /> إعادة
-                    </button>
-                    <button type="button" onClick={() => onDiscard(message)} className="underline">
-                      حذف
-                    </button>
-                  </>
+              <div
+                className={cn(
+                  'group relative flex gap-2 px-5 hover:bg-gray-50',
+                  grouped ? 'py-0.5' : 'pt-2 pb-0.5',
+                  message.state === 'sending' && 'opacity-60',
                 )}
-                {message.state === 'sent' && !message.mine && (
-                  <button
-                    type="button"
-                    aria-label="رد"
-                    onClick={() => setReplyTo(message)}
-                    className={cn('inline-flex hover:underline', message.mine ? 'text-primary-100' : 'text-gray-500')}
-                  >
-                    <Reply className="h-3 w-3" />
-                  </button>
+              >
+                <div className="w-9 shrink-0">
+                  {grouped ? (
+                    <span className="invisible block pt-1 text-[10px] text-gray-400 group-hover:visible">{time}</span>
+                  ) : (
+                    <Avatar name={name} size="md" square />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  {!grouped && (
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-sm font-bold text-gray-900">{name}</span>
+                      <span className="text-xs text-gray-500">{time}</span>
+                    </div>
+                  )}
+                  {quoted !== undefined || (message.replyToSeq !== null && message.replyToSeq !== undefined) ? (
+                    <div className="my-1 border-s-4 border-gray-300 ps-2 text-xs text-gray-500">
+                      <span className="font-semibold">{quoted ? nameOf(quoted.senderUserId) : 'رسالة سابقة'}: </span>
+                      {quoted?.plaintext?.slice(0, 120) ?? '…'}
+                    </div>
+                  ) : null}
+                  {message.failed ? (
+                    <p className="text-sm italic text-gray-400">تعذر فك التشفير على هذا الجهاز</p>
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words text-[15px] leading-6 text-gray-900">
+                      {message.plaintext ?? (message.mine ? 'رسالة من جهاز آخر' : '…')}
+                    </p>
+                  )}
+                  {message.state === 'failed' && (
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-red-600">
+                      <span>لم تُرسل</span>
+                      <button type="button" onClick={() => onRetry(message)} className="inline-flex items-center gap-1 font-medium underline">
+                        <RotateCcw className="h-3 w-3" /> إعادة المحاولة
+                      </button>
+                      <button type="button" onClick={() => onDiscard(message)} className="underline">
+                        حذف
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {message.state === 'sent' && message.seq !== null && (
+                  <div className="absolute -top-3 end-4 hidden rounded-md border border-gray-200 bg-white shadow-sm group-hover:flex">
+                    <button
+                      type="button"
+                      aria-label="رد"
+                      title="رد"
+                      onClick={() => setReplyTo(message)}
+                      className="p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                    >
+                      <Reply className="h-4 w-4" />
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      <form onSubmit={onSubmit} className="border-t border-gray-200 p-3">
-        {replyTo && (
-          <div className="mb-2 flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-            <span className="truncate">ردًّا على: {replyTo.plaintext ?? `الرسالة رقم ${replyTo.seq}`}</span>
-            <button type="button" onClick={() => setReplyTo(null)} className="font-medium text-gray-400 hover:text-gray-600">
-              إلغاء
-            </button>
-          </div>
-        )}
-        <div className="flex gap-2">
-          <Input
+      {/* محرر الرسالة — أسلوب Slack */}
+      <form onSubmit={onSubmit} className="shrink-0 px-5 pb-4">
+        <div className="rounded-lg border border-gray-300 focus-within:border-gray-500 focus-within:shadow-sm">
+          {replyTo && (
+            <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600">
+              <span className="truncate">
+                ردًّا على {nameOf(replyTo.senderUserId)}: {replyTo.plaintext?.slice(0, 80) ?? '…'}
+              </span>
+              <button type="button" onClick={() => setReplyTo(null)} className="font-medium text-gray-400 hover:text-gray-700">
+                إلغاء
+              </button>
+            </div>
+          )}
+          <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="اكتب رسالة مشفرة…"
-            autoComplete="off"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                e.currentTarget.form?.requestSubmit();
+              }
+            }}
+            rows={Math.min(6, Math.max(1, input.split('\n').length))}
+            placeholder={`رسالة إلى ${heading}`}
+            aria-label="نص الرسالة"
+            className="block w-full resize-none border-0 bg-transparent px-3 pt-2.5 text-[15px] leading-6 outline-none placeholder:text-gray-400"
           />
-          <Button type="submit" disabled={!input.trim()}>
-            <Send className="h-4 w-4" />
-            إرسال
-          </Button>
+          <div className="flex items-center justify-between px-2 pb-1.5">
+            <span className="flex items-center gap-1 text-[11px] text-gray-400">
+              <Lock className="h-3 w-3 text-emerald-600" />
+              مشفّرة · Enter للإرسال · Shift+Enter لسطر جديد
+            </span>
+            <button
+              type="submit"
+              disabled={!input.trim()}
+              aria-label="إرسال"
+              className={cn('rounded-md p-1.5', input.trim() ? 'bg-emerald-700 text-white hover:bg-emerald-800' : 'text-gray-300')}
+            >
+              <Send className="h-4 w-4 -scale-x-100" />
+            </button>
+          </div>
         </div>
       </form>
-    </Card>
+    </div>
   );
 }

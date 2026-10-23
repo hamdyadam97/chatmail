@@ -1,9 +1,10 @@
-"""Concurrent refresh race (two tabs / React StrictMode double boot).
+"""Refresh reuse interval: a rotation whose response never reached the browser.
 
-The loser of the race presents a token rotated moments ago. It must get a
-recognisable 401 WITHOUT a cookie-clearing Set-Cookie, so the winner's fresh
-cookie survives in the browser. An old token outside the grace window is
-still refused and its cookie cleared.
+Real cases: the page is reloaded/closed while the boot refresh is in flight,
+two tabs refresh at once, a connection drops. The server has rotated, the
+cookie jar still holds the old token. Within ROTATION_GRACE_SECONDS the old
+token gets the live successor rotated (user stays signed in); outside it, or
+once the chain was ended by logout/revocation, it is refused as before.
 """
 from datetime import timedelta
 
@@ -21,46 +22,67 @@ REFRESH = "/api/v1/auth/refresh/"
 COOKIE = settings.AUTH_REFRESH_COOKIE_NAME
 
 
-def test_loser_of_refresh_race_keeps_the_winners_cookie(api_client, user_factory):
-    user_factory("race_user")
-    login(api_client, "race_user")
-    old = api_client.cookies[COOKIE].value
+def _signed_in(api_client, username):
+    login(api_client, username)
+    return api_client.cookies[COOKIE].value
 
+
+def test_lost_rotation_response_recovers_within_grace(api_client, user_factory):
+    user_factory("race_user")
+    old = _signed_in(api_client, "race_user")
     first = api_client.post(REFRESH)
     assert first.status_code == 200
-    new = first.cookies[COOKIE].value
-    assert new and new != old
+    lost = first.cookies[COOKIE].value  # pretend this response never arrived
 
-    # second request of the race, still carrying the old cookie
     api_client.cookies[COOKIE] = old
-    second = api_client.post(REFRESH)
-    assert second.status_code == 401
-    assert second.json()["code"] == "refresh_superseded"
-    assert COOKIE not in second.cookies  # no deletion of the newer cookie
-
-    # the winner's cookie works
-    api_client.cookies[COOKIE] = new
+    again = api_client.post(REFRESH)
+    assert again.status_code == 200 and again.json()["access"]
+    fresh = again.cookies[COOKIE].value
+    assert fresh not in (old, lost)
+    # exactly one live session remains — no branching
+    assert UserSession.objects.filter(user__username="race_user", revoked_at__isnull=True).count() == 1
+    # the newest cookie keeps working; the lost one is now rotated away
+    api_client.cookies[COOKIE] = fresh
     assert api_client.post(REFRESH).status_code == 200
+
+
+def test_chain_of_lost_responses_is_followed(api_client, user_factory):
+    user_factory("race_chain")
+    old = _signed_in(api_client, "race_chain")
+    api_client.post(REFRESH)            # old -> s1 (lost)
+    api_client.post(REFRESH)            # s1 -> s2 (lost)
+    api_client.cookies[COOKIE] = old
+    assert api_client.post(REFRESH).status_code == 200
+    assert UserSession.objects.filter(user__username="race_chain", revoked_at__isnull=True).count() == 1
 
 
 def test_old_token_outside_grace_is_refused_and_cleared(api_client, user_factory):
     user_factory("race_old")
-    login(api_client, "race_old")
-    old = api_client.cookies[COOKIE].value
+    old = _signed_in(api_client, "race_old")
     assert api_client.post(REFRESH).status_code == 200
     UserSession.objects.filter(revoked_reason="rotated").update(revoked_at=timezone.now() - timedelta(minutes=5))
     api_client.cookies[COOKIE] = old
     resp = api_client.post(REFRESH)
     assert resp.status_code == 401
-    assert resp.json().get("code") != "refresh_superseded"
     assert resp.cookies[COOKIE].value == ""  # cleared
 
 
-def test_logged_out_token_is_not_treated_as_a_race(api_client, user_factory):
+def test_logout_ends_the_chain(api_client, user_factory):
     user_factory("race_logout")
-    login(api_client, "race_logout")
-    token = api_client.cookies[COOKIE].value
-    api_client.post("/api/v1/auth/logout/")
-    api_client.cookies[COOKIE] = token
-    resp = api_client.post(REFRESH)
-    assert resp.status_code == 401 and resp.json().get("code") != "refresh_superseded"
+    old = _signed_in(api_client, "race_logout")
+    assert api_client.post(REFRESH).status_code == 200   # old -> s1
+    api_client.post("/api/v1/auth/logout/")              # s1 logged out
+    api_client.cookies[COOKIE] = old
+    assert api_client.post(REFRESH).status_code == 401
+    assert not UserSession.objects.filter(user__username="race_logout", revoked_at__isnull=True).exists()
+
+
+def test_admin_revocation_ends_the_chain(api_client, user_factory):
+    from apps.accounts.api.services import revoke_all_user_sessions
+
+    user = user_factory("race_revoked")
+    old = _signed_in(api_client, "race_revoked")
+    assert api_client.post(REFRESH).status_code == 200
+    revoke_all_user_sessions(user, reason="admin_revoked")
+    api_client.cookies[COOKIE] = old
+    assert api_client.post(REFRESH).status_code == 401

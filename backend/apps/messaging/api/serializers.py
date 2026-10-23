@@ -22,6 +22,12 @@ def conversation_to_dict(conversation: Conversation, membership) -> dict:
         "joined_at": membership.joined_at.isoformat(),
         "member_count": conversation.active_members().count(),
         "my_role": membership.member_role,
+        # Names of current members (directory metadata, never content) — lets
+        # the client title a DM by the other person and label message senders.
+        "members": [
+            {"id": str(m.user_id), "full_name": m.user.full_name, "username": m.user.username}
+            for m in conversation.active_members().select_related("user").order_by("joined_at")
+        ],
     }
 
 

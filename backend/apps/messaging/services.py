@@ -435,6 +435,8 @@ def store_message(
     for user_id in dict.fromkeys(str(d.user_id) for d in recipient_devices):
         ordered.append({**event, "_group": f"user.{user_id}"})
     _broadcast_events(ordered)
+    if kind == "application" and conversation.type in ("dm", "group"):
+        _push_chat_message(conversation, requester)
 
     log(
         actor=requester,
@@ -444,6 +446,26 @@ def store_message(
         metadata={"seq": message.seq, "kind": kind, "epoch": epoch},
     )
     return StoreResult(message=message, created=True, events=ordered)
+
+
+def _push_chat_message(conversation, sender) -> None:
+    """Web Push to the other members: sender's name only — the text is
+    ciphertext the server cannot read (SEC-11). One tag per chat, so a burst
+    of messages collapses into one notification."""
+    from apps.notifications import push
+
+    others = list(
+        conversation.active_members().exclude(user=sender).values_list("user_id", flat=True)
+    )
+    name = sender.full_name or sender.username
+    push.push_to_users(
+        others,
+        kind="new_message",
+        title=f"رسالة من {name}" if conversation.type == "dm" else "رسالة جديدة في محادثة جماعية",
+        body="" if conversation.type == "dm" else f"من {name}",
+        url=f"/chat/{conversation.id}",
+        tag=f"chat:{conversation.id}",
+    )
 
 
 def _welcome_recipients(conversation, single_id, many_ids) -> list[TrustedDevice]:

@@ -10,7 +10,7 @@ from rest_framework.views import APIView
 from apps.messaging.services import issue_scoped_ws_ticket
 
 from ..consumers import TICKET_SCOPE
-from ..models import Notification, NotificationPreference
+from ..models import Notification, NotificationPreference, PushSubscription
 from ..services import TITLES, to_dict
 
 
@@ -83,3 +83,73 @@ class WsTicketView(APIView):
 
     def get(self, request):
         return Response({"ticket": issue_scoped_ws_ticket(request.user, TICKET_SCOPE)})
+
+
+# --- Web Push (desktop/OS notifications while the site is closed) ------------------
+
+class PushPublicKeyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .. import push
+
+        return Response({"enabled": push.enabled(), "public_key": push.public_key()})
+
+
+class PushSubscribeView(APIView):
+    """Register this browser for the caller. The endpoint is unique: the same
+    browser re-subscribing under another account moves to that account."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .. import push
+
+        if not push.enabled():
+            raise ValidationError({"detail": "push notifications are not configured."})
+        endpoint = request.data.get("endpoint")
+        keys = request.data.get("keys") or {}
+        p256dh, auth = keys.get("p256dh"), keys.get("auth")
+        if not isinstance(endpoint, str) or len(endpoint) > 1000 or not push.endpoint_allowed(endpoint):
+            raise ValidationError({"endpoint": "unsupported push service."})
+        if not (isinstance(p256dh, str) and 40 <= len(p256dh) <= 200 and isinstance(auth, str) and 8 <= len(auth) <= 100):
+            raise ValidationError({"keys": "invalid subscription keys."})
+        sub, _ = PushSubscription.objects.update_or_create(
+            endpoint=endpoint,
+            defaults={
+                "user": request.user,
+                "p256dh": p256dh,
+                "auth": auth,
+                "user_agent": request.headers.get("User-Agent", "")[:300],
+                "failures": 0,
+            },
+        )
+        return Response({"id": str(sub.id)}, status=status.HTTP_201_CREATED)
+
+
+class PushUnsubscribeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        endpoint = request.data.get("endpoint")
+        if not isinstance(endpoint, str):
+            raise ValidationError({"endpoint": "required."})
+        PushSubscription.objects.filter(endpoint=endpoint, user=request.user).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PushTestView(APIView):
+    """Send a test notification to the caller's own browsers."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .. import push
+
+        count = PushSubscription.objects.filter(user=request.user).count()
+        if not push.enabled() or count == 0:
+            raise ValidationError({"detail": "no push subscription for this account."})
+        push.push_to_users(
+            [request.user.id], kind="test", title="تجربة الإشعارات", body="الإشعارات تعمل على هذا الجهاز", url="/notifications", tag="test"
+        )
+        return Response({"subscriptions": count})

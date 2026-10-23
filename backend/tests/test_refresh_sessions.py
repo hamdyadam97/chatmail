@@ -1,6 +1,9 @@
 """Refresh rotation, logout revocation, session listing/revocation tests."""
+from datetime import timedelta
+
 import pytest
 from django.conf import settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import UserSession
@@ -30,20 +33,23 @@ def test_refresh_rotates_token_and_rejects_old_one(api_client, user_factory):
     new_token = _refresh_cookie_value(first)
     assert new_token != old_token
 
-    # the old refresh token is revoked: replaying it fails (no new session).
-    # Within the rotation grace window the cookie is NOT cleared — the browser
-    # already holds the newer one (see test_refresh_race.py, which also covers
-    # the cleared case outside the window).
-    api_client.cookies[COOKIE] = old_token
-    replay = api_client.post(REFRESH_URL)
-    assert replay.status_code == 401
-    assert "access" not in replay.json()
-
     # the rotated token works
     api_client.cookies[COOKIE] = new_token
     second = api_client.post(REFRESH_URL)
     assert second.status_code == 200
     assert _refresh_cookie_value(second) != new_token
+
+    # the old token is revoked: once the reuse interval has passed, replaying
+    # it fails and clears the cookie. (Inside the interval it recovers a lost
+    # rotation instead — see test_refresh_race.py.)
+    UserSession.objects.filter(revoked_reason="rotated").update(
+        revoked_at=timezone.now() - timedelta(minutes=5)
+    )
+    api_client.cookies[COOKIE] = old_token
+    replay = api_client.post(REFRESH_URL)
+    assert replay.status_code == 401
+    assert "access" not in replay.json()
+    assert replay.cookies[COOKIE].value == ""
 
 
 def test_refresh_without_cookie_rejected(api_client):

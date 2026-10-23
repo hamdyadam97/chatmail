@@ -26,6 +26,8 @@ All endpoints require authentication. State changes append a signed
 key-transparency event transactionally and are audit-logged (identifiers
 only).
 """
+from django.db.models import Q
+from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -37,7 +39,7 @@ from apps.accounts.models import TrustedDevice
 from apps.audit.services import log, primary_org_scope, request_context
 
 from .. import services, transparency
-from ..models import KeyTransparencyEvent
+from ..models import DeviceKeyBundle, KeyTransparencyEvent
 from .serializers import (
     DeviceBundleSerializer,
     IdentityBootstrapSerializer,
@@ -294,3 +296,27 @@ class TransparencyLogKeyView(APIView):
 
     def get(self, request):
         return Response({"log_pub": transparency.log_public_key_b64()})
+
+
+class KeyCountView(APIView):
+    """GET keys/count/[?device_id=] — unconsumed, unexpired KeyPackages of one
+    of MY devices (default: this session's device). Lets the client top the
+    pool up only when needed instead of uploading on every page load."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        device_id = request.query_params.get("device_id")
+        if device_id:
+            device = TrustedDevice.objects.filter(id=device_id, user=request.user).first()
+        else:
+            session = services.request_session(request)
+            device = session.device if session is not None else None
+        if device is None:
+            raise PermissionDenied("الجهاز غير موجود أو لا يخصك.")
+        available = (
+            DeviceKeyBundle.objects.filter(device=device, consumed_at__isnull=True)
+            .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
+            .count()
+        )
+        return Response({"device_id": str(device.id), "available": available})

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Forward, Paperclip, Save, Send, Trash2 } from 'lucide-react';
-import { Button, Card, Input, Label, Spinner } from '../../shared/ui';
+import { Paperclip, Save, Send, Trash2 } from 'lucide-react';
+import { Button, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
+import { cn } from '../../shared/lib/cn';
 import { correspondenceApi, CLASSIFICATION_LABELS, PRIORITY_LABELS, type Classification, type Priority } from './api';
-import { CryptoGate, E2EENote, RecipientPicker, formatDate, useDirectory } from './components';
+import { E2EENote, RecipientPicker, formatDate, useDirectory } from './components';
 import { formatBytes } from './content';
 import { deleteDraft, getDraft, newDraftId, saveDraft } from './drafts';
 import { openCorrespondence, sendCorrespondence, type ForwardSource } from './service';
@@ -13,7 +14,7 @@ import { openCorrespondence, sendCorrespondence, type ForwardSource } from './se
 const MAX_FILES = 20;
 const MAX_FILE_BYTES = 25 * 1024 * 1024 - 64; // حد الخادم للـblob ناقص IV/tag
 
-function ComposeForm() {
+export function ComposeForm({ embedded = false, onCancel }: { embedded?: boolean; onCancel?: () => void }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
@@ -117,7 +118,7 @@ function ComposeForm() {
       );
       if (draftParam) await deleteDraft(draftParam);
       await queryClient.invalidateQueries({ queryKey: ['correspondences'] });
-      navigate(`/correspondence/${sent.id}`, { replace: true });
+      navigate(`/mail/sent/${sent.id}`, { replace: true });
     } catch (err) {
       const unreachable = (err as { unreachableUserIds?: string[] }).unreachableUserIds;
       if (unreachable?.length) {
@@ -140,43 +141,75 @@ function ComposeForm() {
     );
   }
 
+  const optionSelect = 'h-7 rounded border border-gray-300 bg-white px-1.5 text-xs text-gray-700';
+
   return (
-    <form onSubmit={onSend} className="mx-auto max-w-4xl space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
-          {forwardOf && <Forward className="h-5 w-5 text-gray-500" />}
-          {forwardOf ? 'إحالة مراسلة' : 'مراسلة جديدة'}
-        </h2>
-        <E2EENote />
+    <form onSubmit={onSend} className={cn('flex min-h-full flex-col bg-white', !embedded && 'mx-auto max-w-4xl rounded-xl border')}>
+      {/* شريط أوامر المحرر — أسلوب Outlook */}
+      <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1 border-b border-gray-200 bg-white px-4 py-2">
+        <Button type="submit" size="sm" loading={sending}>
+          <Send className="h-4 w-4 -scale-x-100" />
+          {sending ? 'جارٍ التشفير…' : 'إرسال'}
+        </Button>
+        {onCancel && (
+          <button type="button" onClick={onCancel} disabled={sending} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100">
+            <Trash2 className="h-4 w-4" />
+            تجاهل
+          </button>
+        )}
+        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100">
+          <Paperclip className="h-4 w-4" />
+          إرفاق
+          <input type="file" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
+        </label>
+        {!forwardOf && (
+          <button type="button" onClick={() => void onSaveDraft()} disabled={sending} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100">
+            <Save className="h-4 w-4" />
+            حفظ كمسودة
+          </button>
+        )}
+        <span className="ms-auto hidden xl:block">
+          <E2EENote />
+        </span>
       </div>
 
-      <Card className="space-y-4 p-6">
-        <RecipientPicker id="to" label="إلى" value={to} onChange={setTo} exclude={cc} />
-        <RecipientPicker id="cc" label="نسخة إلى" value={cc} onChange={setCc} exclude={to} />
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div>
-            <Label htmlFor="priority">الأولوية</Label>
-            <select
-              id="priority"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as Priority)}
-              className="mt-1 h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm"
-            >
+      <div className="divide-y divide-gray-200 border-b border-gray-200 px-4">
+        <div className="py-1.5">
+          <RecipientPicker id="to" label="إلى" value={to} onChange={setTo} exclude={cc} inline />
+        </div>
+        <div className="py-1.5">
+          <RecipientPicker id="cc" label="نسخة" value={cc} onChange={setCc} exclude={to} inline />
+        </div>
+        <div className="py-1">
+          <input
+            id="subject"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            maxLength={500}
+            autoComplete="off"
+            placeholder={forwardOf ? 'إحالة: …' : 'أضف عنوانًا'}
+            aria-label="العنوان"
+            className="h-9 w-full border-0 bg-transparent text-base outline-none placeholder:text-gray-400"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-3 py-2 text-xs text-gray-600">
+          <label className="flex items-center gap-1.5" htmlFor="priority">
+            الأولوية
+            <select id="priority" value={priority} onChange={(e) => setPriority(e.target.value as Priority)} className={optionSelect}>
               {(Object.keys(PRIORITY_LABELS) as Priority[]).map((p) => (
                 <option key={p} value={p}>
                   {PRIORITY_LABELS[p]}
                 </option>
               ))}
             </select>
-          </div>
-          <div>
-            <Label htmlFor="classification">التصنيف</Label>
+          </label>
+          <label className="flex items-center gap-1.5" htmlFor="classification">
+            التصنيف
             <select
               id="classification"
               value={classification}
               onChange={(e) => setClassification(e.target.value as Classification)}
-              className="mt-1 h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm"
+              className={optionSelect}
             >
               {(Object.keys(CLASSIFICATION_LABELS) as Classification[]).map((c) => (
                 <option key={c} value={c}>
@@ -184,107 +217,75 @@ function ComposeForm() {
                 </option>
               ))}
             </select>
-          </div>
-          <div>
-            <Label htmlFor="due">تاريخ الاستحقاق (اختياري)</Label>
-            <Input id="due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="mt-1" />
-          </div>
-        </div>
-        {classification === 'institutional_archive_eligible' && (
-          <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-            هذا التصنيف يعلن أن المعاملة تخضع لسياسة حفظ مؤسسية. في المرحلة الحالية هو علامة وصفية فقط: لا تُنشأ أي نسخة
-            مؤسسية ولا يحصل أي طرف إضافي على مفتاح فك. أي نسخة مؤسسية مستقبلًا ستُشفّر لمستلم مؤسسي معلن قبل الإرسال.
-          </p>
-        )}
-
-        <div>
-          <Label htmlFor="subject">العنوان</Label>
-          <Input id="subject" value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={500} className="mt-1" autoComplete="off" />
-        </div>
-        <div>
-          <Label htmlFor="body">نص المراسلة</Label>
-          <textarea
-            id="body"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={12}
-            maxLength={100_000}
-            className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-sm leading-7 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
-          />
-        </div>
-
-        {forwardOf && (
-          <div className="rounded-lg border-s-4 border-gray-300 bg-gray-50 p-4 text-sm text-gray-700">
-            <p className="mb-2 text-xs text-gray-500">
-              المراسلة المحالة <span dir="ltr">{forwardOf.detail.reference_number}</span> — من {forwardOf.detail.sender.full_name} —{' '}
-              {formatDate(forwardOf.detail.sent_at)}
-            </p>
-            <p className="font-medium">{forwardOf.stored.content.subject}</p>
-            <p className="mt-1 line-clamp-4 whitespace-pre-wrap">{forwardOf.stored.content.body}</p>
-            {forwardOf.stored.content.attachments.length > 0 && (
-              <p className="mt-2 text-xs text-gray-500">
-                تُعاد مشاركة {forwardOf.stored.content.attachments.length} مرفق مع المستلمين الجدد.
-              </p>
-            )}
-            <p className="mt-2 text-xs text-gray-500">
-              المستلم الجديد يرى ما تحيله فقط في خيط جديد — لا يُضاف إلى خيط المراسلة الأصلية ولا يرى ردودها.
-            </p>
-          </div>
-        )}
-
-        <div>
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-primary-700 hover:text-primary-800">
-            <Paperclip className="h-4 w-4" />
-            إرفاق ملفات
-            <input type="file" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
           </label>
-          {files.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {files.map((f, i) => (
-                <li key={`${f.name}-${i}`} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm">
-                  <span className="truncate">
-                    {f.name} <span className="text-xs text-gray-400">({formatBytes(f.size)})</span>
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="إزالة المرفق"
-                    onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
-                    className="text-gray-400 hover:text-red-600"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="mt-1 text-xs text-gray-500">تُشفّر الملفات على جهازك بمفتاح عشوائي لكل ملف قبل رفعها.</p>
+          <label className="flex items-center gap-1.5" htmlFor="due">
+            الاستحقاق
+            <input id="due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={optionSelect} />
+          </label>
         </div>
-      </Card>
-
-      {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      {notice && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
-
-      <div className="flex items-center justify-end gap-2">
-        {!forwardOf && (
-          <Button type="button" variant="outline" onClick={() => void onSaveDraft()} disabled={sending}>
-            <Save className="h-4 w-4" />
-            حفظ كمسودة
-          </Button>
-        )}
-        <Button type="submit" loading={sending}>
-          <Send className="h-4 w-4" />
-          {sending ? 'جارٍ التشفير والإرسال…' : 'إرسال مشفّر'}
-        </Button>
       </div>
-    </form>
-  );
-}
 
-export function ComposePage() {
-  const [params] = useSearchParams();
-  return (
-    <CryptoGate>
-      <ComposeForm key={`${params.get('draft') ?? ''}:${params.get('forward') ?? ''}`} />
-    </CryptoGate>
+      {classification === 'institutional_archive_eligible' && (
+        <p className="mx-4 mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+          هذا التصنيف يعلن أن المعاملة تخضع لسياسة حفظ مؤسسية. في المرحلة الحالية هو علامة وصفية فقط: لا تُنشأ أي نسخة مؤسسية ولا
+          يحصل أي طرف إضافي على مفتاح فك. أي نسخة مؤسسية مستقبلًا ستُشفّر لمستلم مؤسسي معلن قبل الإرسال.
+        </p>
+      )}
+
+      {files.length > 0 && (
+        <ul className="flex flex-wrap gap-2 px-4 pt-3">
+          {files.map((f, i) => (
+            <li key={`${f.name}-${i}`} className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-xs">
+              <Paperclip className="h-3.5 w-3.5 text-gray-400" />
+              <span className="max-w-[12rem] truncate">{f.name}</span>
+              <span className="text-gray-400">{formatBytes(f.size)}</span>
+              <button
+                type="button"
+                aria-label="إزالة المرفق"
+                onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+                className="text-gray-400 hover:text-red-600"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {(error || notice) && (
+        <div className="px-4 pt-3">
+          {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+          {notice && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
+        </div>
+      )}
+
+      <textarea
+        id="body"
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        maxLength={100_000}
+        placeholder="اكتب رسالتك هنا…"
+        aria-label="نص المراسلة"
+        className="min-h-[18rem] w-full flex-1 resize-none border-0 bg-transparent px-4 py-4 text-[15px] leading-7 outline-none placeholder:text-gray-400"
+      />
+
+      {forwardOf && (
+        <div className="mx-4 mb-4 rounded-lg border-s-4 border-gray-300 bg-gray-50 p-4 text-sm text-gray-700">
+          <p className="mb-2 text-xs text-gray-500">
+            ---------- المراسلة المحالة <span dir="ltr">{forwardOf.detail.reference_number}</span> — من {forwardOf.detail.sender.full_name} —{' '}
+            {formatDate(forwardOf.detail.sent_at)}
+          </p>
+          <p className="font-medium">{forwardOf.stored.content.subject}</p>
+          <p className="mt-1 whitespace-pre-wrap">{forwardOf.stored.content.body}</p>
+          {forwardOf.stored.content.attachments.length > 0 && (
+            <p className="mt-2 text-xs text-gray-500">تُعاد مشاركة {forwardOf.stored.content.attachments.length} مرفق مع المستلمين الجدد.</p>
+          )}
+          <p className="mt-2 text-xs text-gray-500">
+            المستلم الجديد يرى ما تحيله فقط في خيط جديد — لا يُضاف إلى خيط المراسلة الأصلية ولا يرى ردودها.
+          </p>
+        </div>
+      )}
+      <p className="px-4 pb-3 text-[11px] text-gray-400">تُشفّر الرسالة والملفات على جهازك قبل الإرسال؛ الخادم لا يرى إلا نصًا مشفّرًا.</p>
+    </form>
   );
 }

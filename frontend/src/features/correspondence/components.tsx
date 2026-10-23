@@ -67,9 +67,11 @@ interface RecipientPickerProps {
   /** معرّفات لا تُعرض (أنا، والمختارون في الحقل الآخر). */
   exclude?: string[];
   id: string;
+  /** سطر واحد بلا إطار والعنوان في بدايته (أسلوب محرر Outlook). */
+  inline?: boolean;
 }
 
-export function RecipientPicker({ label, value, onChange, exclude = [], id }: RecipientPickerProps) {
+export function RecipientPicker({ label, value, onChange, exclude = [], id, inline = false }: RecipientPickerProps) {
   const { user } = useAuth();
   const { data: users, isLoading } = useDirectory();
   const [query, setQuery] = useState('');
@@ -91,11 +93,22 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id }: Re
   }, [users, hidden, query]);
 
   return (
-    <div className="relative">
-      <label htmlFor={id} className="mb-1 block text-sm font-medium text-gray-700">
+    <div className={cn('relative', inline && 'flex items-center gap-2')}>
+      <label
+        htmlFor={id}
+        className={cn(
+          'text-sm',
+          inline ? 'w-16 shrink-0 rounded border border-gray-300 px-2 py-0.5 text-center text-gray-700' : 'mb-1 block font-medium text-gray-700',
+        )}
+      >
         {label}
       </label>
-      <div className="flex min-h-10 flex-wrap items-center gap-1 rounded-lg border border-gray-300 bg-white px-2 py-1 focus-within:ring-2 focus-within:ring-primary-500">
+      <div
+        className={cn(
+          'flex min-h-10 flex-1 flex-wrap items-center gap-1 bg-white px-2 py-1',
+          !inline && 'rounded-lg border border-gray-300 focus-within:ring-2 focus-within:ring-primary-500',
+        )}
+      >
         {value.map((uid) => {
           const u = byId.get(uid);
           return (
@@ -127,7 +140,7 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id }: Re
         />
       </div>
       {open && (
-        <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+        <div className="absolute inset-x-0 top-full z-20 mt-1 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
           {isLoading && (
             <div className="flex justify-center py-3">
               <Spinner size="sm" />

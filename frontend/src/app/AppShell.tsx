@@ -1,15 +1,57 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { LogOut, Search } from 'lucide-react';
-import { NAV_ITEMS } from './nav-items';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Lock, LogOut, Search } from 'lucide-react';
+import { RAIL_BOTTOM, RAIL_ITEMS, type RailItem } from './nav-items';
+import { useEffect } from 'react';
 import { useAuth } from '../features/auth/AuthContext';
 import { MustChangePasswordModal } from '../features/auth/MustChangePasswordModal';
 import { NotificationBell } from '../features/notifications/NotificationBell';
-import { Button } from '../shared/ui';
+import { PushPrompt } from '../features/notifications/PushControls';
+import { Avatar } from '../shared/ui';
 import { cn } from '../shared/lib/cn';
+
+/** أقسام تملأ الشاشة بلوحاتها (البريد بثلاث لوحات، المحادثات بأسلوب Slack). */
+const FULL_BLEED = ['/mail', '/correspondence', '/compose', '/inbox', '/sent', '/drafts', '/chat', '/direct-messages', '/group-chats'];
+
+function RailLink({ item, pathname }: { item: RailItem; pathname: string }) {
+  const active = item.match.some((p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(p));
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={item.to}
+      className={cn(
+        'group flex w-full flex-col items-center gap-1 rounded-lg py-2 text-[11px] font-medium transition-colors',
+        active ? 'text-white' : 'text-white/60 hover:text-white',
+      )}
+    >
+      <span
+        className={cn(
+          'flex h-9 w-9 items-center justify-center rounded-lg transition-colors',
+          active ? 'bg-white/20' : 'group-hover:bg-white/10',
+        )}
+      >
+        <Icon className="h-5 w-5" />
+      </span>
+      {item.label}
+    </NavLink>
+  );
+}
 
 export function AppShell() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const fullBleed = FULL_BLEED.some((p) => pathname.startsWith(p));
+
+  // نقرة على إشعار سطح المكتب والتطبيق مفتوح: ننتقل داخليًا بلا إعادة تحميل.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data as { type?: string; url?: unknown } | null;
+      if (data?.type === 'open-url' && typeof data.url === 'string' && data.url.startsWith('/')) navigate(data.url);
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [navigate]);
 
   const handleLogout = async () => {
     await logout();
@@ -17,68 +59,63 @@ export function AppShell() {
   };
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      {/* Sidebar — right side in RTL (first flex child at inline-start) */}
-      <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-e border-gray-200 bg-white">
-        <div className="flex h-16 items-center justify-center border-b border-gray-200 px-4">
-          <span className="text-lg font-bold text-primary-700">نظام المراسلات</span>
-        </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-primary-50 text-primary-700'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-                )
-              }
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {label}
-            </NavLink>
+    <div className="flex h-screen overflow-hidden bg-gray-50">
+      {/* شريط الأقسام — يمين الشاشة في RTL */}
+      <nav className="flex w-[76px] shrink-0 flex-col items-center gap-1 bg-primary-900 px-1.5 py-3" aria-label="الأقسام">
+        <Link to="/mail/inbox" className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-white" aria-label="الرئيسية">
+          <Lock className="h-5 w-5" />
+        </Link>
+        {RAIL_ITEMS.map((item) => (
+          <RailLink key={item.to} item={item} pathname={pathname} />
+        ))}
+        <div className="mt-auto w-full">
+          {RAIL_BOTTOM.map((item) => (
+            <RailLink key={item.to} item={item} pathname={pathname} />
           ))}
-        </nav>
-      </aside>
+        </div>
+      </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-6">
-          <div className="flex items-center gap-4">
-            <h1 className="text-base font-semibold text-gray-900">المراسلات الداخلية المشفرة</h1>
-            {/* البحث المحلي: الاستعلام يمر بحالة الموجّه لا بالعنوان (خارج سجل المتصفح). */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const q = new FormData(e.currentTarget).get('q');
-                navigate('/search', { state: { q: typeof q === 'string' ? q : '' } });
-                e.currentTarget.reset();
-              }}
-              className="relative hidden md:block"
-            >
-              <Search className="pointer-events-none absolute start-2.5 top-2.5 h-4 w-4 text-gray-400" />
-              <input
-                name="q"
-                placeholder="بحث محلي في المحتوى…"
-                autoComplete="off"
-                aria-label="بحث محلي في المحتوى"
-                className="h-9 w-64 rounded-lg border border-gray-200 bg-gray-50 ps-8 text-sm focus:border-primary-500 focus:bg-white focus:outline-none"
-              />
-            </form>
-          </div>
-          <div className="flex items-center gap-4">
+        <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-4">
+          <span className="hidden text-sm font-semibold text-gray-900 lg:block">المراسلات الداخلية المشفرة</span>
+          {/* البحث المحلي: الاستعلام يمر بحالة الموجّه لا بالعنوان (خارج سجل المتصفح). */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const q = new FormData(e.currentTarget).get('q');
+              navigate('/search', { state: { q: typeof q === 'string' ? q : '' } });
+              e.currentTarget.reset();
+            }}
+            className="relative w-full max-w-xl"
+          >
+            <Search className="pointer-events-none absolute start-3 top-2 h-4 w-4 text-gray-400" />
+            <input
+              name="q"
+              placeholder="ابحث في بريدك ومحادثاتك (على جهازك فقط)…"
+              autoComplete="off"
+              aria-label="بحث محلي في المحتوى"
+              className="h-8 w-full rounded-md border border-gray-200 bg-gray-100 ps-9 text-sm focus:border-primary-500 focus:bg-white focus:outline-none"
+            />
+          </form>
+          <div className="flex items-center gap-3">
             <NotificationBell />
-            <span className="text-sm text-gray-600">{user?.full_name}</span>
-            <Button variant="outline" size="sm" onClick={handleLogout}>
+            <span className="flex items-center gap-2">
+              <Avatar name={user?.full_name || user?.username || '؟'} size="sm" />
+              <span className="hidden text-sm text-gray-700 md:inline">{user?.full_name}</span>
+            </span>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+              aria-label="تسجيل الخروج"
+              title="تسجيل الخروج"
+            >
               <LogOut className="h-4 w-4" />
-              تسجيل الخروج
-            </Button>
+            </button>
           </div>
         </header>
-        <main className="flex-1 p-6">
+        <PushPrompt />
+        <main className={cn('min-h-0 flex-1', fullBleed ? 'overflow-hidden' : 'overflow-y-auto p-6')}>
           <Outlet />
         </main>
       </div>

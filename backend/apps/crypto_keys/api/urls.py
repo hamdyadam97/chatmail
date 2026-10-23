@@ -12,6 +12,7 @@ urlpatterns = [
     path("devices/<uuid:device_id>/approve/", views.DeviceApproveView.as_view(), name="crypto-device-approve"),
     path("devices/<uuid:device_id>/revoke/", views.DeviceRevokeView.as_view(), name="crypto-device-revoke"),
     path("keys/upload/", views.KeyUploadView.as_view(), name="crypto-keys-upload"),
+    path("keys/count/", views.KeyCountView.as_view(), name="crypto-keys-count"),
     path("keys/query/", views.KeyQueryView.as_view(), name="crypto-keys-query"),
     path("keys/claim/", views.KeyClaimView.as_view(), name="crypto-keys-claim"),
     path("transparency/self/", views.TransparencySelfView.as_view(), name="crypto-transparency-self"),

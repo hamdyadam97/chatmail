@@ -245,14 +245,19 @@ async function sha256B64(data: Uint8Array): Promise<string> {
  */
 export async function ensureKeyPackage(poolSize = 3): Promise<void> {
   const mls = await getMlsSession();
+  const deviceId = await getCurrentDeviceId();
+  // نكمّل النقص فقط: الرفع عند كل تحميل صفحة كان يراكم KPs ويصطدم بحد المعدل.
+  const { available } = await cryptoApi.keyPackageCount(deviceId);
+  const missing = Math.max(0, poolSize - available);
+  if (missing === 0) return;
   const kps: Uint8Array[] = [];
-  for (let i = 0; i < poolSize; i++) {
+  for (let i = 0; i < missing; i++) {
     kps.push(await mls.peek(async (client) => new Uint8Array(client.key_package())));
   }
   await mls.persistSnapshot('self'); // يحفظ أسرار الـKPs في اللقطة (درس 2)
   for (const kp of kps) {
     const hash = await sha256B64(kp);
-    await cryptoApi.uploadKeyPackage({ keypackage: u8ToB64(kp), keypackage_hash: hash });
+    await cryptoApi.uploadKeyPackage({ keypackage: u8ToB64(kp), keypackage_hash: hash, device_id: deviceId });
     await putRecord('kps', hash, { hash, created_at: new Date().toISOString(), uploaded_at: new Date().toISOString() });
   }
 }

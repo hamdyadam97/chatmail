@@ -171,6 +171,12 @@ CORRESPONDENCE_BCC_ENABLED = os.environ.get("CORRESPONDENCE_BCC_ENABLED", "0") =
 # per member (1000 members -> 335 KB welcome), so the audience is capped.
 ANNOUNCEMENT_MAX_RECIPIENTS = int(os.environ.get("ANNOUNCEMENT_MAX_RECIPIENTS", 1000))
 
+# Web Push (desktop/phone notifications while the site is closed). The VAPID
+# key is a base64url PKCS#8 EC P-256 private key (gen-secrets.sh prints one);
+# unset in production = push disabled, in DEBUG a dev key is generated.
+WEB_PUSH_VAPID_PRIVATE_KEY = os.environ.get("WEB_PUSH_VAPID_PRIVATE_KEY", "")
+WEB_PUSH_SUBJECT = os.environ.get("WEB_PUSH_SUBJECT", "mailto:it@example.org")
+
 # --- Auth / crypto configuration -------------------------------------------
 AUTH_JWT_ALGORITHM = "HS256"
 AUTH_ACCESS_TOKEN_TTL_SECONDS = 15 * 60        # 15 minutes

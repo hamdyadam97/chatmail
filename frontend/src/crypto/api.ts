@@ -101,6 +101,12 @@ export const cryptoApi = {
   revokeDevice: (deviceId: number | string) =>
     apiFetch<null>(`${BASE}/devices/${deviceId}/revoke/`, { method: 'POST' }),
 
+  /** عدد KeyPackages غير المستهلكة لجهاز من أجهزتي. */
+  keyPackageCount: (deviceId: number | string) =>
+    apiFetch<{ device_id: string; available: number }>(
+      `${BASE}/keys/count/?device_id=${encodeURIComponent(String(deviceId))}`,
+    ),
+
   uploadKeyPackage: (payload: KeyPackageUpload) =>
     apiFetch<null>(`${BASE}/keys/upload/`, { method: 'POST', body: payload }),
 

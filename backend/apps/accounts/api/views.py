@@ -14,6 +14,7 @@ Contract (frontend depends on this):
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from pyotp import TOTP
 from rest_framework import status
@@ -25,7 +26,7 @@ from rest_framework.views import APIView
 from apps.audit.services import log, primary_org_scope, request_context
 
 from ..crypto import decrypt_secret, encrypt_secret
-from ..models import LoginIntent, User
+from ..models import LoginIntent, User, UserSession
 from ..tokens import (
     TokenError,
     decode_mfa_token,
@@ -42,9 +43,9 @@ from .serializers import (
 from .services import (
     create_session,
     get_session_by_refresh_token,
+    live_successor_within_grace,
     revoke_all_user_sessions,
     revoke_session,
-    recently_rotated,
     rotate_session,
 )
 from ..throttles import LoginIPThrottle, LoginUsernameThrottle, MFAVerifyIPThrottle
@@ -201,17 +202,26 @@ class RefreshView(APIView):
         raw = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME)
         session = get_session_by_refresh_token(raw or "")
         if session is None:
-            if recently_rotated(raw or ""):
-                # Lost a concurrent-refresh race; the newer cookie is already
-                # in the browser — keep it (no Set-Cookie here), client retries.
-                return Response(
-                    {"detail": "تم تجديد الجلسة للتو.", "code": "refresh_superseded"},
-                    status=status.HTTP_401_UNAUTHORIZED,
+            # Reuse interval: the previous rotation's response was lost (page
+            # left mid-request, racing tabs). Rotate the live successor instead
+            # of logging the user out — see services.live_successor_within_grace.
+            with transaction.atomic():
+                successor = live_successor_within_grace(raw or "")
+                if successor is not None:
+                    successor = UserSession.objects.select_for_update().get(pk=successor.pk)
+                    if successor.revoked_at is not None:  # rotated concurrently: follow on
+                        successor = live_successor_within_grace(raw or "")
+                if successor is not None:
+                    new_session, raw_refresh = rotate_session(successor, request)
+            if successor is None:
+                response = Response(
+                    {"detail": "جلسة غير صالحة."}, status=status.HTTP_401_UNAUTHORIZED
                 )
-            response = Response(
-                {"detail": "جلسة غير صالحة."}, status=status.HTTP_401_UNAUTHORIZED
-            )
-            _clear_refresh_cookie(response)
+                _clear_refresh_cookie(response)
+                return response
+            access = issue_access_token(new_session.user, new_session)
+            response = Response({"access": access})
+            _set_refresh_cookie(response, raw_refresh)
             return response
         new_session, raw_refresh = rotate_session(session, request)
         access = issue_access_token(new_session.user, new_session)

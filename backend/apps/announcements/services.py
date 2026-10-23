@@ -269,7 +269,7 @@ def publish(*, publisher, announcement, mls_payload: bytes, client_msg_id, epoch
         locked.published_at = now
         locked.save(update_fields=["reference_number", "content_message", "content_hash", "status", "published_at"])
         recipients = list(locked.recipients.values_list("user_id", flat=True))
-        notify(recipients, "announcement", ref_type="announcement", ref_id=locked.id)
+        notify(recipients, "announcement", ref_type="announcement", ref_id=locked.id, actor=publisher)
     log(
         actor=publisher,
         action="announcement_published",

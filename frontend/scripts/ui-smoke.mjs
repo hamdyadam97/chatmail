@@ -52,7 +52,12 @@ function run(cmd, args, opts) {
 }
 
 function start(cmd, args, opts) {
-  const p = spawn(cmd, args, { ...opts, stdio: 'ignore', shell: process.platform === 'win32' && cmd === 'npx' });
+  const { log, ...rest } = opts;
+  const p = spawn(cmd, args, {
+    ...rest,
+    stdio: log ? ['ignore', 'pipe', 'pipe'] : 'ignore',
+    shell: process.platform === 'win32' && cmd === 'npx',
+  });
   children.push(p);
   return p;
 }
@@ -87,7 +92,17 @@ async function setup() {
   const backend = path.join(ROOT, 'backend');
   await run(PY, ['manage.py', 'migrate', '-v', '0'], { cwd: backend, env });
   await run(PY, ['manage.py', 'seed_demo'], { cwd: backend, env });
-  start(PY, ['manage.py', 'runserver', `127.0.0.1:${API_PORT}`, '--noreload'], { cwd: backend, env });
+  const server = start(PY, ['manage.py', 'runserver', `127.0.0.1:${API_PORT}`, '--noreload'], { cwd: backend, env, log: true });
+  if (process.env.TRACE_REFRESH) {
+    const t0 = Date.now();
+    const onData = (buf) => {
+      for (const line of String(buf).split('\n')) {
+        if (/\/api\/v1\//.test(line)) console.log(`    [server +${((Date.now() - t0) / 1000).toFixed(3)}] ${line.trim()}`);
+      }
+    };
+    server.stdout?.on('data', onData);
+    server.stderr?.on('data', onData);
+  }
   start('npx', ['vite', '--port', String(UI_PORT), '--strictPort'], {
     cwd: path.join(ROOT, 'frontend'),
     env: { ...env, VITE_API_BASE_URL: `http://localhost:${API_PORT}/api/v1` },
@@ -105,7 +120,8 @@ function teardown() {
       // already gone
     }
   }
-  setTimeout(() => rmSync(work, { recursive: true, force: true }), 1500);
+  if (process.env.KEEP_WORK) console.log(`work dir kept: ${work}`);
+  else setTimeout(() => rmSync(work, { recursive: true, force: true }), 1500);
 }
 
 // ---------------------------------------------------------------------------
@@ -113,12 +129,19 @@ function teardown() {
 // ---------------------------------------------------------------------------
 
 async function newDevice(browser, username, password) {
-  const context = await browser.newContext({ locale: 'ar' });
+  const context = await browser.newContext({ locale: 'ar', viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   page.errors = [];
   page.on('console', (m) => m.type() === 'error' && !/401 \(Unauthorized\)/.test(m.text()) && page.errors.push(m.text()));
   page.on('pageerror', (e) => page.errors.push(String(e)));
   page.on('response', (r) => r.status() === 404 && page.errors.push(`404 ${new URL(r.url()).pathname}`));
+  if (process.env.TRACE_REFRESH) {
+    page.on('response', async (r) => {
+      if (!r.url().includes('/auth/refresh/')) return;
+      const sent = (await r.request().allHeaders())['cookie'] ?? '';
+      console.log(`    [refresh ${username}] t=${new Date().toISOString().slice(17, 23)} cookie-sent=${/refresh_token=\w/.test(sent)} status=${r.status()} req-cookie=${(sent.match(/refresh_token=([^;]+)/) ?? [])[1] ?? '-'} body=${(await r.text().catch(() => '')).slice(0, 40)} set=${((await r.allHeaders())['set-cookie'] ?? '-').slice(0, 60)}`);
+    });
+  }
   await page.goto(`${UI}/login`);
   await page.fill('#username', username);
   await page.fill('#password', password);
@@ -175,21 +198,36 @@ async function main() {
         throw new Error('bootstrap failed — stopping');
       }
     }
+    if (process.env.TRACE_REFRESH) {
+      const c = (await ahmed.context.cookies()).find((x) => x.name === 'refresh_token');
+      console.log(`    [cookie before reload] ${c ? c.value : 'none'}`);
+    }
+    if (process.env.RELOAD_DELAY) await ahmed.page.waitForTimeout(Number(process.env.RELOAD_DELAY));
     await ahmed.page.reload();
     const afterReload = await bootstrap(ahmed);
+    if (process.env.TRACE_REFRESH) {
+      const c = (await ahmed.context.cookies()).find((x) => x.name === 'refresh_token');
+      console.log(`    [cookie after reload] ${c ? c.value : 'none'}`);
+    }
     check('ahmed: التهيئة تصمد بعد إعادة التحميل', afterReload === null, afterReload ?? '');
 
     section('2) مراسلة مشفّرة عبر الواجهة');
     const subject = `اختبار واجهة ${Date.now()}`;
     const body = 'نص سري لا يراه الخادم — سطر ثانٍ للتأكد.';
-    await ahmed.page.goto(`${UI}/compose`);
+    // كما في Outlook: «رسالة جديدة» تُفتح في لوحة القراءة والقائمة باقية.
+    await ahmed.page.goto(`${UI}/mail/inbox`);
+    await ahmed.page.click('button:has-text("رسالة جديدة")');
+    await ahmed.page.waitForURL(/\/mail\/inbox\/compose/, { timeout: 10000 });
+    const listStays = await ahmed.page.locator('h2:has-text("الوارد")').isVisible();
+    check('رسالة جديدة في لوحة القراءة والقائمة باقية', listStays && (await ahmed.page.locator('#subject').isVisible()));
+    if (process.env.SHOTS) console.log(`    لقطة الإنشاء: ${await shot(ahmed, 'compose')}`);
     await ahmed.page.fill('#to', 'محمد');
     await ahmed.page.locator('button:has-text("محمد الشهري")').first().click();
     await ahmed.page.fill('#subject', subject);
     await ahmed.page.fill('#body', body);
-    await ahmed.page.click('button:has-text("إرسال مشفّر")');
+    await ahmed.page.getByRole('button', { name: 'إرسال', exact: true }).click();
     try {
-      await ahmed.page.waitForURL(/\/correspondence\//, { timeout: 30000 });
+      await ahmed.page.waitForURL(/\/mail\/sent\//, { timeout: 30000 });
       check('ahmed: أُرسلت', true);
     } catch {
       const msg = await ahmed.page.locator('.text-red-700, .text-red-600').allInnerTexts();
@@ -204,7 +242,7 @@ async function main() {
 
     section('3) المستلم يفك عبر الواجهة');
     await mohamed.page.goto(`${UI}/inbox`);
-    const row = mohamed.page.locator(`a:has-text("${subject}")`);
+    const row = mohamed.page.locator(`button:has-text("${subject}")`);
     await row.waitFor({ timeout: 30000 }).catch(() => undefined);
     check('mohamed: العنوان مفكوك في قائمة الوارد', (await row.count()) > 0);
     if (await row.count()) await row.first().click();
@@ -218,27 +256,42 @@ async function main() {
     check('mohamed: المحتوى باقٍ بعد إعادة التحميل (كاش مشفّر محلي)', (await mohamed.page.locator(`text=${body.slice(0, 20)}`).count()) > 0);
 
     section('4) الرد عبر الواجهة');
+    const parentUrl = mohamed.page.url();
     await mohamed.page.fill('textarea[aria-label="نص الرد"]', 'تم الاستلام.');
     await mohamed.page.click('button:has-text("إرسال الرد مشفّرًا")');
-    await mohamed.page.waitForURL((u) => !u.pathname.endsWith('/'), { timeout: 5000 }).catch(() => undefined);
+    const replied = await mohamed.page
+      .waitForURL((u) => u.href !== parentUrl && u.pathname.startsWith('/mail/sent/'), { timeout: 30000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!replied) {
+      const msg = await mohamed.page.locator('.text-red-600').allInnerTexts();
+      console.log(`    رد لم يُرسل: ${msg.join(' | ')} — ${await shot(mohamed, 'reply')} — console: ${mohamed.page.errors.join(' | ')}`);
+    }
+    check('mohamed: أُرسل الرد', replied);
     await ahmed.page.goto(`${UI}/inbox`);
-    const replyRow = ahmed.page.locator(`a:has-text("رد: ${subject}")`);
+    const replyRow = ahmed.page.locator(`button:has-text("رد: ${subject}")`);
     await replyRow.waitFor({ timeout: 30000 }).catch(() => undefined);
+    if (!(await replyRow.count())) console.log(`    لقطة الوارد: ${await shot(ahmed, 'inbox-reply')} — console: ${ahmed.page.errors.join(' | ')}`);
     check('ahmed: الرد مفكوك في الوارد', (await replyRow.count()) > 0);
 
     section('5) الشات: إرسال، فك، وبقاء بعد إعادة التحميل');
-    await ahmed.page.goto(`${UI}/direct-messages`);
-    await ahmed.page.click('button:has-text("محادثة مباشرة جديدة")');
+    await ahmed.page.goto(`${UI}/chat`);
+    const newChat = ahmed.page.locator('button[aria-label="رسالة مباشرة جديدة"]');
+    if (!(await newChat.waitFor({ timeout: 20000 }).then(() => true).catch(() => false))) {
+      const text = (await ahmed.page.locator('main').innerText().catch(() => '')).slice(0, 200);
+      throw new Error(`chat page did not render (${await shot(ahmed, 'chat')}); main: ${text}; console: ${ahmed.page.errors.join(' | ')}`);
+    }
+    await newChat.click();
     await ahmed.page.locator('label:has-text("محمد الشهري") input').check();
     await ahmed.page.click('button:has-text("إنشاء المحادثة")');
-    const chatInput = ahmed.page.locator('input[placeholder="اكتب رسالة مشفرة…"]');
+    const chatInput = ahmed.page.locator('textarea[aria-label="نص الرسالة"]');
     await chatInput.waitFor({ timeout: 20000 });
     const chatText = `مرحبا ${Date.now()}`;
     await chatInput.fill(chatText);
     await chatInput.press('Enter');
     await ahmed.page.locator(`text=${chatText}`).first().waitFor({ timeout: 15000 }).catch(() => undefined);
     check('ahmed: رسالته ظاهرة', (await ahmed.page.locator(`text=${chatText}`).count()) > 0);
-    await mohamed.page.goto(`${UI}/direct-messages`);
+    await mohamed.page.goto(`${UI}/chat`);
     await mohamed.page.locator(`text=${chatText}`).first().waitFor({ timeout: 30000 }).catch(() => undefined);
     check('mohamed: الرسالة مفكوكة', (await mohamed.page.locator(`text=${chatText}`).count()) > 0);
     await mohamed.page.reload();
@@ -253,6 +306,16 @@ async function main() {
     const hit = mohamed.page.locator('mark:has-text("سري")');
     await hit.first().waitFor({ timeout: 15000 }).catch(() => undefined);
     check('mohamed: البحث يجد كلمة من نص مفكوك', (await hit.count()) > 0);
+
+    if (process.env.SHOTS) {
+      await ahmed.page.goto(`${UI}/mail/inbox`);
+      await ahmed.page.locator('button:has-text("رد:")').first().click();
+      await ahmed.page.waitForTimeout(2500);
+      console.log(`    لقطة البريد: ${await shot(ahmed, 'mail')}`);
+      await mohamed.page.goto(`${UI}/chat`);
+      await mohamed.page.waitForTimeout(3000);
+      console.log(`    لقطة المحادثات: ${await shot(mohamed, 'chat')}`);
+    }
 
     section('7) أخطاء الـConsole');
     for (const dev of [ahmed, mohamed]) {

@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import { decryptTitle, getChatSeq } from '../../crypto/mls';
+import { useAuth } from '../auth/AuthContext';
 import { chatApi, type Conversation } from './api';
 
 const DM_FALLBACK = 'محادثة مباشرة';
@@ -11,6 +12,7 @@ const GROUP_FALLBACK = 'محادثة جماعية';
 
 /** يفك عنوان المحادثة؛ عند العجز يعود لعنوان احتياطي (مثلًا انضممنا متأخرين). */
 export function useConversationTitle(conversation: Conversation | null | undefined): string {
+  const { user } = useAuth();
   const [title, setTitle] = useState<string>(conversation?.title_plain ?? '');
   useEffect(() => {
     let cancelled = false;
@@ -22,7 +24,13 @@ export function useConversationTitle(conversation: Conversation | null | undefin
       setTitle(conversation.title_plain);
       return;
     }
-    setTitle(conversation.type === 'dm' ? DM_FALLBACK : GROUP_FALLBACK);
+    // المحادثة المباشرة تُسمّى باسم الطرف الآخر (كما في Slack).
+    if (conversation.type === 'dm') {
+      const other = conversation.members?.find((m) => String(m.id) !== String(user?.id));
+      setTitle(other ? other.full_name || other.username : DM_FALLBACK);
+      return;
+    }
+    setTitle(GROUP_FALLBACK);
     if (!conversation.title_enc) return;
     decryptTitle(conversation)
       .then((decrypted) => {
@@ -32,7 +40,7 @@ export function useConversationTitle(conversation: Conversation | null | undefin
     return () => {
       cancelled = true;
     };
-  }, [conversation]);
+  }, [conversation, user?.id]);
   return title;
 }
 

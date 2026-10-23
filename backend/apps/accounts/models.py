@@ -150,6 +150,12 @@ class UserSession(models.Model):
     expires_at = models.DateTimeField()
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_reason = models.CharField(max_length=64, blank=True, default="")
+    # Set when this session is rotated: the session that replaced it. Lets a
+    # refresh whose response was lost (page navigated / closed mid-request)
+    # recover within a short grace window instead of logging the user out.
+    replaced_by = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
 
     class Meta:
         db_table = "user_sessions"

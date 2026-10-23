@@ -19,6 +19,8 @@ TITLES = {
     "device_alert": "تغيّرت أجهزة حسابك — راجع قائمة أجهزتك",
     "announcement": "صدر تعميم جديد موجّه إليك",
     "announcement_reminder": "تذكير: تعميم بانتظار تأكيد اطلاعك",
+    # Push-only (no notification row per chat message — the chat sidebar shows unread).
+    "new_message": "رسالة محادثة جديدة",
 }
 
 
@@ -38,7 +40,22 @@ def to_dict(n: Notification) -> dict:
     }
 
 
-def notify(user_ids, kind: str, *, ref_type: str = "", ref_id=None) -> list[Notification]:
+def app_url(ref_type: str, ref_id) -> str:
+    """Where a click on the notification lands inside the app."""
+    if ref_type == "correspondence" and ref_id:
+        return f"/correspondence/{ref_id}"
+    if ref_type == "approval_request" and ref_id:
+        return f"/approvals/{ref_id}"
+    if ref_type == "announcement" and ref_id:
+        return f"/announcements/{ref_id}"
+    if ref_type == "trusted_device":
+        return "/devices"
+    return "/notifications"
+
+
+def notify(user_ids, kind: str, *, ref_type: str = "", ref_id=None, actor=None) -> list[Notification]:
+    """In-app notification rows + live WS push + Web Push to the users' browsers.
+    `actor` (optional) adds who did it — a display name, never content."""
     if kind not in TITLES:
         raise ValueError(f"unknown notification kind: {kind}")
     ids = list(dict.fromkeys(str(u) for u in user_ids))
@@ -56,6 +73,16 @@ def notify(user_ids, kind: str, *, ref_type: str = "", ref_id=None) -> list[Noti
     }
     pushes = [n for n in rows if kind not in muted.get(str(n.user_id), set())]
     transaction.on_commit(lambda: _push(pushes))
+    from . import push
+
+    push.push_to_users(
+        ids,
+        kind=kind,
+        title=TITLES[kind],
+        body=f"من {actor.full_name or actor.username}" if actor is not None else "",
+        url=app_url(ref_type, ref_id),
+        tag=f"{kind}:{ref_id}" if ref_id else kind,
+    )
     return rows
 
 
