@@ -128,20 +128,33 @@ function CreateKeyWizard({ onDone, rotating = false }: { onDone: () => void; rot
   }
 
   const expected = key?.groups[confirmGroup - 1] ?? '';
-  const ok = confirmText.trim().toUpperCase() === expected;
+  // يتجاهل المسافات والشرطات والعلامات المخفية التي قد تأتي مع النسخ واللصق.
+  const typed = confirmText.toUpperCase().replace(/[^A-Z2-7]/g, '');
+  const ok = typed === expected || (key !== null && typed === key.groups.join(''));
+  const mismatch = typed.length >= 4 && !ok;
   return (
     <div className="space-y-3">
-      <p className="text-sm text-gray-600">للتأكد من أنك حفظته: اكتب المجموعة رقم <strong>{confirmGroup}</strong> من المفتاح (4 رموز — الرقم مكتوب تحت كل مجموعة).</p>
+      <p className="text-sm text-gray-600">
+        للتأكد من أنك حفظته: اكتب المجموعة رقم <strong>{confirmGroup}</strong> (الرقم مكتوب تحت كل مجموعة)، أو الصق
+        المفتاح كاملًا من الملف الذي نزّلته.
+      </p>
       <Input
         dir="ltr"
         value={confirmText}
         onChange={(e) => setConfirmText(e.target.value)}
         placeholder="XXXX"
-        className="max-w-xs font-mono"
+        className="max-w-md font-mono"
         aria-label="مجموعة التأكيد من المفتاح"
         data-group={confirmGroup}
         autoComplete="off"
       />
+      {mismatch && (
+        <p className="text-sm text-red-600">
+          لا يطابق المفتاح المعروض الآن. اضغط «رجوع» وقارن بما على الشاشة — إن كان لديك ملف من محاولة سابقة فهو لمفتاح
+          آخر: نزّل الملف من جديد.
+        </p>
+      )}
+      {ok && <p className="text-sm text-emerald-700">مطابق ✓</p>}
       <div className="flex gap-2">
         <Button onClick={() => key && enable.mutate(key.raw)} disabled={!ok} loading={enable.isPending}>
           <UploadCloud className="h-4 w-4" />
