@@ -46,6 +46,8 @@ function CreateKeyWizard({ onDone, rotating = false }: { onDone: () => void; rot
   const [step, setStep] = useState<'intro' | 'show' | 'confirm'>('intro');
   const [copied, setCopied] = useState(false);
   const [confirmText, setConfirmText] = useState('');
+  // رقم المجموعة المطلوبة للتأكيد (لا «الأخيرة»: في صفحة عربية تلتبس الأولى بالأخيرة).
+  const [confirmGroup] = useState(() => 2 + Math.floor(Math.random() * 12));
   const enable = useMutation({ mutationFn: (raw: Uint8Array) => enableRecovery(raw), onSuccess: onDone });
 
   const display = key?.groups.join('-') ?? '';
@@ -94,8 +96,18 @@ function CreateKeyWizard({ onDone, rotating = false }: { onDone: () => void; rot
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           احفظ المفتاح الآن (نزّله أو اطبعه أو انسخه لمدير كلمات المرور). لن يُعرض مرة أخرى.
         </p>
-        <div dir="ltr" className="rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 p-4 text-center font-mono text-base font-bold tracking-wider text-gray-900" data-testid="recovery-key">
-          {display}
+        <div dir="ltr" className="rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 p-4">
+          <ol className="flex flex-wrap justify-center gap-2">
+            {key.groups.map((g, i) => (
+              <li key={i} className="flex flex-col items-center">
+                <span className="rounded-md bg-white px-2 py-1 font-mono text-base font-bold tracking-wider text-gray-900 shadow-sm">{g}</span>
+                <span className="mt-0.5 text-[10px] text-gray-400">{i + 1}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-3 select-all text-center font-mono text-xs text-gray-500" data-testid="recovery-key">
+            {display}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={download}>
@@ -115,18 +127,19 @@ function CreateKeyWizard({ onDone, rotating = false }: { onDone: () => void; rot
     );
   }
 
-  const expected = key?.groups[key.groups.length - 1] ?? '';
+  const expected = key?.groups[confirmGroup - 1] ?? '';
   const ok = confirmText.trim().toUpperCase() === expected;
   return (
     <div className="space-y-3">
-      <p className="text-sm text-gray-600">للتأكد من أنك حفظته: اكتب المجموعة الأخيرة من المفتاح (4 رموز).</p>
+      <p className="text-sm text-gray-600">للتأكد من أنك حفظته: اكتب المجموعة رقم <strong>{confirmGroup}</strong> من المفتاح (4 رموز — الرقم مكتوب تحت كل مجموعة).</p>
       <Input
         dir="ltr"
         value={confirmText}
         onChange={(e) => setConfirmText(e.target.value)}
         placeholder="XXXX"
         className="max-w-xs font-mono"
-        aria-label="المجموعة الأخيرة من المفتاح"
+        aria-label="مجموعة التأكيد من المفتاح"
+        data-group={confirmGroup}
         autoComplete="off"
       />
       <div className="flex gap-2">
@@ -328,7 +341,7 @@ export const Recovery = () => {
       <CardHeader>
         <CardTitle>الاستعادة والنسخ الاحتياطي</CardTitle>
         <p className="text-sm text-gray-500">
-          النسخة تُشفّر على جهازك بمفتاح الاستعادة قبل رفعها؛ الخادم والإدارة لا يستطيعون فتحها (§3.6).
+          النسخة تُشفّر على جهازك بمفتاح الاستعادة قبل رفعها؛ الخادم والإدارة لا يستطيعون فتحها.
         </p>
       </CardHeader>
       <CardContent>

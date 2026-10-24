@@ -336,7 +336,9 @@ async function main() {
     const recoveryKey = (await mohamed.page.locator('[data-testid="recovery-key"]').innerText()).trim();
     check('mohamed: مفتاح استعادة من 13 مجموعة', /^([A-Z2-7]{4}-){12}[A-Z2-7]{4}$/.test(recoveryKey));
     await mohamed.page.click('button:has-text("حفظته — متابعة")');
-    await mohamed.page.fill('input[aria-label="المجموعة الأخيرة من المفتاح"]', recoveryKey.split("-").at(-1));
+    const confirmInput = mohamed.page.locator('input[aria-label="مجموعة التأكيد من المفتاح"]');
+    const groupNo = Number(await confirmInput.getAttribute('data-group'));
+    await confirmInput.fill(recoveryKey.split('-')[groupNo - 1]);
     await mohamed.page.click('button:has-text("تفعيل النسخ الاحتياطي")');
     const enabled = await mohamed.page
       .locator('text=النسخ الاحتياطي التلقائي مفعّل')
