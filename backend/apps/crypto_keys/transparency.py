@@ -98,18 +98,24 @@ def log_public_key_b64() -> str:
 def append_event(event_type: str, *, user=None, device=None, payload: dict | None = None) -> KeyTransparencyEvent:
     """Append one signed entry to the user's transparency chain.
 
-    Runs in a transaction and locks the user's chain tail (select_for_update)
-    so two concurrent appends cannot fork the chain. `payload` must contain
-    identifiers and public-key hashes only.
+    Two concurrent appends must not fork the chain, so they are serialized by
+    locking the USER row. The chain table itself cannot be locked: PostgreSQL
+    requires UPDATE privilege for SELECT ... FOR UPDATE, and the runtime role
+    deliberately has none on this append-only table (deploy/postgres/grants.sql).
+    `payload` must contain identifiers and public-key hashes only.
     """
-    tail = (
-        KeyTransparencyEvent.objects.filter(user=user)
-        .order_by("-id")
-        .select_for_update()
-        .first()
-        if user is not None
-        else None
-    )
+    tail = None
+    if user is not None:
+        from apps.accounts.models import User
+
+        with transaction.atomic():
+            list(User.objects.select_for_update().filter(pk=user.pk).values_list("pk", flat=True))
+            tail = KeyTransparencyEvent.objects.filter(user=user).order_by("-id").first()
+            return _append(event_type, user=user, device=device, payload=payload, tail=tail)
+    return _append(event_type, user=user, device=device, payload=payload, tail=tail)
+
+
+def _append(event_type, *, user, device, payload, tail) -> KeyTransparencyEvent:
     prev_hash = bytes(tail.entry_hash) if tail is not None else GENESIS_PREV_HASH
     body = dict(payload or {})
     entry_hash = compute_entry_hash(prev_hash, body)
@@ -123,6 +129,19 @@ def append_event(event_type: str, *, user=None, device=None, payload: dict | Non
         payload=body,
         log_signature=signature,
     )
+
+
+def verify_all_chains(events) -> list[str]:
+    """Verify every user's chain in a mixed list of entries (e.g. the whole
+    table ordered by id). Chains are PER USER — each starts at genesis — so
+    the entries are grouped by user before verify_chain walks each one."""
+    chains: dict = {}
+    for event in events:
+        chains.setdefault(_get(event, "user_id"), []).append(event)
+    problems: list[str] = []
+    for chain in chains.values():
+        problems.extend(verify_chain(chain))
+    return problems
 
 
 def verify_chain(events) -> list[str]:

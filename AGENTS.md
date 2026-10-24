@@ -33,6 +33,12 @@ sh frontend/scripts/run-e2e-fresh.sh e2e-chat.mjs
 sh frontend/scripts/run-e2e-fresh.sh e2e-multidevice.mjs
 ```
 
+**PostgreSQL بصلاحيات الإنتاج (إلزامي قبل أي نشر يمس قاعدة البيانات):** اختبارات pytest تعمل على SQLite، وSQLite يتجاهل `FOR UPDATE` وصلاحيات الأدوار. شغّل PostgreSQL 16 مؤقتًا: هاجر بدور المالك، وطبّق `deploy/postgres/grants.sql`، ثم شغّل كدور التشغيل:
+`UI_SMOKE_DATABASE_URL=postgresql://corr_app@localhost:55432/correspondence npm run test:ui` و`E2E_DATABASE_URL=… sh frontend/scripts/run-e2e-fresh.sh <script>`. والقاعدة يجب أن تكون نظيفة لكل سكربت e2e.
+القواعد المستفادة:
+- لا `select_for_update` على جداول append-only، فهو يحتاج صلاحية UPDATE (`test_append_only_locks.py` يمنعه).
+- سلاسل الشفافية لكل مستخدم على حدة، فتُتحقق بـ`verify_all_chains`.
+
 ملاحظة: سكربتات e2e تولّد هويات جديدة لحسابات seed_demo؛ على قاعدة سبق تشغيلها عليها يرفض الخادم اعتماد الجهاز (403) لأن الهوية موجودة ومفتاحها ضاع — هذا سلوك صحيح، لذا استخدم `run-e2e-fresh.sh`.
 
 ## قواعد غير قابلة للكسر

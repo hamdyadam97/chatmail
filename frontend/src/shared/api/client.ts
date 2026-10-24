@@ -151,7 +151,8 @@ function extractErrorMessage(data: unknown): string | undefined {
       if (typeof value === 'string') return value;
     }
   }
-  if (typeof data === 'string' && data) return data;
+  // نص قصير فقط — صفحة HTML (خطأ 500/502 من الخادم أو nginx) ليست رسالة للمستخدم.
+  if (typeof data === 'string' && data && data.length < 300 && !/^\s*</.test(data)) return data;
   return undefined;
 }
 

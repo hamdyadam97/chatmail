@@ -22,6 +22,7 @@ let inFlightUser: string | null = null;
 
 /** أخطاء الـWASM تُرمى نصوصًا لا كائنات Error — نعرض نصها الفعلي. */
 function describe(err: unknown): string {
+  if (err instanceof ApiError && err.status >= 500) return 'تعذر تجهيز التشفير: خطأ في الخادم — أبلغ مسؤول النظام';
   if (err instanceof Error) return err.message;
   if (typeof err === 'string' && err) return `خطأ في طبقة التشفير: ${err}`;
   return 'تعذر تجهيز التشفير على هذا الجهاز';

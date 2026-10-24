@@ -29,7 +29,9 @@ stop_server() {
   fi
 }
 
-export DATABASE_URL="sqlite:///$WORK/e2e.sqlite3"
+# E2E_DATABASE_URL: a fresh PostgreSQL (migrated as owner + grants.sql) to run
+# the proof as the restricted runtime role, like production.
+export DATABASE_URL="${E2E_DATABASE_URL:-sqlite:///$WORK/e2e.sqlite3}"
 export ENCRYPTED_BLOB_ROOT="$WORK/blobs"
 "$PY" "$ROOT/backend/manage.py" migrate -v0 >/dev/null 2>&1 || { echo "migrate failed"; exit 2; }
 "$PY" "$ROOT/backend/manage.py" seed_demo >/dev/null 2>&1 || { echo "seed_demo failed"; exit 2; }

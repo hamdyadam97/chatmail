@@ -37,7 +37,10 @@ const section = (t) => console.log(`\n== ${t} ==`);
 const work = mkdtempSync(path.join(tmpdir(), 'ui-smoke-'));
 const env = {
   ...process.env,
-  DATABASE_URL: `sqlite:///${path.join(work, 'db.sqlite3').replace(/\\/g, '/')}`,
+  // UI_SMOKE_DATABASE_URL: run against a real PostgreSQL as the restricted
+  // runtime role (migrated + grants.sql applied beforehand) — catches what
+  // SQLite cannot, e.g. FOR UPDATE on append-only tables.
+  DATABASE_URL: process.env.UI_SMOKE_DATABASE_URL ?? `sqlite:///${path.join(work, 'db.sqlite3').replace(/\\/g, '/')}`,
   ENCRYPTED_BLOB_ROOT: path.join(work, 'blobs'),
   DEV_EXTRA_CORS_ORIGINS: UI,
   PYTHONWARNINGS: 'ignore',

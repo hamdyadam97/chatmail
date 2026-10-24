@@ -64,10 +64,10 @@ class Command(BaseCommand):
 
     def _transparency(self):
         from apps.crypto_keys.models import KeyTransparencyEvent
-        from apps.crypto_keys.transparency import verify_chain
+        from apps.crypto_keys.transparency import verify_all_chains
 
         events = list(KeyTransparencyEvent.objects.order_by("id"))
-        problems = verify_chain(events)
+        problems = verify_all_chains(events)
         if problems:
             return False, f"{len(problems)} problem(s), first: {problems[0]}"
         return True, f"{len(events)} event(s) verified"
