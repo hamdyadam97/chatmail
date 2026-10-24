@@ -36,7 +36,13 @@ echo "== frontend build (same-origin API)"
 
 echo "== restart (our service only; nginx is reloaded gracefully, never restarted)"
 systemctl restart correspondence-web
-nginx -t || { echo "nginx config invalid - NOT reloading (other sites keep the old config)"; exit 1; }
+if ! nginx -t; then
+    # Never leave the server in a state where nobody can reload nginx: if our
+    # site is the culprit, disable it again so the other sites stay manageable.
+    rm -f /etc/nginx/sites-enabled/correspondence
+    nginx -t >/dev/null 2>&1 && echo "our nginx site was invalid and has been disabled - other sites untouched"
+    echo "NOT reloading nginx"; exit 1
+fi
 systemctl reload nginx
 
 echo "== post-deploy checks"

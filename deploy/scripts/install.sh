@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # First-time installation on Ubuntu 24.04 LTS — native, no Docker.
 #
-#   sudo DOMAIN=mail.example.org CORR_OWNER_PASSWORD=... CORR_APP_PASSWORD=... \
+#   sudo DOMAIN=mail.example.org CERT_EMAIL=it@example.org CORR_OWNER_PASSWORD=... CORR_APP_PASSWORD=... \
 #        /opt/correspondence/deploy/scripts/install.sh
 #
 # Prerequisite: the repository is at /opt/correspondence and
@@ -109,18 +109,49 @@ echo "== 6. systemd units"
 install -m 0644 "$APP"/deploy/systemd/*.service "$APP"/deploy/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 
-echo "== 7. nginx site"
-sed "s/mail.example.org/${DOMAIN}/g" "$APP/deploy/nginx/correspondence.conf" > /etc/nginx/sites-available/correspondence
-if grep -rlsE "server_name[^;]*\b${DOMAIN}\b" /etc/nginx/sites-enabled /etc/nginx/conf.d | grep -vq '/correspondence$'; then
+echo "== 7. TLS certificate, then the nginx site"
+# The site references its certificate: enabling it before the certificate
+# exists would make `nginx -t` fail for EVERY site on this server. So: get
+# the certificate first through a temporary HTTP-only block, then enable.
+if grep -rlsE "server_name[^;]*\b${DOMAIN}\b" /etc/nginx/sites-enabled /etc/nginx/conf.d | grep -vqE '/correspondence(-acme)?$'; then
     echo "   ${DOMAIN} is already served by another nginx site - refusing to take it over."; exit 1
 fi
+install -d /var/www/letsencrypt
+CERT="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+if [ ! -f "$CERT" ]; then
+    cat > /etc/nginx/sites-available/correspondence-acme <<ACME
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+    location /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    location / { return 404; }
+}
+ACME
+    ln -sf /etc/nginx/sites-available/correspondence-acme /etc/nginx/sites-enabled/correspondence-acme
+    if ! nginx -t >/dev/null 2>&1; then
+        rm -f /etc/nginx/sites-enabled/correspondence-acme
+        echo "   temporary ACME block rejected by nginx -t - nothing changed"; exit 1
+    fi
+    systemctl reload nginx
+    email_args=(--register-unsafely-without-email)
+    [ -n "${CERT_EMAIL:-}" ] && email_args=(-m "$CERT_EMAIL")
+    certbot certonly --webroot -w /var/www/letsencrypt -d "$DOMAIN" --non-interactive --agree-tos \
+        "${email_args[@]}" --deploy-hook "systemctl reload nginx" || true
+    rm -f /etc/nginx/sites-enabled/correspondence-acme /etc/nginx/sites-available/correspondence-acme
+    systemctl reload nginx
+    if [ ! -f "$CERT" ]; then
+        echo "   Could not obtain a certificate for ${DOMAIN} (does its DNS point here?)."
+        echo "   Nothing else was changed; fix DNS and re-run install.sh."; exit 1
+    fi
+fi
+sed "s/mail.example.org/${DOMAIN}/g" "$APP/deploy/nginx/correspondence.conf" > /etc/nginx/sites-available/correspondence
 ln -sf /etc/nginx/sites-available/correspondence /etc/nginx/sites-enabled/correspondence
 # (other sites, including 'default', are left exactly as they are)
-install -d /var/www/letsencrypt
-if [ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
-    echo "   No certificate yet. Obtain one, e.g.:"
-    echo "   certbot certonly --webroot -w /var/www/letsencrypt -d ${DOMAIN}"
-    echo "   (or place your organisation's certificate at that path), then run deploy.sh."
+if ! nginx -t >/dev/null 2>&1; then
+    rm -f /etc/nginx/sites-enabled/correspondence
+    echo "   Our nginx site failed nginx -t and was disabled again (other sites untouched):"
+    nginx -t; exit 1
 fi
 
 echo "== 8. build + migrate + start"
