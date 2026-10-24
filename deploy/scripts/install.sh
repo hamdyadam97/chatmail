@@ -17,6 +17,10 @@
 set -euo pipefail
 
 : "${DOMAIN:?set DOMAIN}"
+# Database passwords: from the environment, or from make-env.sh's root-only file.
+if [ -z "${CORR_OWNER_PASSWORD:-}" ] && [ -f /etc/correspondence/db-passwords.env ]; then
+    set -a; . /etc/correspondence/db-passwords.env; set +a
+fi
 : "${CORR_OWNER_PASSWORD:?set CORR_OWNER_PASSWORD}"
 : "${CORR_APP_PASSWORD:?set CORR_APP_PASSWORD}"
 APP=/opt/correspondence

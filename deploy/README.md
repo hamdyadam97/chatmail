@@ -43,6 +43,12 @@
 sudo DOMAIN=mail.example.org bash deploy/scripts/preflight.sh
 ```
 
+الأسرار تُنشأ مباشرة على السيرفر دون عرضها (لا نسخ يدوي):
+
+```bash
+sudo DOMAIN=mail.example.org CERT_EMAIL=it@example.org bash deploy/scripts/make-env.sh
+```
+
 `install.sh` يرفض المتابعة من تلقاء نفسه إن وجد:
 - المنفذ 80/443 لخادم ويب غير nginx (Apache أو Caddy أو حاوية). عندها نربط التطبيق بذلك الـproxy بدلًا من nginx.
 - PostgreSQL أو Redis داخل حاوية على المنافذ الافتراضية.
