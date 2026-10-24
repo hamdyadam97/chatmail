@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.venv-test/
+.pytest_cache/
+
+# Local databases, blobs and dev-only keys (production secrets live in /etc/correspondence)
+*.sqlite3
+backend/var/
+backend/blobs/
+backend/trial-blobs/
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Deploy toolchain fetched on the server
+.tools/
+
+# Spikes build output
+spikes/**/target/

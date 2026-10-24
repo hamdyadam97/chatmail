@@ -47,19 +47,19 @@ def ensure_active_device(user, request) -> TrustedDevice:
     """
     user_agent = request.META.get("HTTP_USER_AGENT", "") if request is not None else ""
     label, platform = parse_device_info(user_agent)
+    # Only keyless placeholder rows are reused. A row carrying crypto keys is
+    # a real E2EE device: a login must never pick it up — and above all never
+    # reactivate it after the user revoked it (stolen laptop).
     device, created = TrustedDevice.objects.get_or_create(
         user=user,
         device_label=label,
         platform=platform,
+        identity_sign_pub__isnull=True,
         defaults={"app_version": "api/1.0", "status": "active"},
     )
-    if not created:
-        changed = False
-        if device.status != "active":
-            device.status = "active"
-            changed = True
-        if changed:
-            device.save(update_fields=["status"])
+    if not created and device.status != "active":
+        device.status = "active"
+        device.save(update_fields=["status"])
     device.last_seen_at = timezone.now()
     device.save(update_fields=["last_seen_at"])
     return device

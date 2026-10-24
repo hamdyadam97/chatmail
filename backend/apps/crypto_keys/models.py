@@ -105,6 +105,8 @@ class KeyTransparencyEvent(models.Model):
         ("device_revoked", "Device revoked"),
         ("key_uploaded", "Key uploaded"),
         ("key_rotated", "Key rotated"),
+        # A browser took over a lost device from its encrypted recovery backup.
+        ("device_restored", "Device restored from backup"),
     ]
 
     id = models.BigAutoField(primary_key=True)  # bigserial — the global seq
@@ -172,3 +174,39 @@ class KeyVerificationEvent(models.Model):
 
     def __str__(self):
         return f"verify:{self.verifier_device_id}->{self.verified_device_id}:{self.result}"
+
+
+class EncryptedKeyBackup(models.Model):
+    """Encrypted recovery bundle (docs/phase1/03 §3.6, ERD encrypted_key_backups).
+
+    The client encrypts {identity/device seeds, MLS state, locally decrypted
+    mail and chat} with AES-256-GCM under a key derived from the user's
+    Recovery Key BEFORE upload. The server stores ciphertext + public KDF
+    parameters only; there is no column that could hold the decryption key.
+    ``key_id`` is a one-way fingerprint of the recovery key (HKDF output, not
+    the key) so a client can tell which backups a key opens.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE, related_name="key_backups")
+    device = models.ForeignKey(
+        "accounts.TrustedDevice", on_delete=models.CASCADE, related_name="key_backups"
+    )
+    version = models.IntegerField()
+    format = models.IntegerField(default=1)
+    kdf = models.CharField(max_length=32, default="HKDF-SHA256")
+    key_id = models.CharField(max_length=32)
+    iv = models.BinaryField(max_length=12)
+    ciphertext = models.BinaryField()
+    ciphertext_size = models.IntegerField()
+    ciphertext_sha256 = models.BinaryField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "encrypted_key_backups"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "version"], name="uq_key_backup_user_version"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "device", "-version"], name="idx_key_backup_device"),
+        ]

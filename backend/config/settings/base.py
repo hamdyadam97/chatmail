@@ -113,7 +113,8 @@ if REDIS_URL:
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
-            "CONFIG": {"hosts": [REDIS_URL]},
+            # Own prefix: a shared Redis may also carry other apps' Channels traffic.
+            "CONFIG": {"hosts": [REDIS_URL], "prefix": "corr"},
         }
     }
 else:
@@ -163,6 +164,8 @@ REST_FRAMEWORK = {
 # downloads go through the participant-gated /api/v1/attachments/{id}/ view.
 ENCRYPTED_BLOB_ROOT = Path(os.environ.get("ENCRYPTED_BLOB_ROOT", BASE_DIR / "var" / "blobs"))
 ENCRYPTED_ATTACHMENT_MAX_BYTES = int(os.environ.get("ENCRYPTED_ATTACHMENT_MAX_BYTES", 25 * 1024 * 1024))
+# Encrypted recovery bundle (keys + MLS state + locally decrypted mail/chat).
+KEY_BACKUP_MAX_BYTES = int(os.environ.get("KEY_BACKUP_MAX_BYTES", 25 * 1024 * 1024))
 CORRESPONDENCE_MAX_ATTACHMENTS = 20
 # Decided default (AGENTS.md): BCC off until explicitly requested.
 CORRESPONDENCE_BCC_ENABLED = os.environ.get("CORRESPONDENCE_BCC_ENABLED", "0") == "1"
@@ -217,3 +220,13 @@ CORS_ALLOW_ALL_ORIGINS = False
 # The refresh-token cookie must be sent/received cross-origin, so responses
 # must carry Access-Control-Allow-Credentials (and a specific origin, never '*').
 CORS_ALLOW_CREDENTIALS = True
+# Encrypted backup uploads carry their metadata in headers (body = ciphertext).
+from corsheaders.defaults import default_headers  # noqa: E402
+
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    "x-backup-device",
+    "x-backup-key-id",
+    "x-backup-iv",
+    "x-backup-signature",
+)

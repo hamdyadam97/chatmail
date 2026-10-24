@@ -374,3 +374,29 @@ def test_server_search_matches_reference_metadata_only(api_client, office):
 
 def test_unknown_folder_is_rejected(api_client, office):
     assert api_client.get(f"{CORR_URL}?folder=everything", **office["h_s"]).status_code == 400
+
+
+@pytest.mark.django_db
+def test_thread_items_carry_my_unread_flag_only(api_client, office):
+    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
+    assert reply(api_client, office["h_r1"], root["id"], office["d_r1"]).status_code == 201
+    mine = {i["id"]: i["unread"] for i in api_client.get(f"{CORR_URL}{root['id']}/", **office["h_r1"]).json()["thread_items"]}
+    assert mine[root["id"]] is True and list(mine.values()).count(False) == 1  # my own reply is never "unread"
+    api_client.post(f"{CORR_URL}{root['id']}/read/", **office["h_r1"])
+    items = api_client.get(f"{CORR_URL}{root['id']}/", **office["h_r1"]).json()["thread_items"]
+    assert not any(i["unread"] for i in items)
+    sender_view = api_client.get(f"{CORR_URL}{root['id']}/", **office["h_s"]).json()["thread_items"]
+    assert [i["unread"] for i in sender_view] == [False, True]  # the reply is unread for the sender
+
+
+@pytest.mark.django_db
+def test_list_rows_carry_whole_conversation_stats(api_client, office):
+    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
+    assert reply(api_client, office["h_r1"], root["id"], office["d_r1"]).status_code == 201
+    assert reply(api_client, office["h_s"], root["id"], office["d_s"]).status_code == 201
+    inbox = api_client.get(f"{CORR_URL}?folder=inbox", **office["h_r1"]).json()["results"]
+    row = next(r for r in inbox if r["id"] == root["id"])
+    assert row["thread_count"] == 3  # includes my own reply, which is not in my inbox
+    assert row["thread_last_at"] > row["sent_at"]
+    # an outsider's view never leaks the size of threads they cannot read
+    assert api_client.get(f"{CORR_URL}?folder=inbox", **office["h_o"]).json()["count"] == 0

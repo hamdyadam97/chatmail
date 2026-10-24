@@ -5,6 +5,7 @@ or an explicit sender check — the same object-permission gate for everyone,
 whatever their role (AGENTS rule 5, SEC-01/02).
 """
 from django.conf import settings
+from django.db.models import Count, Max
 from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
@@ -18,7 +19,7 @@ from rest_framework.views import APIView
 from .. import services
 from apps.messaging.services import b64encode
 
-from ..models import Correspondence, EncryptedAttachment
+from ..models import Correspondence, CorrespondenceParticipant, EncryptedAttachment
 from .serializers import (
     FlagsSerializer,
     PrepareSerializer,
@@ -63,6 +64,16 @@ def _detail_payload(request, correspondence):
         .select_related("sender", "content_message")
         .order_by("sent_at")
     )
+    # Caller's own unread rows only (per-user metadata; the conversation view
+    # expands these and marks them read).
+    unread = {
+        str(cid)
+        for cid in CorrespondenceParticipant.objects.filter(
+            user=request.user, correspondence__in=siblings, read_at__isnull=True
+        )
+        .exclude(kind="from")
+        .values_list("correspondence_id", flat=True)
+    }
     thread_items = [
         {
             "id": str(s.id),
@@ -71,6 +82,7 @@ def _detail_payload(request, correspondence):
             "sent_at": s.sent_at.isoformat(),
             "reply_to_id": str(s.reply_to_id) if s.reply_to_id else None,
             "content_seq": s.content_message.seq,
+            "unread": str(s.id) in unread,
         }
         for s in siblings
     ]
@@ -106,10 +118,26 @@ class CorrespondenceListCreateView(APIView):
 
         paginator = CorrespondencePagination()
         page = paginator.paginate_queryset(rows, request, view=self)
+        # Whole-conversation size and last activity (my readable items only),
+        # so the list can show one row per conversation like Outlook.
+        stats = {
+            str(r["thread_id"]): r
+            for r in Correspondence.objects.filter(
+                thread_id__in={row.correspondence.thread_id for row in page},
+                status__in=["sent", "closed"],
+                id__in=services.readable_ids_subquery(request.user),
+            )
+            .values("thread_id")
+            .annotate(n=Count("id"), last=Max("sent_at"))
+        }
         items = []
         for row in page:
             c = row.correspondence
-            items.append(correspondence_summary(c, row, services.visible_participants(c, request.user)))
+            item = correspondence_summary(c, row, services.visible_participants(c, request.user))
+            st = stats.get(str(c.thread_id))
+            item["thread_count"] = st["n"] if st else 1
+            item["thread_last_at"] = st["last"].isoformat() if st and st["last"] else item["sent_at"]
+            items.append(item)
         return paginator.get_paginated_response(items)
 
     def post(self, request):

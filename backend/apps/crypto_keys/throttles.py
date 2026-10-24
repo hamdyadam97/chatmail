@@ -40,3 +40,13 @@ class KeyClaimThrottle(SimpleRateThrottle):
 
     def get_cache_key(self, request, view):
         return self.cache_format % {"scope": self.scope, "ident": str(request.user.pk)}
+
+
+class KeyBackupThrottle(SimpleRateThrottle):
+    """Backups are re-uploaded after local changes (debounced); this caps abuse."""
+
+    scope = "crypto_key_backup"
+    rate = "60/hour"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": str(request.user.pk)}

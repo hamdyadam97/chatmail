@@ -8,6 +8,7 @@ import { useAuth } from '../features/auth/AuthContext';
 import { initMlsWasm } from './wasm';
 import { bootstrapUserCrypto, refreshDeviceStatus } from './identity';
 import { ensureKeyPackage } from './mls';
+import { startAutoBackup } from './recovery';
 import { ApiError } from '../shared/api';
 
 export type CryptoBootstrapState =
@@ -39,6 +40,7 @@ export function runCryptoBootstrap(user: { id: number | string }): Promise<Crypt
         const refreshed = await refreshDeviceStatus(user.id);
         if (refreshed && refreshed.status === 'active') {
           result.device.status = 'active';
+          startAutoBackup(user.id);
           return { status: 'ready', deviceId: refreshed.deviceId };
         }
         return { status: 'pending_approval', deviceId: result.device.deviceId };
@@ -50,6 +52,8 @@ export function runCryptoBootstrap(user: { id: number | string }): Promise<Crypt
         // فشلها (حد معدل، انقطاع) لا يعطّل التطبيق وتُعاد في الزيارة التالية.
         console.warn('key package top-up deferred', err);
       }
+      // نسخة مشفّرة تلقائية بعد كل تغيير (إن كان مفتاح الاستعادة مُعدًّا).
+      startAutoBackup(user.id);
       return { status: 'ready', deviceId: result.device.deviceId };
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {

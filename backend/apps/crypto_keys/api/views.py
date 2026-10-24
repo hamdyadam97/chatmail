@@ -26,9 +26,12 @@ All endpoints require authentication. State changes append a signed
 key-transparency event transactionally and are audit-logged (identifiers
 only).
 """
+from django.conf import settings
+from django.http import HttpResponse
 from django.db.models import Q
 from django.utils import timezone
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import BaseParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.status import HTTP_201_CREATED
@@ -47,7 +50,7 @@ from .serializers import (
     KeyQuerySerializer,
     KeyUploadSerializer,
 )
-from ..throttles import KeyClaimThrottle, KeyQueryThrottle, KeyUploadThrottle
+from ..throttles import KeyBackupThrottle, KeyClaimThrottle, KeyQueryThrottle, KeyUploadThrottle
 
 
 def _audit(request, action, *, target_type="", target_id=None, metadata=None):
@@ -320,3 +323,105 @@ class KeyCountView(APIView):
             .count()
         )
         return Response({"device_id": str(device.id), "available": available})
+
+
+# --- Encrypted recovery backups ---------------------------------------------------
+
+class _BackupParser(BaseParser):
+    """Raw ciphertext; size bounded before reading."""
+
+    media_type = "application/octet-stream"
+
+    def parse(self, stream, media_type=None, parser_context=None):
+        limit = settings.KEY_BACKUP_MAX_BYTES
+        try:
+            declared = int(parser_context["request"].META.get("CONTENT_LENGTH") or 0)
+        except ValueError:
+            declared = 0
+        if declared > limit:
+            raise ValidationError({"backup": "النسخة أكبر من المسموح."})
+        data = stream.read(limit + 1) if stream is not None else b""
+        if len(data) > limit:
+            raise ValidationError({"backup": "النسخة أكبر من المسموح."})
+        return data
+
+
+class KeyBackupListCreateView(APIView):
+    """GET my backups (metadata only) · POST a new encrypted bundle.
+
+    POST body = ciphertext (application/octet-stream); headers carry
+    X-Backup-Device, X-Backup-Key-Id, X-Backup-IV (base64) and
+    X-Backup-Signature (base64 Ed25519 by that device's key)."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [_BackupParser]
+
+    def get_throttles(self):
+        return [KeyBackupThrottle()] if self.request.method == "POST" else []
+
+    def get(self, request):
+        return Response([services.backup_to_dict(b) for b in services.list_backups(request.user)])
+
+    def post(self, request):
+        data = request.data
+        if not isinstance(data, (bytes, bytearray)):
+            raise ValidationError({"backup": "أرسل النسخة كـ application/octet-stream."})
+        headers = request.headers
+        backup = services.store_backup(
+            request.user,
+            device_id=headers.get("X-Backup-Device", ""),
+            key_id=headers.get("X-Backup-Key-Id", ""),
+            iv=services.b64decode_field(headers.get("X-Backup-IV"), "iv", 12),
+            ciphertext=bytes(data),
+            signature=services.b64decode_field(
+                headers.get("X-Backup-Signature"), "signature", services.ED25519_SIGNATURE_LEN
+            ),
+        )
+        _audit(
+            request,
+            "key_backup_uploaded",
+            target_type="trusted_device",
+            target_id=backup.device_id,
+            metadata={"version": backup.version, "size": backup.ciphertext_size},
+        )
+        return Response(services.backup_to_dict(backup), status=HTTP_201_CREATED)
+
+
+class KeyBackupDownloadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, backup_id):
+        backup = services.get_own_backup(request.user, backup_id)
+        _audit(request, "key_backup_downloaded", target_type="trusted_device", target_id=backup.device_id,
+               metadata={"version": backup.version})
+        response = HttpResponse(bytes(backup.ciphertext), content_type="application/octet-stream")
+        response["Cache-Control"] = "no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
+class KeyBackupRestoredView(APIView):
+    """The browser opened a backup and took over its device (see services.complete_restore)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        body = request.data if isinstance(request.data, dict) else {}
+        device, abandoned = services.complete_restore(
+            request.user,
+            request,
+            device_id=body.get("device_id"),
+            backup_id=body.get("backup_id"),
+            abandoned_device_id=body.get("abandoned_device_id") or None,
+            issued_at=body.get("issued_at"),
+            signature=services.b64decode_field(body.get("signature"), "signature", services.ED25519_SIGNATURE_LEN),
+        )
+        notify([request.user.id], "device_alert", ref_type="trusted_device", ref_id=device.id)
+        _audit(
+            request,
+            "device_restored",
+            target_type="trusted_device",
+            target_id=device.id,
+            metadata={"abandoned_device_id": str(abandoned.id) if abandoned else None},
+        )
+        return Response({"device_id": str(device.id), "status": device.status})

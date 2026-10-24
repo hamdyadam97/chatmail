@@ -56,10 +56,15 @@ export {
 } from './mls';
 export {
   generateRecoveryKey,
-  encryptRecoveryBundle,
-  uploadBackup,
+  parseRecoveryKey,
+  enableRecovery,
+  backupNow,
+  recoveryStatus,
+  checkKeyAgainstServer,
+  startAutoBackup,
+  stopAutoBackup,
   restoreFromRecoveryKey,
   type RecoveryKeyDisplay,
-  type RecoveryBackupRecord,
+  type RecoveryStatus,
 } from './recovery';
 export { setAuthBridge, useAuthUser } from './authBridge';

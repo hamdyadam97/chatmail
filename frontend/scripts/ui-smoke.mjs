@@ -222,7 +222,7 @@ async function main() {
     check('رسالة جديدة في لوحة القراءة والقائمة باقية', listStays && (await ahmed.page.locator('#subject').isVisible()));
     if (process.env.SHOTS) console.log(`    لقطة الإنشاء: ${await shot(ahmed, 'compose')}`);
     await ahmed.page.fill('#to', 'محمد');
-    await ahmed.page.locator('button:has-text("محمد الشهري")').first().click();
+    await ahmed.page.locator('[role="listbox"] [role="option"]:has-text("محمد الشهري")').first().click();
     await ahmed.page.fill('#subject', subject);
     await ahmed.page.fill('#body', body);
     await ahmed.page.getByRole('button', { name: 'إرسال', exact: true }).click();
@@ -255,24 +255,34 @@ async function main() {
     await mohamed.page.locator(`text=${body.slice(0, 20)}`).first().waitFor({ timeout: 20000 }).catch(() => undefined);
     check('mohamed: المحتوى باقٍ بعد إعادة التحميل (كاش مشفّر محلي)', (await mohamed.page.locator(`text=${body.slice(0, 20)}`).count()) > 0);
 
-    section('4) الرد عبر الواجهة');
-    const parentUrl = mohamed.page.url();
+    section('4) الرد عبر الواجهة (داخل المحادثة نفسها)');
+    await mohamed.page.click('button:has-text("رد على الجميع")');
     await mohamed.page.fill('textarea[aria-label="نص الرد"]', 'تم الاستلام.');
     await mohamed.page.click('button:has-text("إرسال الرد مشفّرًا")');
+    const cards = mohamed.page.locator('[aria-label="رسائل المحادثة"] article');
     const replied = await mohamed.page
-      .waitForURL((u) => u.href !== parentUrl && u.pathname.startsWith('/mail/sent/'), { timeout: 30000 })
+      .waitForFunction(() => document.querySelectorAll('[aria-label="رسائل المحادثة"] article').length >= 2, null, { timeout: 30000 })
       .then(() => true)
       .catch(() => false);
     if (!replied) {
       const msg = await mohamed.page.locator('.text-red-600').allInnerTexts();
       console.log(`    رد لم يُرسل: ${msg.join(' | ')} — ${await shot(mohamed, 'reply')} — console: ${mohamed.page.errors.join(' | ')}`);
     }
-    check('mohamed: أُرسل الرد', replied);
+    await cards.first().locator('text=تم الاستلام.').waitFor({ timeout: 20000 }).catch(() => undefined);
+    check('mohamed: أُرسل الرد وظهر أعلى المحادثة', replied && (await cards.first().innerText()).includes('تم الاستلام.'));
     await ahmed.page.goto(`${UI}/inbox`);
     const replyRow = ahmed.page.locator(`button:has-text("رد: ${subject}")`);
     await replyRow.waitFor({ timeout: 30000 }).catch(() => undefined);
     if (!(await replyRow.count())) console.log(`    لقطة الوارد: ${await shot(ahmed, 'inbox-reply')} — console: ${ahmed.page.errors.join(' | ')}`);
     check('ahmed: الرد مفكوك في الوارد', (await replyRow.count()) > 0);
+    if (await replyRow.count()) {
+      await replyRow.first().click();
+      const conv = ahmed.page.locator('[aria-label="رسائل المحادثة"]');
+      await conv.locator('text=تم الاستلام.').first().waitFor({ timeout: 20000 }).catch(() => undefined);
+      await conv.locator(`text=${body.slice(0, 20)}`).first().waitFor({ timeout: 20000 }).catch(() => undefined);
+      const text = await conv.innerText().catch(() => '');
+      check('ahmed: الرد والأصل معروضان معًا في المحادثة', text.includes('تم الاستلام.') && text.includes(body.slice(0, 20)));
+    }
 
     section('5) الشات: إرسال، فك، وبقاء بعد إعادة التحميل');
     await ahmed.page.goto(`${UI}/chat`);
@@ -317,8 +327,78 @@ async function main() {
       console.log(`    لقطة المحادثات: ${await shot(mohamed, 'chat')}`);
     }
 
-    section('7) أخطاء الـConsole');
-    for (const dev of [ahmed, mohamed]) {
+    section('7) النسخ الاحتياطي والاستعادة على متصفح جديد');
+    await mohamed.page.goto(`${UI}/recovery`);
+    await mohamed.page.click('button:has-text("إنشاء مفتاح الاستعادة")');
+    const recoveryKey = (await mohamed.page.locator('[data-testid="recovery-key"]').innerText()).trim();
+    check('mohamed: مفتاح استعادة من 13 مجموعة', /^([A-Z2-7]{4}-){12}[A-Z2-7]{4}$/.test(recoveryKey));
+    await mohamed.page.click('button:has-text("حفظته — متابعة")');
+    await mohamed.page.fill('input[aria-label="المجموعة الأخيرة من المفتاح"]', recoveryKey.split("-").at(-1));
+    await mohamed.page.click('button:has-text("تفعيل النسخ الاحتياطي")');
+    const enabled = await mohamed.page
+      .locator('text=النسخ الاحتياطي التلقائي مفعّل')
+      .waitFor({ timeout: 30000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!enabled) console.log(`    لقطة: ${await shot(mohamed, 'recovery-enable')} — console: ${mohamed.page.errors.join(' | ')}`);
+    check('mohamed: رُفعت أول نسخة مشفّرة', enabled);
+    await mohamed.context.close(); // «ضاع» المتصفح بكل بياناته المحلية
+
+    const mohamed2 = await newDevice(browser, 'mohamed', 'Mohamed@12345');
+    const pendingState = await bootstrap(mohamed2);
+    check('متصفح جديد: بانتظار الاعتماد (لا مفاتيح)', (pendingState ?? '').includes('بانتظار الاعتماد'), pendingState ?? 'ready?!');
+    await mohamed2.page.goto(`${UI}/recovery`);
+    await mohamed2.page.fill('input[aria-label="مفتاح الاستعادة"]', recoveryKey.toLowerCase().replace(/-/g, ' '));
+    await mohamed2.page.check('text=جهازي القديم مفقود أو لم يعد يعمل');
+    await mohamed2.page.click('button:has-text("استعادة")');
+    const restored = await mohamed2.page
+      .waitForURL(/\/mail\/inbox/, { timeout: 45000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!restored) {
+      const msg = await mohamed2.page.locator('.text-red-600').allInnerTexts();
+      console.log(`    استعادة فشلت: ${msg.join(' | ')} — ${await shot(mohamed2, 'restore')} — console: ${mohamed2.page.errors.join(' | ')}`);
+    }
+    check('mohamed (متصفح جديد): تمت الاستعادة بالمفتاح', restored);
+    const oldRow = mohamed2.page.locator(`button:has-text("${subject}")`);
+    await oldRow.first().waitFor({ timeout: 30000 }).catch(() => undefined);
+    check('المراسلة القديمة مفكوكة بعد الاستعادة', (await oldRow.count()) > 0);
+    if (await oldRow.count()) {
+      await oldRow.first().click();
+      await mohamed2.page.locator(`text=${body.slice(0, 20)}`).first().waitFor({ timeout: 20000 }).catch(() => undefined);
+      check('نص المراسلة القديمة مفكوك بعد الاستعادة', (await mohamed2.page.locator(`text=${body.slice(0, 20)}`).count()) > 0);
+    }
+    await mohamed2.page.goto(`${UI}/chat`);
+    await mohamed2.page.locator(`text=${chatText}`).first().waitFor({ timeout: 30000 }).catch(() => undefined);
+    check('رسالة الشات القديمة باقية بعد الاستعادة', (await mohamed2.page.locator(`text=${chatText}`).count()) > 0);
+
+    // ما بعد الاستعادة: حالة MLS المستعادة تفك الجديد أيضًا.
+    const subject2 = `بعد الاستعادة ${Date.now()}`;
+    await ahmed.page.goto(`${UI}/mail/inbox`);
+    await ahmed.page.click('button:has-text("رسالة جديدة")');
+    const composeOpen = await ahmed.page.locator('#subject').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    if (!composeOpen) throw new Error(`compose did not open (${await shot(ahmed, 'compose2')}); console: ${ahmed.page.errors.join(' | ')}`);
+    await ahmed.page.fill('#to', 'محمد');
+    await ahmed.page.locator('[role="listbox"] [role="option"]:has-text("محمد الشهري")').first().click();
+    await ahmed.page.fill('#subject', subject2);
+    await ahmed.page.fill('#body', 'مراسلة جديدة بعد الاستعادة.');
+    await ahmed.page.getByRole('button', { name: 'إرسال', exact: true }).click();
+    await ahmed.page.waitForURL(/\/mail\/sent\//, { timeout: 30000 }).catch(() => undefined);
+    await mohamed2.page.goto(`${UI}/mail/inbox`);
+    const newRow = mohamed2.page.locator(`button:has-text("${subject2}")`);
+    await newRow.first().waitFor({ timeout: 40000 }).catch(() => undefined);
+    if (!(await newRow.count())) console.log(`    لقطة: ${await shot(mohamed2, 'after-restore')} — console: ${mohamed2.page.errors.join(' | ')}`);
+    check('مراسلة جديدة بعد الاستعادة تُفك', (await newRow.count()) > 0);
+    const devicesText = await (async () => {
+      await mohamed2.page.goto(`${UI}/devices`);
+      await mohamed2.page.locator('text=أجهزتي').first().waitFor({ timeout: 15000 }).catch(() => undefined);
+      await mohamed2.page.waitForTimeout(1500);
+      return mohamed2.page.locator('main').innerText();
+    })();
+    check('التسجيل المعلّق للمتصفح الجديد سُحب', !devicesText.includes('بانتظار الاعتماد'));
+
+    section('8) أخطاء الـConsole');
+    for (const dev of [ahmed, mohamed2]) {
       check(`${dev.username}: لا أخطاء JavaScript`, dev.page.errors.length === 0, dev.page.errors.slice(0, 3).join(' | '));
     }
   } finally {

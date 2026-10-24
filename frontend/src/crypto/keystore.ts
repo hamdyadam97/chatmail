@@ -188,9 +188,23 @@ async function unwrap(record: WrappedRecord): Promise<unknown> {
   return JSON.parse(new TextDecoder().decode(bytes.slice(1)), bytesReviver);
 }
 
+// --- مراقبة الكتابة (يجدول بها النسخ الاحتياطي التلقائي) ---------------------
+type WriteListener = (store: StoreName, key: string) => void;
+const writeListeners = new Set<WriteListener>();
+
+export function onStoreWrite(listener: WriteListener): () => void {
+  writeListeners.add(listener);
+  return () => writeListeners.delete(listener);
+}
+
+function notifyWrite(store: StoreName, key: string): void {
+  for (const l of writeListeners) l(store, key);
+}
+
 export async function putRecord<T>(store: StoreName, key: string, value: T): Promise<void> {
   const db = await getDb();
   await db.put(store, await wrap(value), key);
+  notifyWrite(store, key);
 }
 
 export async function getRecord<T>(store: StoreName, key: string): Promise<T | undefined> {
@@ -203,6 +217,7 @@ export async function getRecord<T>(store: StoreName, key: string): Promise<T | u
 export async function deleteRecord(store: StoreName, key: string): Promise<void> {
   const db = await getDb();
   await db.delete(store, key);
+  notifyWrite(store, key);
 }
 
 /** كل سجلات مخزن مُغلَّفة مع مفاتيحها (للبحث المحلي). */
@@ -227,6 +242,7 @@ export async function getAllRecords<T>(store: StoreName): Promise<T[]> {
 export async function putPublic(store: StoreName, key: string, value: unknown): Promise<void> {
   const db = await getDb();
   await db.put(store, value, key);
+  notifyWrite(store, key);
 }
 
 export async function getPublic<T>(store: StoreName, key: string): Promise<T | undefined> {
@@ -246,4 +262,64 @@ export async function wipeCryptoStore(): Promise<void> {
   const tx = db.transaction(STORE_NAMES as StoreNames<CryptoDB>[], 'readwrite');
   await Promise.all(STORE_NAMES.map((s) => tx.objectStore(s).clear()));
   await tx.done;
+}
+
+// --- لقطة كاملة للنسخ الاحتياطي المشفّر (docs/phase1/03 §3.6) ------------------
+//
+// كل محتوى المخزن ما عدا: مفتاح التغليف المحلي، مفاتيح/حالة النسخ الاحتياطي
+// نفسها، ومخزن backups القديم. اللقطة لا تغادر الذاكرة إلا مشفّرة بمفتاح
+// الاستعادة (recovery.ts). الاستيراد يعيد تغليف كل سجل بـKEK هذا المتصفح.
+
+/** مفاتيح meta التي لا تدخل اللقطة (مقابض CryptoKey ومؤشرات النسخ). */
+export const LOCAL_ONLY_META = /^(kek$|backup_|recovery_)/;
+const SNAPSHOT_STORES: StoreName[] = STORE_NAMES.filter((s) => s !== 'backups');
+
+interface SnapshotEntry {
+  s: StoreName;
+  k: string;
+  /** مغلّف (سري) أم علني. */
+  w: boolean;
+  v: unknown;
+}
+
+function isWrapped(value: unknown): value is WrappedRecord {
+  if (!value || typeof value !== 'object') return false;
+  const keys = Object.keys(value);
+  return (
+    keys.length === 2 &&
+    (value as WrappedRecord).iv instanceof Uint8Array &&
+    (value as WrappedRecord).ct instanceof Uint8Array
+  );
+}
+
+export async function exportSnapshot(): Promise<Uint8Array> {
+  const db = await getDb();
+  const entries: SnapshotEntry[] = [];
+  for (const store of SNAPSHOT_STORES) {
+    const tx = db.transaction(store, 'readonly');
+    const keys = (await tx.store.getAllKeys()) as string[];
+    const values = (await tx.store.getAll()) as unknown[];
+    await tx.done;
+    for (let i = 0; i < keys.length; i++) {
+      const key = String(keys[i]);
+      const raw = values[i];
+      if (store === 'meta' && LOCAL_ONLY_META.test(key)) continue;
+      if (raw instanceof CryptoKey) continue;
+      entries.push(isWrapped(raw) ? { s: store, k: key, w: true, v: await unwrap(raw) } : { s: store, k: key, w: false, v: raw });
+    }
+  }
+  return new TextEncoder().encode(JSON.stringify({ format: 1, entries }, bytesReplacer));
+}
+
+/** يستبدل المخزن كله بمحتوى اللقطة (يُمسح الموجود أولًا، ومنه مفاتيح الجهاز المعلّق). */
+export async function importSnapshot(bytes: Uint8Array): Promise<void> {
+  const parsed = JSON.parse(new TextDecoder().decode(bytes), bytesReviver) as { format: number; entries: SnapshotEntry[] };
+  if (parsed.format !== 1 || !Array.isArray(parsed.entries)) throw new Error('صيغة النسخة الاحتياطية غير معروفة');
+  await wipeCryptoStore();
+  const db = await getDb();
+  for (const e of parsed.entries) {
+    if (!SNAPSHOT_STORES.includes(e.s)) continue;
+    if (e.s === 'meta' && LOCAL_ONLY_META.test(e.k)) continue;
+    await db.put(e.s, e.w ? await wrap(e.v) : e.v, e.k);
+  }
 }

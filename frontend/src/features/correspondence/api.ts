@@ -3,7 +3,7 @@
  * الخادم لا يستقبل ولا يعيد إلا بيانات وصفية وciphertext؛ المحتوى (العنوان
  * والنص ومفاتيح المرفقات) يسافر داخل رسالة MLS واحدة في `content.mls_payload`.
  */
-import { API_BASE_URL, ApiError, apiFetch, getAccessToken } from '../../shared/api';
+import { ApiError, apiFetch, rawFetch } from '../../shared/api';
 
 export type Folder = 'inbox' | 'sent' | 'drafts' | 'archived' | 'important' | 'pending_replies';
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
@@ -41,6 +41,9 @@ export interface CorrespondenceSummary {
   archived: boolean;
   is_important: boolean;
   participants: Participant[];
+  /** في القائمة فقط: حجم المحادثة كلها (ما أستطيع قراءته، ومنه ردودي) وآخر نشاط فيها. */
+  thread_count?: number;
+  thread_last_at?: string | null;
 }
 
 export interface ThreadRef {
@@ -71,6 +74,8 @@ export interface ThreadItem {
   sent_at: string;
   reply_to_id: string | null;
   content_seq: number;
+  /** لم أقرأها بعد (صفّي أنا فقط). */
+  unread: boolean;
 }
 
 export interface CorrespondenceDetail extends CorrespondenceSummary {
@@ -135,21 +140,6 @@ const BASE = '/correspondences';
  * طلب بايتات خام (ليس JSON) بنفس توكن الذاكرة؛ عند 401 نمرّ بـapiFetch مرة
  * لتجديد التوكن عبر كوكي التحديث ثم نعيد المحاولة.
  */
-async function rawFetch(path: string, init: RequestInit): Promise<Response> {
-  const go = () =>
-    fetch(`${API_BASE_URL}${path}`, {
-      credentials: 'include',
-      ...init,
-      headers: { ...(init.headers ?? {}), Authorization: `Bearer ${getAccessToken() ?? ''}` },
-    });
-  let res = await go();
-  if (res.status === 401) {
-    await apiFetch('/users/me/');
-    res = await go();
-  }
-  return res;
-}
-
 export const correspondenceApi = {
   list: (params: ListParams) => apiFetch<Page<CorrespondenceSummary>>(`${BASE}/?${qs(params)}`),
   counts: () =>

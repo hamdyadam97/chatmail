@@ -2,7 +2,7 @@
  * عقد crypto/ في الـbackend — `/api/v1/crypto/*` (كلها تتطلب مصادقة).
  * الأشكال هنا verbatim من العقد المشترك؛ أي تغيير يُنسَّق مع وكيل الـbackend.
  */
-import { apiFetch } from '../shared/api';
+import { ApiError, apiFetch, rawFetch } from '../shared/api';
 import type { ApiDevice } from './devices';
 
 const BASE = '/crypto';
@@ -80,6 +80,21 @@ export interface TransparencyEntry {
   created_at: string;
 }
 
+/** نسخة استعادة مشفّرة على الخادم — بيانات وصفية فقط. */
+export interface KeyBackupInfo {
+  id: string;
+  device_id: string;
+  device_label: string;
+  device_status: string;
+  version: number;
+  format: number;
+  kdf: string;
+  key_id: string;
+  iv: string;
+  size: number;
+  created_at: string;
+}
+
 export const cryptoApi = {
   /** 409 إن وُجدت هوية للمستخدم مسبقًا. يردّ 201 بـ device_id مباشرة. */
   bootstrapIdentity: (payload: IdentityBootstrapPayload) =>
@@ -126,4 +141,41 @@ export const cryptoApi = {
   transparencySelf: () => apiFetch<TransparencyEntry[]>(`${BASE}/transparency/self/`),
 
   transparencyLogKey: () => apiFetch<{ log_pub: string }>(`${BASE}/transparency/log-key/`),
+
+  listBackups: () => apiFetch<KeyBackupInfo[]>(`${BASE}/backups/`),
+
+  uploadBackup: async (
+    ciphertext: Uint8Array,
+    meta: { deviceId: string; keyId: string; iv: string; signature: string },
+  ): Promise<KeyBackupInfo> => {
+    const res = await rawFetch(`${BASE}/backups/`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/octet-stream',
+        'X-Backup-Device': meta.deviceId,
+        'X-Backup-Key-Id': meta.keyId,
+        'X-Backup-IV': meta.iv,
+        'X-Backup-Signature': meta.signature,
+      },
+      body: ciphertext,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiError(res.status, data);
+    return data as KeyBackupInfo;
+  },
+
+  downloadBackup: async (backupId: string): Promise<Uint8Array> => {
+    const res = await rawFetch(`${BASE}/backups/${backupId}/download/`, {});
+    if (!res.ok) throw new ApiError(res.status, null);
+    return new Uint8Array(await res.arrayBuffer());
+  },
+
+  backupRestored: (payload: {
+    device_id: string;
+    backup_id: string;
+    abandoned_device_id: string | null;
+    issued_at: number;
+    signature: string;
+  }) => apiFetch<{ device_id: string; status: string }>(`${BASE}/backups/restored/`, { method: 'POST', body: payload }),
 };

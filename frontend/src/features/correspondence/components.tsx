@@ -47,9 +47,12 @@ export function CryptoGate({ children }: { children: ReactNode }) {
         <p className="mt-2 text-sm text-gray-500">
           اعتمد هذا الجهاز من أحد أجهزتك الموثّقة من صفحة الأجهزة ليُفعَّل التشفير الطرف-لطرف عليه.
         </p>
-        <Button variant="outline" className="mt-4" onClick={() => (window.location.href = '/devices')}>
-          الانتقال إلى الأجهزة
-        </Button>
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <Button variant="outline" onClick={() => (window.location.href = '/devices')}>
+            الانتقال إلى الأجهزة
+          </Button>
+          <Button onClick={() => (window.location.href = '/recovery')}>فقدت جهازي — استعادة بالمفتاح</Button>
+        </div>
       </Card>
     );
   }
@@ -140,7 +143,7 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id, inli
         />
       </div>
       {open && (
-        <div className="absolute inset-x-0 top-full z-20 mt-1 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+        <div role="listbox" aria-label={`اقتراحات ${label}`} className="absolute inset-x-0 top-full z-20 mt-1 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
           {isLoading && (
             <div className="flex justify-center py-3">
               <Spinner size="sm" />
@@ -153,6 +156,8 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id, inli
             <button
               key={String(u.id)}
               type="button"
+              role="option"
+              aria-selected={false}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 onChange([...value, String(u.id)]);

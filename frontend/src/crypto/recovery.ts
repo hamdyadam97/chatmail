@@ -1,204 +1,270 @@
 /**
- * الاستعادة (docs/phase1/03 §3.6):
- * - Recovery Key: 256-bit عشوائي يُعرض مرة واحدة كسلاسل base32 مقروءة.
- * - KEK = HKDF-SHA256(recovery_key, salt, info) — لا يُشتق إلا محليًا.
- * - Recovery Bundle = {بذرة الهوية، بذور الأجهزة، حالة المجموعات (export_state
- *   من الغلاف)} مشفّر AES-256-GCM بالـKEK قبل أي رفع.
+ * الاستعادة والنسخ الاحتياطي المشفّر (docs/phase1/03 §3.6).
  *
- * TODO(endpoint): لا يوجد بعد endpoint backend لرفع النسخة الاحتياطية
- * (العقد يذكر POST …/crypto/ دون مسار نهائي). لذلك `uploadBackup` حاليًا
- * سجلّ وعد: يخزن الـciphertext في IndexedDB (مخزن backups) معلّمًا
- * pending_endpoint: true ويطبع تحذيرًا — عند اعتماد endpoint الـbackend
- * يُستبدل الجسم الداخلي فقط، والتشفير/الفك أعلى هذه الدالة لا يتغير.
+ * - Recovery Key: 256-bit عشوائي يُعرض مرة واحدة (13 مجموعة × 4 رموز base32). لا يُرسل
+ *   للخادم أبدًا.
+ * - منه يُشتق محليًا (HKDF-SHA256): مفتاح تشفير النسخة (AES-256-GCM، غير قابل
+ *   للتصدير، يُحفظ كمقبض CryptoKey ليعمل النسخ التلقائي) + key_id (بصمة أحادية
+ *   الاتجاه تقول أي نسخ يفتحها هذا المفتاح — ليست المفتاح).
+ * - النسخة = لقطة المخزن المحلي كله (الهوية، مفاتيح الجهاز، حالة MLS، والمراسلات
+ *   والمحادثات المفكوكة) مشفّرة قبل الرفع، وAAD يربطها بالمستخدم والجهاز والمفتاح.
+ *   فك MLS لمرة واحدة، فبدون النصوص المفكوكة لا يُسترجع البريد القديم.
+ * - كل رفع موقّع بمفتاح الجهاز؛ والنسخ يتجدد تلقائيًا بعد التغييرات.
+ * - الاستعادة على متصفح جديد = يتولى هذا المتصفح الجهازَ المفقود نفسه (نفس
+ *   مفاتيحه وحالته)، ويُسحب تسجيله المعلّق، ويُسجَّل حدث شفافية.
+ *
+ * حدّ معروف: إن كان الجهاز القديم ما زال يعمل فلا تستعد عليه من متصفح آخر —
+ * اعتمد الجهاز الجديد منه بدلًا من ذلك (نسختان من الجهاز نفسه تتباعد حالتهما).
  */
-import { getAllRecords, putRecord } from './keystore';import { u8ToBase32, base32ToU8, u8ToB64, b64ToU8, randomBytes } from './encoding';
-import {
-  deviceFromSeeds,
-  identityFromSeed,
-  listDeviceKeys,
-  loadIdentity,
-  type StoredDeviceKeys,
-  type StoredIdentity,
-} from './identity';
-import { exportGroupState, importGroupState, resetMlsSession } from './mls';
+import { exportSnapshot, getPublic, importSnapshot, LOCAL_ONLY_META, onStoreWrite, putPublic } from './keystore';
+import { base32ToU8, randomBytes, u8ToB64, u8ToBase32, u8ToHex, utf8ToU8 } from './encoding';
+import { loadCurrentDevice, signWithCurrentDevice } from './identity';
+import { resetMlsSession } from './mls';
+import { cryptoApi, type KeyBackupInfo } from './api';
 import { useAuthUser } from './authBridge';
 
-const HKDF_SALT = new TextEncoder().encode('correspondence-recovery-v1');
-const HKDF_INFO_KEK = new TextEncoder().encode('recovery-kek');
+const HKDF_SALT = utf8ToU8('correspondence-recovery-v1');
+const INFO_KEK = utf8ToU8('recovery-kek');
+const INFO_KEY_ID = utf8ToU8('recovery-key-id');
+const BACKUP_CONTEXT = 'key-backup-v1\n';
+const RESTORE_CONTEXT = 'device-restore-v1\n';
+
+/** بعد آخر تغيير ننتظر قليلًا (تُجمع الدفعات)، وبين رفعين دقيقة على الأقل. */
+const DEBOUNCE_MS = 15_000;
+const MIN_INTERVAL_MS = 60_000;
+
+/** 32 بايت = 52 رمز base32 بالضبط → 13 مجموعة من 4 رموز. */
+const KEY_CHARS = 52;
+const GROUP = 4;
 
 export interface RecoveryKeyDisplay {
-  /** المفتاح كما يُعرض للمستخدم: 8 مجموعات من 7 رموز base32. */
+  /** المفتاح كما يُعرض للمستخدم: 13 مجموعة من 4 رموز base32. */
   groups: string[];
-  /** بايتات المفتاح الخام (تُستخدم محليًا فقط للاشتقاق). */
   raw: Uint8Array;
 }
 
-/** يولّد مفتاح استعادة جديدًا ويعرضه بصيغة مقروءة مرة واحدة. */
 export function generateRecoveryKey(): RecoveryKeyDisplay {
   const raw = randomBytes(32);
   const encoded = u8ToBase32(raw);
   const groups: string[] = [];
-  for (let i = 0; i < 8; i++) groups.push(encoded.slice(i * 7, i * 7 + 7));
+  for (let i = 0; i < KEY_CHARS; i += GROUP) groups.push(encoded.slice(i, i + GROUP));
   return { groups, raw };
 }
 
-/** KEK للتغليف: HKDF-SHA256(recovery_key) — يُشتق في الذاكرة فقط. */
-async function deriveKek(recoveryKey: Uint8Array): Promise<CryptoKey> {
-  const base = await crypto.subtle.importKey('raw', recoveryKey, 'HKDF', false, ['deriveKey']);
-  return crypto.subtle.deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: HKDF_SALT, info: HKDF_INFO_KEK },
+/** يقبل المفتاح بشرطات أو مسافات أو بدونها، وبأي حالة أحرف. */
+export function parseRecoveryKey(input: string): Uint8Array {
+  const clean = input.toUpperCase().replace(/[^A-Z2-7]/g, '');
+  if (clean.length !== KEY_CHARS) throw new Error('مفتاح الاستعادة غير مكتمل — يجب أن يكون 13 مجموعة من 4 رموز');
+  const raw = base32ToU8(clean);
+  if (raw.length !== 32) throw new Error('مفتاح الاستعادة غير صالح');
+  return raw;
+}
+
+async function deriveKeys(raw: Uint8Array): Promise<{ kek: CryptoKey; keyId: string }> {
+  const base = await crypto.subtle.importKey('raw', raw, 'HKDF', false, ['deriveKey', 'deriveBits']);
+  const kek = await crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: HKDF_SALT, info: INFO_KEK },
     base,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt'],
   );
+  const idBits = await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: HKDF_SALT, info: INFO_KEY_ID }, base, 128);
+  return { kek, keyId: u8ToHex(new Uint8Array(idBits)) };
 }
 
-async function sha256Hex(data: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+function aad(userId: string, deviceId: string, keyId: string): Uint8Array {
+  return utf8ToU8(`corr-backup-v1|${userId}|${deviceId}|${keyId}`);
 }
 
-export interface RecoveryBundlePayload {
-  version: 1;
-  /** null عندما أُنشئت الهوية على جهاز آخر ولا يملك هذا الجهاز بذرتها. */
-  identity_seed: string | null;
-  devices: Array<{
-    device_id: number | string;
-    label: string;
-    platform: string;
-    sign_seed: string;
-    kem_seed: string;
-  }>;
-  groups_state: string;
-  created_at: string;
+async function sha256(data: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', data));
 }
 
-export interface RecoveryBackupRecord {
-  id: string;
-  version: 1;
-  kdf: 'HKDF-SHA256';
-  cipher: 'AES-256-GCM';
-  iv: string;
-  ciphertext: string;
-  payload_hash: string;
-  created_at: string;
-  pending_endpoint: true;
+// --- الحالة المحلية -------------------------------------------------------------
+
+export interface RecoveryStatus {
+  configured: boolean;
+  keyId: string | null;
+  lastBackupAt: string | null;
+  lastError: string | null;
 }
 
-/** يبني الحزمة من الحالة المحلية ويشفّرها بالـKEK. */
-export async function encryptRecoveryBundle(recoveryKey: Uint8Array): Promise<RecoveryBackupRecord> {
-  const userId = useAuthUser().id;
-  const identity = await loadIdentity(userId);
-  if (!identity) throw new Error('لا هوية محلية لبناء حزمة استعادة — هيّئ الجهاز أولًا');
-  const devices = await listDeviceKeys(userId);
-  if (devices.length === 0) throw new Error('لا أجهزة محلية لبناء حزمة استعادة');
-
-  const payload: RecoveryBundlePayload = {
-    version: 1,
-    identity_seed: identity.seed ? u8ToB64(identity.seed) : null,
-    devices: devices.map((d) => ({
-      device_id: d.deviceId,
-      label: d.label,
-      platform: d.platform,
-      sign_seed: u8ToB64(d.signSeed),
-      kem_seed: u8ToB64(d.kemSeed),
-    })),
-    groups_state: u8ToB64(await exportGroupState()),
-    created_at: new Date().toISOString(),
-  };
-  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const kek = await deriveKek(recoveryKey);
-  const iv = randomBytes(12);
-  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, kek, plaintext);
-  return {
-    id: crypto.randomUUID(),
-    version: 1,
-    kdf: 'HKDF-SHA256',
-    cipher: 'AES-256-GCM',
-    iv: u8ToB64(iv),
-    ciphertext: u8ToB64(new Uint8Array(ct)),
-    payload_hash: await sha256Hex(plaintext),
-    created_at: payload.created_at,
-    pending_endpoint: true,
-  };
+export async function recoveryStatus(): Promise<RecoveryStatus> {
+  const [kek, keyId, at, error] = await Promise.all([
+    getPublic<CryptoKey>('meta', 'recovery_kek'),
+    getPublic<string>('meta', 'recovery_key_id'),
+    getPublic<string>('meta', 'backup_last_at'),
+    getPublic<string>('meta', 'backup_last_error'),
+  ]);
+  return { configured: Boolean(kek && keyId), keyId: keyId ?? null, lastBackupAt: at ?? null, lastError: error ?? null };
 }
 
-/**
- * TODO(endpoint): الاستبدال المستقبلي — POST الـciphertext إلى
- * ‎/api/v1/crypto/… عندما يعتمده الـbackend. حاليًا: مخزن محلي مؤقت.
- */
-export async function uploadBackup(record: RecoveryBackupRecord): Promise<{ stored: string }> {
-  console.warn('[recovery] TODO(endpoint): لا يوجد endpoint رفع بعد — خُزّنت النسخة محليًا معلّمة pending_endpoint', {
-    id: record.id,
-    bytes: record.ciphertext.length,
+async function storeRecoveryKey(raw: Uint8Array): Promise<string> {
+  const { kek, keyId } = await deriveKeys(raw);
+  await putPublic('meta', 'recovery_kek', kek);
+  await putPublic('meta', 'recovery_key_id', keyId);
+  await putPublic('meta', 'backup_last_hash', null);
+  return keyId;
+}
+
+/** هل يفتح هذا المفتاح نسخًا موجودة؟ (للتحقق قبل اعتماده على جهاز ثانٍ). */
+export async function checkKeyAgainstServer(raw: Uint8Array): Promise<{ matches: number; total: number }> {
+  const { keyId } = await deriveKeys(raw);
+  const all = await cryptoApi.listBackups();
+  return { matches: all.filter((b) => b.key_id === keyId).length, total: all.length };
+}
+
+/** يعتمد المفتاح على هذا الجهاز ويرفع أول نسخة فورًا. */
+export async function enableRecovery(raw: Uint8Array): Promise<KeyBackupInfo | null> {
+  await storeRecoveryKey(raw);
+  return backupNow({ force: true });
+}
+
+// --- الرفع ---------------------------------------------------------------------
+
+let running: Promise<KeyBackupInfo | null> | null = null;
+
+/** يرفع لقطة مشفّرة إن تغيّر شيء منذ آخر رفع (أو دائمًا مع force). */
+export function backupNow(opts: { force?: boolean } = {}): Promise<KeyBackupInfo | null> {
+  running ??= doBackup(Boolean(opts.force)).finally(() => {
+    running = null;
   });
-  await putRecord('backups', record.id, record);
-  return { stored: 'local-pending-endpoint' };
+  return running;
 }
+
+async function doBackup(force: boolean): Promise<KeyBackupInfo | null> {
+  const userId = String(useAuthUser().id);
+  const kek = await getPublic<CryptoKey>('meta', 'recovery_kek');
+  const keyId = await getPublic<string>('meta', 'recovery_key_id');
+  if (!kek || !keyId) return null;
+  const device = await loadCurrentDevice(userId);
+  if (!device || device.status !== 'active') return null;
+  const deviceId = String(device.deviceId);
+  try {
+    const snapshot = await exportSnapshot();
+    const snapshotHash = u8ToHex(await sha256(snapshot));
+    if (!force && snapshotHash === (await getPublic<string>('meta', 'backup_last_hash'))) return null;
+
+    const iv = randomBytes(12);
+    const ciphertext = new Uint8Array(
+      await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad(userId, deviceId, keyId) }, kek, snapshot),
+    );
+    const message = BACKUP_CONTEXT + [userId, deviceId, keyId, u8ToB64(iv), u8ToHex(await sha256(ciphertext))].join('\n');
+    const { signature } = await signWithCurrentDevice(userId, utf8ToU8(message));
+    const info = await cryptoApi.uploadBackup(ciphertext, {
+      deviceId,
+      keyId,
+      iv: u8ToB64(iv),
+      signature: u8ToB64(signature),
+    });
+    await putPublic('meta', 'backup_last_hash', snapshotHash);
+    await putPublic('meta', 'backup_last_at', info.created_at);
+    await putPublic('meta', 'backup_last_error', null);
+    return info;
+  } catch (err) {
+    await putPublic('meta', 'backup_last_error', err instanceof Error ? err.message : 'تعذر رفع النسخة').catch(() => undefined);
+    throw err;
+  }
+}
+
+// --- النسخ التلقائي ---------------------------------------------------------------
+
+let autoUser: string | null = null;
+let unsubscribe: (() => void) | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
+let lastRun = 0;
+
+function schedule(delay: number): void {
+  if (timer) clearTimeout(timer);
+  const wait = Math.max(delay, lastRun + MIN_INTERVAL_MS - Date.now());
+  timer = setTimeout(() => {
+    timer = null;
+    lastRun = Date.now();
+    backupNow().catch((err) => console.warn('auto backup failed', err instanceof Error ? err.message : err));
+  }, wait);
+}
+
+/** يُشغَّل بعد جاهزية التشفير: نسخة عند البدء إن تغيّر شيء، ثم بعد كل تغيير. */
+export function startAutoBackup(userId: number | string): void {
+  if (autoUser === String(userId)) return;
+  stopAutoBackup();
+  autoUser = String(userId);
+  unsubscribe = onStoreWrite((store, key) => {
+    if (store === 'meta' && LOCAL_ONLY_META.test(key)) return;
+    schedule(DEBOUNCE_MS);
+  });
+  schedule(3_000);
+}
+
+export function stopAutoBackup(): void {
+  unsubscribe?.();
+  unsubscribe = null;
+  if (timer) clearTimeout(timer);
+  timer = null;
+  autoUser = null;
+}
+
+// --- الاستعادة -----------------------------------------------------------------
 
 export interface RestoreResult {
-  identity: StoredIdentity;
-  devices: StoredDeviceKeys[];
+  deviceLabel: string;
+  backupAt: string;
 }
 
 /**
- * يستعيد من مفتاح مُدخل: يفك أحدث نسخة مخزنة، يكتب البذور محليًا، يستورد
- * حالة المجموعات، ويسقط الجلسة المخبأة لتُبنى من جديد.
+ * يجلب أحدث نسخة يفتحها هذا المفتاح، يفكها، يستبدل المخزن المحلي بها (فيتولى
+ * هذا المتصفح الجهاز المستعاد)، ثم يثبت ذلك للخادم بتوقيع مفتاح الجهاز.
  */
-export async function restoreFromRecoveryKey(keyGroups: string[]): Promise<RestoreResult> {
-  const raw = base32ToU8(keyGroups.join(''));
-  if (raw.length !== 32) throw new Error('مفتاح الاستعادة غير مكتمل — يجب أن يكون 8 مجموعات من 7 رموز');
-  const backups = await getAllRecords<RecoveryBackupRecord>('backups');
-  if (backups.length === 0) {
-    throw new Error('لا نسخة استعادة محلية بعد — عند اعتماد endpoint السيرفر ستُجلب النسخ من هناك');
-  }
-  const latest = backups.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-  const kek = await deriveKek(raw);
-  let plaintext: Uint8Array;
-  try {
-    plaintext = new Uint8Array(
-      await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToU8(latest.iv) }, kek, b64ToU8(latest.ciphertext)),
-    );
-  } catch {
-    throw new Error('تعذر فك النسخة الاحتياطية — المفتاح غير صحيح أو النسخة تالفة');
-  }
-  const payload = JSON.parse(new TextDecoder().decode(plaintext)) as RecoveryBundlePayload;
+export async function restoreFromRecoveryKey(input: string): Promise<RestoreResult> {
+  const raw = parseRecoveryKey(input);
+  const userId = String(useAuthUser().id);
+  const { kek, keyId } = await deriveKeys(raw);
+  const all = await cryptoApi.listBackups();
+  if (all.length === 0) throw new Error('لا توجد نسخة احتياطية لحسابك على الخادم');
+  const candidates = all
+    .filter((b) => b.key_id === keyId && b.device_status === 'active')
+    .sort((a, b) => b.version - a.version);
+  if (candidates.length === 0) throw new Error('هذا المفتاح لا يفتح أيًا من نسخك الاحتياطية — تأكد من المفتاح');
 
-  if (!payload.identity_seed) {
-    throw new Error('هذه النسخة لا تتضمن بذرة الهوية (أُنشئت على جهاز آخر) — استعد من الجهاز الأصلي');
+  let chosen: KeyBackupInfo | null = null;
+  let snapshot: Uint8Array | null = null;
+  for (const b of candidates) {
+    try {
+      const ct = await cryptoApi.downloadBackup(b.id);
+      const iv = Uint8Array.from(atob(b.iv), (c) => c.charCodeAt(0));
+      snapshot = new Uint8Array(
+        await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad(userId, b.device_id, keyId) }, kek, ct),
+      );
+      chosen = b;
+      break;
+    } catch {
+      // نسخة تالفة/غير صالحة → نجرب الأقدم.
+    }
   }
-  const identityMaterial = await identityFromSeed(b64ToU8(payload.identity_seed));
-  const userId = useAuthUser().id;
-  const identity: StoredIdentity = {
-    userId,
-    seed: b64ToU8(payload.identity_seed),
-    pub: identityMaterial.pub,
-    createdAt: payload.created_at,
-  };
+  if (!chosen || !snapshot) throw new Error('تعذر فك النسخ الاحتياطية بهذا المفتاح');
 
-  const devices: StoredDeviceKeys[] = [];
-  for (const d of payload.devices) {
-    const material = await deviceFromSeeds(b64ToU8(d.sign_seed), b64ToU8(d.kem_seed));
-    devices.push({
-      userId,
-      deviceId: d.device_id,
-      label: d.label,
-      platform: d.platform,
-      signSeed: b64ToU8(d.sign_seed),
-      kemSeed: b64ToU8(d.kem_seed),
-      signPub: material.sign.pub,
-      kemPub: material.kem.pub,
-      status: 'active',
-      createdAt: payload.created_at,
-    });
-  }
+  const pending = await loadCurrentDevice(userId);
+  const abandoned = pending && String(pending.deviceId) !== chosen.device_id ? String(pending.deviceId) : null;
 
-  putRecord('identity', `identity:${userId}`, identity);
-  for (const device of devices) {
-    putRecord('deviceKeys', `${userId}:${device.deviceId}`, device);
+  await importSnapshot(snapshot);
+  const restored = await loadCurrentDevice(userId);
+  if (!restored || String(restored.deviceId) !== chosen.device_id) {
+    throw new Error('النسخة لا تحتوي مفاتيح الجهاز المتوقَّع');
   }
-  await importGroupState(b64ToU8(payload.groups_state));
+  await storeRecoveryKey(raw);
+  await putPublic('meta', 'backup_last_at', chosen.created_at);
+
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const message = RESTORE_CONTEXT + [userId, chosen.device_id, chosen.id, abandoned ?? '', String(issuedAt)].join('\n');
+  const { signature } = await signWithCurrentDevice(userId, utf8ToU8(message));
+  await cryptoApi.backupRestored({
+    device_id: chosen.device_id,
+    backup_id: chosen.id,
+    abandoned_device_id: abandoned,
+    issued_at: issuedAt,
+    signature: u8ToB64(signature),
+  });
   await resetMlsSession();
-  return { identity, devices };
+  return { deviceLabel: chosen.device_label, backupAt: chosen.created_at };
 }

@@ -203,6 +203,12 @@ export async function bootstrapUserCrypto(user: { id: number | string }): Promis
       : { state: 'pending_approval', identity: existing, device };
   }
 
+  // حساب له هوية مسبقًا (متصفح جديد): لا نحاول إنشاء هوية ثانية (كانت ترد 409).
+  const known = await cryptoApi
+    .queryKeys([user.id])
+    .then((r) => r.users.find((u) => String(u.user_id) === String(user.id))?.identity_pub ?? null)
+    .catch(() => null);
+
   const identityKey = await generateIdentityKey();
   const material = await generateDeviceKeyMaterial();
   const uidBytes = userIdBytes(user.id);
@@ -239,6 +245,7 @@ export async function bootstrapUserCrypto(user: { id: number | string }): Promis
   };
 
   try {
+    if (known) throw Object.assign(new Error('identity exists'), { status: 409 });
     const boot = await cryptoApi.bootstrapIdentity({
       identity_pub: u8ToB64(identityPub),
       bootstrap_sig: u8ToB64(bootstrapSig),

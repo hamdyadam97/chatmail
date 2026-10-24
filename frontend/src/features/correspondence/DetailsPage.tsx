@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   Star,
   Trash2,
+  X,
   XCircle,
 } from 'lucide-react';
 import { Avatar, Button, Card, Label, Spinner } from '../../shared/ui';
@@ -160,7 +161,15 @@ function ContentView({ opened }: { opened: OpenResult | null }) {
   );
 }
 
-function ReplyBox({ detail, onSent }: { detail: CorrespondenceDetail; onSent: (id: string) => void }) {
+function ReplyBox({
+  detail,
+  onSent,
+  onCancel,
+}: {
+  detail: CorrespondenceDetail;
+  onSent: (id: string) => void;
+  onCancel: () => void;
+}) {
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState<Priority>('normal');
   const [files, setFiles] = useState<File[]>([]);
@@ -191,13 +200,19 @@ function ReplyBox({ detail, onSent }: { detail: CorrespondenceDetail; onSent: (i
           <Reply className="h-4 w-4" />
           رد على الجميع
         </h3>
-        <span className="text-xs text-gray-500">يصل الرد إلى أطراف الخيط ({recipients}) فقط</span>
+        <span className="flex items-center gap-3 text-xs text-gray-500">
+          يصل الرد إلى أطراف الخيط ({recipients}) فقط
+          <button type="button" onClick={onCancel} className="rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="إلغاء الرد">
+            <X className="h-4 w-4" />
+          </button>
+        </span>
       </div>
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}
         rows={5}
         maxLength={100_000}
+        autoFocus
         aria-label="نص الرد"
         className="w-full rounded-lg border border-gray-300 p-3 text-sm leading-7 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
       />
@@ -233,8 +248,32 @@ function ReplyBox({ detail, onSent }: { detail: CorrespondenceDetail; onSent: (i
   );
 }
 
-function ThreadList({ detail, names }: { detail: CorrespondenceDetail; names: Map<string, string> }) {
+/** «رد: رد: الموضوع» ← «الموضوع» — عنوان المحادثة كما في Outlook. */
+function conversationSubject(subject: string): string {
+  return subject.replace(/^(\s*(رد|RE|Re|إحالة|FW|Fw)\s*:\s*)+/, '').trim() || subject;
+}
+
+/**
+ * عرض المحادثة بأسلوب Outlook: كل رسائل الخيط تحت بعضها (الأحدث أولًا)، المفتوحة
+ * تلقائيًا: الأحدث والمختارة وغير المقروءة؛ والباقي سطر مختصر يتوسع بنقرة.
+ */
+function Conversation({
+  detail,
+  names,
+  isSender,
+  onSubject,
+}: {
+  detail: CorrespondenceDetail;
+  names: Map<string, string>;
+  isSender: boolean;
+  onSubject: (subject: string) => void;
+}) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [contents, setContents] = useState<Map<string, StoredContent | undefined> | null>(null);
+  const items = useMemo(() => [...detail.thread_items].reverse(), [detail.thread_items]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     let cancelled = false;
     openThreadItems(detail)
@@ -244,37 +283,123 @@ function ThreadList({ detail, names }: { detail: CorrespondenceDetail; names: Ma
       cancelled = true;
     };
   }, [detail]);
-  if (detail.thread_items.length < 2) return null;
+
+  // إعادة الضبط عند تغيّر المحادثة أو وصول رد جديد فقط (لا عند كل إعادة جلب).
+  const itemsKey = items.map((it) => it.id).join(',');
+  useEffect(() => {
+    const open = new Set<string>([detail.id]);
+    if (items[0]) open.add(items[0].id);
+    for (const it of items) if (it.unread) open.add(it.id);
+    setExpanded(open);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail.id, itemsKey]);
+
+  // عنوان المحادثة من أقدم رسالة مفكوكة.
+  useEffect(() => {
+    if (!contents) return;
+    const oldest = detail.thread_items.map((it) => contents.get(it.id)).find(Boolean);
+    if (oldest) onSubject(conversationSubject(oldest.content.subject));
+  }, [contents, detail.thread_items, onSubject]);
+
+  // المعروض مفتوحًا يُعلَّم مقروءًا (الخادم يتجاهل المقروء ورسائلي أنا).
+  useEffect(() => {
+    const toMark = items.filter((it) => it.unread && expanded.has(it.id) && it.id !== detail.id && it.sender_id !== String(user?.id));
+    if (toMark.length === 0) return;
+    void Promise.all(toMark.map((it) => correspondenceApi.markRead(it.id).catch(() => undefined))).then(() => {
+      void queryClient.invalidateQueries({ queryKey: ['correspondences'] });
+      void queryClient.invalidateQueries({ queryKey: ['correspondence-counts'] });
+    });
+  }, [items, expanded, detail.id, user?.id, queryClient]);
+
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const to = detail.participants.filter((p) => p.kind === 'to');
+  const cc = detail.participants.filter((p) => p.kind === 'cc');
+
   return (
-    <Card className="p-5">
-      <h3 className="mb-3 text-sm font-semibold text-gray-900">سلسلة المراسلة ({detail.thread_items.length})</h3>
-      <ol className="space-y-2">
-        {detail.thread_items.map((item) => {
-          const stored = contents?.get(item.id);
-          const current = item.id === detail.id;
-          return (
-            <li key={item.id}>
-              <Link
-                to={`/correspondence/${item.id}`}
-                className={cn(
-                  'block rounded-lg border px-3 py-2 text-sm transition-colors',
-                  current ? 'border-primary-200 bg-primary-50' : 'border-gray-200 hover:bg-gray-50',
-                )}
-              >
-                <div className="flex items-center justify-between gap-2 text-xs text-gray-500">
-                  <span>{names.get(item.sender_id) ?? 'مشارك'}</span>
-                  <span dir="ltr">{item.reference_number}</span>
-                  <span>{formatDate(item.sent_at)}</span>
+    <div className="space-y-3" aria-label="رسائل المحادثة">
+      {items.length > 2 && (
+        <div className="flex justify-end gap-3 text-xs">
+          <button type="button" className="text-primary-700 hover:underline" onClick={() => setExpanded(new Set(items.map((i) => i.id)))}>
+            توسيع الكل
+          </button>
+          <button type="button" className="text-primary-700 hover:underline" onClick={() => setExpanded(new Set([items[0].id]))}>
+            طيّ الكل
+          </button>
+        </div>
+      )}
+      {items.map((item) => {
+        const stored = contents?.get(item.id);
+        const isOpen = expanded.has(item.id);
+        const sender = names.get(item.sender_id) ?? 'مشارك';
+        const current = item.id === detail.id;
+        return (
+          <article
+            key={item.id}
+            className={cn(
+              'rounded-lg border bg-white shadow-sm',
+              current ? 'border-primary-200' : 'border-gray-200',
+              item.unread && 'border-s-4 border-s-primary-600',
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => toggle(item.id)}
+              aria-expanded={isOpen}
+              className="flex w-full items-start gap-3 px-5 py-3 text-start"
+            >
+              <Avatar name={sender} size={isOpen ? 'lg' : 'md'} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className={cn('text-gray-900', item.unread ? 'font-bold' : 'font-semibold')}>{sender}</span>
+                  <span className="flex items-center gap-2 text-xs text-gray-500">
+                    <span dir="ltr" className="font-mono">
+                      {item.reference_number}
+                    </span>
+                    {formatDate(item.sent_at)}
+                  </span>
                 </div>
-                <p className="mt-1 truncate text-gray-800">
-                  {contents === null ? '…' : stored ? stored.content.subject : '🔒 غير متاحة على هذا الجهاز'}
-                </p>
-              </Link>
-            </li>
-          );
-        })}
-      </ol>
-    </Card>
+                {!isOpen && (
+                  <p className="truncate text-sm text-gray-500">
+                    {contents === null
+                      ? '…'
+                      : stored
+                        ? stored.content.body.replace(/\s+/g, ' ').slice(0, 160) || stored.content.subject
+                        : '🔒 غير متاحة على هذا الجهاز'}
+                  </p>
+                )}
+                {isOpen && current && (
+                  <>
+                    <ParticipantsLine label="إلى" people={to} showReceipts={isSender} />
+                    <ParticipantsLine label="نسخة" people={cc} showReceipts={isSender} />
+                    {detail.due_date && <p className="text-xs text-gray-500">الاستحقاق {formatDay(detail.due_date)}</p>}
+                  </>
+                )}
+              </div>
+            </button>
+            {isOpen && (
+              <div className="border-t border-gray-100 px-5 pb-5 pt-4">
+                <ContentView
+                  opened={
+                    contents === null
+                      ? null
+                      : stored
+                        ? { state: 'ok', stored }
+                        : { state: 'unavailable', reason: 'هذه الرسالة غير متاحة على هذا الجهاز (أُرسلت قبل انضمامه أو تعذر فكها).' }
+                  }
+                />
+              </div>
+            )}
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
@@ -286,6 +411,8 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
   const queryClient = useQueryClient();
   const [opened, setOpened] = useState<OpenResult | null>(null);
   const [showEvents, setShowEvents] = useState(false);
+  const [replying, setReplying] = useState(false);
+  const [threadSubject, setThreadSubject] = useState<string | null>(null);
 
   const { data: detail, isLoading, error } = useQuery({
     queryKey: ['correspondence', id],
@@ -377,7 +504,14 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
       {/* شريط الأوامر — أسلوب Outlook */}
       <div className={cn('flex flex-wrap items-center gap-1 border-b border-gray-200 bg-white py-1.5', embedded ? 'sticky top-0 z-10 -mx-6 px-4' : 'rounded-t-xl px-2')}>
         {canReply && (
-          <button type="button" className={toolbarButton} onClick={() => document.getElementById('reply-box')?.scrollIntoView({ behavior: 'smooth' })}>
+          <button
+            type="button"
+            className={toolbarButton}
+            onClick={() => {
+              setReplying(true);
+              requestAnimationFrame(() => document.getElementById('reply-box')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+            }}
+          >
             <Reply className="h-4 w-4 text-primary-600" />
             رد على الجميع
           </button>
@@ -419,68 +553,67 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
         )}
       </div>
 
-      <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <div className="space-y-2">
-          <h2 className="break-words text-xl font-semibold text-gray-900">
-            {subject ?? (
-              <span className="flex items-center gap-2 text-gray-400">
-                <Lock className="h-5 w-5" />
-                مشفّرة
-              </span>
-            )}
-          </h2>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-            <span dir="ltr" className="font-mono">
-              {detail.reference_number ?? 'بلا رقم (لم تُرسل)'}
+      <div className="space-y-2">
+        <h2 className="break-words text-xl font-semibold text-gray-900">
+          {threadSubject ?? (subject ? conversationSubject(subject) : null) ?? (
+            <span className="flex items-center gap-2 text-gray-400">
+              <Lock className="h-5 w-5" />
+              مشفّرة
             </span>
-            <PriorityBadge priority={detail.priority} />
-            <ClassificationBadge classification={detail.classification} />
-            {detail.status === 'closed' && <span className="rounded-full bg-gray-100 px-2 py-0.5">مغلقة</span>}
-            {detail.is_forward && detail.forwarded_from_reference && (
-              <span>
-                إحالة من <span dir="ltr">{detail.forwarded_from_reference}</span>
-              </span>
-            )}
-            {detail.reply_to_id && (
-              <Link to={`/correspondence/${detail.reply_to_id}`} className="text-primary-700 hover:underline">
-                رد على مراسلة سابقة
-              </Link>
-            )}
-          </div>
+          )}
+        </h2>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+          {detail.thread_items.length > 1 && (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5">{detail.thread_items.length} رسائل</span>
+          )}
+          <PriorityBadge priority={detail.priority} />
+          <ClassificationBadge classification={detail.classification} />
+          {detail.status === 'closed' && <span className="rounded-full bg-gray-100 px-2 py-0.5">مغلقة</span>}
+          {detail.is_forward && detail.forwarded_from_reference && (
+            <span>
+              إحالة من <span dir="ltr">{detail.forwarded_from_reference}</span>
+            </span>
+          )}
         </div>
-
-        <div className="flex items-start gap-3 border-b border-gray-100 pb-4">
-          <Avatar name={detail.sender.full_name || detail.sender.username} size="lg" />
-          <div className="min-w-0 flex-1 space-y-0.5">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <span className="font-semibold text-gray-900">{detail.sender.full_name}</span>
-              <span className="text-xs text-gray-500">
-                {detail.sent_at ? formatDate(detail.sent_at) : `أُنشئت ${formatDate(detail.created_at)}`}
-              </span>
-            </div>
-            <ParticipantsLine label="إلى" people={to} showReceipts={isSender} />
-            <ParticipantsLine label="نسخة" people={cc} showReceipts={isSender} />
-            {detail.due_date && <p className="text-xs text-gray-500">الاستحقاق {formatDay(detail.due_date)}</p>}
-          </div>
-        </div>
-
-        <ContentView opened={opened} />
-        <E2EENote />
       </div>
 
-      <ThreadList detail={detail} names={names} />
-
-      <ApprovalPanel detail={detail} isSender={isSender} />
-
-      {canReply && (
+      {canReply && replying && (
         <ReplyBox
+          key={detail.thread_items.length}
           detail={detail}
-          onSent={(newId) => {
+          onCancel={() => setReplying(false)}
+          onSent={() => {
+            // الرد يظهر أعلى المحادثة نفسها — لا ننتقل لمجلد آخر.
+            setReplying(false);
             refresh();
-            navigate(`/mail/sent/${newId}`);
           }}
         />
       )}
+
+      {detail.thread_items.length > 0 ? (
+        <Conversation detail={detail} names={names} isSender={isSender} onSubject={setThreadSubject} />
+      ) : (
+        <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start gap-3 border-b border-gray-100 pb-4">
+            <Avatar name={detail.sender.full_name || detail.sender.username} size="lg" />
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="font-semibold text-gray-900">{detail.sender.full_name}</span>
+                <span className="text-xs text-gray-500">
+                  {detail.sent_at ? formatDate(detail.sent_at) : `أُنشئت ${formatDate(detail.created_at)}`}
+                </span>
+              </div>
+              <ParticipantsLine label="إلى" people={to} showReceipts={isSender} />
+              <ParticipantsLine label="نسخة" people={cc} showReceipts={isSender} />
+              <p className="text-xs text-gray-500">بلا رقم (لم تُرسل)</p>
+            </div>
+          </div>
+          <ContentView opened={opened} />
+        </div>
+      )}
+      <E2EENote />
+
+      <ApprovalPanel detail={detail} isSender={isSender} />
 
       <Card className="p-5">
         <button

@@ -1,148 +1,292 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { CheckCircle2, Copy, Eye, EyeOff, KeyRound, UploadCloud } from 'lucide-react';
-import { Button, Card, CardContent, CardHeader, CardTitle, Input } from '../../shared/ui';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, CheckCircle2, Copy, Download, KeyRound, RefreshCw, ShieldCheck, UploadCloud } from 'lucide-react';
+import { Button, Card, CardContent, CardHeader, CardTitle, Input, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
+import { cryptoApi } from '../../crypto/api';
 import {
-  encryptRecoveryBundle,
+  backupNow,
+  checkKeyAgainstServer,
+  enableRecovery,
   generateRecoveryKey,
+  parseRecoveryKey,
+  recoveryStatus,
   restoreFromRecoveryKey,
-  uploadBackup,
   type RecoveryKeyDisplay,
 } from '../../crypto/recovery';
+import { resetCryptoBootstrap, useCryptoBootstrap } from '../../crypto/useCryptoBootstrap';
 import { useAuth } from '../auth/AuthContext';
 
-const STEP_GENERATE = 0;
-const STEP_DISPLAY = 1;
-const STEP_CONFIRM = 2;
-const STEP_DONE = 3;
+function errorText(err: unknown, fallback: string): string {
+  return err instanceof Error && !('status' in err) ? err.message : toUserMessage(err, fallback);
+}
 
-function Wizard() {
-  const [step, setStep] = useState(STEP_GENERATE);
+function formatDate(iso: string | null): string {
+  if (!iso) return '—';
+  return new Intl.DateTimeFormat('ar', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
+}
+
+function formatSize(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} ك.ب` : `${(bytes / 1024 / 1024).toFixed(1)} م.ب`;
+}
+
+function useRecoveryStatus() {
+  return useQuery({ queryKey: ['recovery-status'], queryFn: recoveryStatus, refetchInterval: 30_000 });
+}
+
+function useServerBackups(enabled = true) {
+  return useQuery({ queryKey: ['key-backups'], queryFn: cryptoApi.listBackups, enabled });
+}
+
+// --- إنشاء مفتاح جديد ---------------------------------------------------------------
+
+function CreateKeyWizard({ onDone, rotating = false }: { onDone: () => void; rotating?: boolean }) {
+  const { user } = useAuth();
   const [key, setKey] = useState<RecoveryKeyDisplay | null>(null);
-  const [revealed, setRevealed] = useState(false);
+  const [step, setStep] = useState<'intro' | 'show' | 'confirm'>('intro');
   const [copied, setCopied] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const enable = useMutation({ mutationFn: (raw: Uint8Array) => enableRecovery(raw), onSuccess: onDone });
 
-  const backupMutation = useMutation({
-    mutationFn: async (raw: Uint8Array) => uploadBackup(await encryptRecoveryBundle(raw)),
-    onSuccess: () => setStep(STEP_DONE),
+  const display = key?.groups.join('-') ?? '';
+  const download = () => {
+    const text = [
+      'مفتاح الاستعادة — نظام المراسلات الداخلية',
+      `الحساب: ${user?.username ?? ''}`,
+      `التاريخ: ${new Date().toLocaleString('ar')}`,
+      '',
+      display,
+      '',
+      'احفظه بعيدًا عن جهازك (ورقة مطبوعة أو مدير كلمات مرور). لا أحد غيرك يستطيع استرجاعه، ولا الإدارة.',
+    ].join('\r\n');
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `recovery-key-${user?.username ?? 'account'}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (step === 'intro') {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-gray-600">
+          {rotating
+            ? 'سيُنشأ مفتاح جديد وتُستبدل نسخ هذا الجهاز به. المفتاح القديم لن يفتح نسخ هذا الجهاز بعد الآن.'
+            : 'مفتاح الاستعادة هو الطريقة الوحيدة لاسترجاع مراسلاتك إن فقدت هذا المتصفح أو الجهاز. يُعرض مرة واحدة فقط، ولا تستطيع الإدارة ولا الخادم استرجاعه.'}
+        </p>
+        <Button
+          onClick={() => {
+            setKey(generateRecoveryKey());
+            setStep('show');
+          }}
+        >
+          <KeyRound className="h-4 w-4" />
+          {rotating ? 'إنشاء مفتاح جديد' : 'إنشاء مفتاح الاستعادة'}
+        </Button>
+      </div>
+    );
+  }
+
+  if (step === 'show' && key) {
+    return (
+      <div className="space-y-3">
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          احفظ المفتاح الآن (نزّله أو اطبعه أو انسخه لمدير كلمات المرور). لن يُعرض مرة أخرى.
+        </p>
+        <div dir="ltr" className="rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 p-4 text-center font-mono text-base font-bold tracking-wider text-gray-900" data-testid="recovery-key">
+          {display}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={download}>
+            <Download className="h-4 w-4" />
+            تنزيل كملف
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void navigator.clipboard.writeText(display).then(() => setCopied(true)).catch(() => undefined)}
+          >
+            <Copy className="h-4 w-4" />
+            {copied ? 'نُسخ!' : 'نسخ'}
+          </Button>
+          <Button onClick={() => setStep('confirm')}>حفظته — متابعة</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const expected = key?.groups[key.groups.length - 1] ?? '';
+  const ok = confirmText.trim().toUpperCase() === expected;
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-gray-600">للتأكد من أنك حفظته: اكتب المجموعة الأخيرة من المفتاح (4 رموز).</p>
+      <Input
+        dir="ltr"
+        value={confirmText}
+        onChange={(e) => setConfirmText(e.target.value)}
+        placeholder="XXXX"
+        className="max-w-xs font-mono"
+        aria-label="المجموعة الأخيرة من المفتاح"
+        autoComplete="off"
+      />
+      <div className="flex gap-2">
+        <Button onClick={() => key && enable.mutate(key.raw)} disabled={!ok} loading={enable.isPending}>
+          <UploadCloud className="h-4 w-4" />
+          تفعيل النسخ الاحتياطي
+        </Button>
+        <Button variant="ghost" onClick={() => setStep('show')}>
+          رجوع
+        </Button>
+      </div>
+      {enable.error && <p className="text-sm text-red-600">{errorText(enable.error, 'تعذر إنشاء النسخة')}</p>}
+    </div>
+  );
+}
+
+// --- إدخال مفتاح موجود (جهاز ثانٍ) -------------------------------------------------
+
+function UseExistingKey({ onDone }: { onDone: () => void }) {
+  const [value, setValue] = useState('');
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const raw = parseRecoveryKey(value);
+      const { matches } = await checkKeyAgainstServer(raw);
+      if (matches === 0) throw new Error('هذا المفتاح لا يطابق نسخك الموجودة — تأكد منه');
+      return enableRecovery(raw);
+    },
+    onSuccess: onDone,
   });
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        mutation.mutate();
+      }}
+    >
+      <p className="text-sm text-gray-600">
+        لديك مفتاح استعادة أنشأته على جهاز آخر. أدخله هنا ليُنسخ هذا الجهاز احتياطيًا بالمفتاح نفسه.
+      </p>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input dir="ltr" value={value} onChange={(e) => setValue(e.target.value)} placeholder="XXXX-XXXX-XXXX-…" className="font-mono" autoComplete="off" aria-label="مفتاح الاستعادة الحالي" />
+        <Button type="submit" variant="outline" loading={mutation.isPending}>
+          اعتماد المفتاح
+        </Button>
+      </div>
+      {mutation.error && <p className="text-sm text-red-600">{errorText(mutation.error, 'تعذر اعتماد المفتاح')}</p>}
+    </form>
+  );
+}
 
-  const generate = () => {
-    const fresh = generateRecoveryKey();
-    setKey(fresh);
-    setStep(STEP_DISPLAY);
-  };
+// --- الحالة على جهاز نشط ---------------------------------------------------------------
 
-  const copyKey = async () => {
-    if (!key) return;
-    await navigator.clipboard.writeText(key.groups.join('-'));
-    setCopied(true);
+function BackupSection() {
+  const queryClient = useQueryClient();
+  const status = useRecoveryStatus();
+  const backups = useServerBackups();
+  const [rotating, setRotating] = useState(false);
+  const [createNew, setCreateNew] = useState(false);
+  const refresh = () => {
+    setRotating(false);
+    setCreateNew(false);
+    void queryClient.invalidateQueries({ queryKey: ['recovery-status'] });
+    void queryClient.invalidateQueries({ queryKey: ['key-backups'] });
   };
+  const now = useMutation({ mutationFn: () => backupNow({ force: true }), onSettled: refresh });
+
+  if (status.isLoading) return <Spinner />;
+  const s = status.data;
+
+  if (!s?.configured || rotating) {
+    const othersExist = (backups.data?.length ?? 0) > 0 && !rotating;
+    return (
+      <div className="space-y-4">
+        {!rotating && (
+          <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            النسخ الاحتياطي غير مفعّل على هذا الجهاز. إن مُسحت بيانات المتصفح أو تعطّل الجهاز ستفقد مراسلاتك نهائيًا.
+          </div>
+        )}
+        {othersExist && !createNew ? (
+          <>
+            <UseExistingKey onDone={refresh} />
+            <button type="button" className="text-xs text-primary-700 hover:underline" onClick={() => setCreateNew(true)}>
+              أضعت المفتاح؟ أنشئ مفتاحًا جديدًا لهذا الجهاز
+            </button>
+          </>
+        ) : (
+          <CreateKeyWizard onDone={refresh} rotating={rotating} />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {step === STEP_GENERATE && (
-        <>
-          <p className="text-sm text-gray-600">
-            مفتاح الاستعادة هو الطريقة الوحيدة لاسترجاع مراسلاتك عند فقدان كل أجهزتك. سيُعرض مرة واحدة فقط —
-            احفظه في مكان آمن (طباعة أو مدير كلمات مرور).
-          </p>
-          <Button onClick={generate}>
-            <KeyRound className="h-4 w-4" />
-            توليد مفتاح استعادة
-          </Button>
-        </>
-      )}
-
-      {step === STEP_DISPLAY && key && (
-        <>
-          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            لن يُعرض هذا المفتاح مجددًا. احفظه الآن قبل المتابعة.
-          </p>
-          <button
-            type="button"
-            onClick={() => setRevealed((v) => !v)}
-            className="block w-full rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 p-4 text-center transition-colors hover:border-primary-400"
-            aria-label={revealed ? 'إخفاء المفتاح' : 'إظهار المفتاح'}
-          >
-            {revealed ? (
-              <span dir="ltr" className="font-mono text-lg font-bold tracking-wider text-gray-900">
-                {key.groups.join('-')}
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-2 text-sm text-gray-500">
-                {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                اضغط لإظهار المفتاح
-              </span>
-            )}
-          </button>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => void copyKey()}>
-              <Copy className="h-4 w-4" />
-              {copied ? 'نُسخ!' : 'نسخ المفتاح'}
-            </Button>
-            <Button onClick={() => setStep(STEP_CONFIRM)}>حفظت المفتاح — متابعة</Button>
-          </div>
-        </>
-      )}
-
-      {step === STEP_CONFIRM && key && (
-        <>
-          <p className="text-sm text-gray-600">
-            أكّد أنك حفظت المفتاح. سننشئ الآن نسخة احتياطية مشفرة من هويتك ومفاتيحك وحالة محادثاتك
-            (AES-256-GCM بمفتاح مشتق من مفتاح الاستعادة).
-          </p>
-          <div className="flex gap-2">
-            <Button
-              onClick={() => backupMutation.mutate(key.raw)}
-              loading={backupMutation.isPending}
-              disabled={backupMutation.isPending}
-            >
-              <UploadCloud className="h-4 w-4" />
-              إنشاء النسخة الاحتياطية
-            </Button>
-            <Button variant="ghost" onClick={() => setStep(STEP_DISPLAY)}>
-              رجوع
-            </Button>
-          </div>
-          {backupMutation.error && (
-            <p className="text-sm text-red-600">{toUserMessage(backupMutation.error, 'تعذر إنشاء النسخة')}</p>
-          )}
-        </>
-      )}
-
-      {step === STEP_DONE && (
-        <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          <CheckCircle2 className="h-5 w-5 shrink-0" />
-          اكتمل إعداد الاستعادة وخُزّنت النسخة المشفرة (تُرفع للخادم فور اعتماد نقطة الرفع).
+      <div className="flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          النسخ الاحتياطي التلقائي مفعّل. تُرفع نسخة مشفّرة بعد كل تغيير (المفاتيح والمراسلات والمحادثات المفكوكة على هذا
+          الجهاز). آخر نسخة: <strong>{formatDate(s.lastBackupAt)}</strong>
+        </span>
+      </div>
+      {s.lastError && <p className="text-sm text-red-600">آخر محاولة فشلت: {s.lastError}</p>}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={() => now.mutate()} loading={now.isPending}>
+          <RefreshCw className="h-4 w-4" />
+          نسخ الآن
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setRotating(true)}>
+          <KeyRound className="h-4 w-4" />
+          استبدال المفتاح
+        </Button>
+      </div>
+      {now.error && <p className="text-sm text-red-600">{errorText(now.error, 'تعذر رفع النسخة')}</p>}
+      {backups.data && backups.data.length > 0 && (
+        <div>
+          <h4 className="mb-2 text-sm font-medium text-gray-700">النسخ على الخادم (مشفّرة — الخادم لا يستطيع فتحها)</h4>
+          <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 text-sm">
+            {backups.data.map((b) => (
+              <li key={b.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <span className="text-gray-800">{b.device_label}</span>
+                <span className="text-xs text-gray-500">
+                  {formatDate(b.created_at)} · {formatSize(b.size)}
+                  {b.key_id !== s.keyId && ' · بمفتاح آخر'}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
   );
 }
 
-function RestorePanel() {
-  const { user } = useAuth();
+// --- الاستعادة على هذا المتصفح ------------------------------------------------------------
+
+function RestorePanel({ emphasized }: { emphasized: boolean }) {
   const [value, setValue] = useState('');
-  const [done, setDone] = useState(false);
+  const [understood, setUnderstood] = useState(false);
   const mutation = useMutation({
-    mutationFn: () => restoreFromRecoveryKey(value.split('-')),
+    mutationFn: () => restoreFromRecoveryKey(value),
     onSuccess: () => {
-      setDone(true);
-      void user; // إعادة بناء الجلسة تحدث تلقائيًا عبر resetMlsSession
-      window.location.reload();
+      resetCryptoBootstrap();
+      setTimeout(() => window.location.assign('/mail/inbox'), 1500);
     },
   });
 
   return (
-    <div className="mt-6 border-t border-gray-200 pt-4">
-      <h4 className="mb-1 text-sm font-semibold text-gray-900">استعادة على هذا الجهاز</h4>
-      <p className="mb-3 text-sm text-gray-500">
-        أدخل مفتاح الاستعادة (8 مجموعات) لفك النسخة المشفرة وإعادة بناء الهوية والمحادثات.
+    <div className={emphasized ? 'space-y-3' : 'mt-6 space-y-3 border-t border-gray-200 pt-4'}>
+      <h4 className="text-sm font-semibold text-gray-900">استعادة حسابي على هذا المتصفح</h4>
+      <p className="text-sm text-gray-600">
+        للمتصفح الجديد بعد فقدان جهازك القديم: أدخل مفتاح الاستعادة فتُسترجع مفاتيحك ومراسلاتك ومحادثاتك من آخر نسخة.
+      </p>
+      <p className="flex items-start gap-1.5 text-xs text-amber-700">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        إن كان جهازك القديم ما زال يعمل فلا تستعد هنا — اعتمد هذا المتصفح من صفحة الأجهزة على جهازك القديم.
       </p>
       <form
-        className="flex flex-col gap-2 sm:flex-row"
+        className="space-y-2"
         onSubmit={(e) => {
           e.preventDefault();
           mutation.mutate();
@@ -151,34 +295,56 @@ function RestorePanel() {
         <Input
           dir="ltr"
           value={value}
-          onChange={(e) => setValue(e.target.value.toUpperCase())}
-          placeholder="XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX"
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
           autoComplete="off"
           className="font-mono"
+          aria-label="مفتاح الاستعادة"
         />
-        <Button type="submit" variant="outline" loading={mutation.isPending} disabled={done}>
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} className="accent-primary-600" />
+          جهازي القديم مفقود أو لم يعد يعمل
+        </label>
+        <Button type="submit" loading={mutation.isPending} disabled={!understood || mutation.isSuccess}>
           استعادة
         </Button>
       </form>
-      {mutation.error && <p className="mt-2 text-sm text-red-600">{toUserMessage(mutation.error, 'تعذرت الاستعادة')}</p>}
-      {done && <p className="mt-2 text-sm text-emerald-700">تمت الاستعادة — جارٍ إعادة التحميل…</p>}
+      {mutation.error && <p className="text-sm text-red-600">{errorText(mutation.error, 'تعذرت الاستعادة')}</p>}
+      {mutation.data && (
+        <p className="flex items-center gap-2 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4" />
+          تمت الاستعادة من نسخة {formatDate(mutation.data.backupAt)} — جارٍ فتح البريد…
+        </p>
+      )}
     </div>
   );
 }
 
-export const Recovery = () => (
-  <Card className="mx-auto max-w-2xl">
-    <CardHeader>
-      <CardTitle>مفتاح الاستعادة</CardTitle>
-      <p className="text-sm text-gray-500">
-        النسخة الاحتياطية مشفرة دائمًا قبل الرفع؛ الخادم يرى ciphertext فقط (§3.6).
-      </p>
-    </CardHeader>
-    <CardContent>
-      <Wizard />
-      <RestorePanel />
-    </CardContent>
-  </Card>
-);
+export const Recovery = () => {
+  const bootstrap = useCryptoBootstrap();
+  const pending = bootstrap.status === 'pending_approval';
+  return (
+    <Card className="mx-auto max-w-2xl">
+      <CardHeader>
+        <CardTitle>الاستعادة والنسخ الاحتياطي</CardTitle>
+        <p className="text-sm text-gray-500">
+          النسخة تُشفّر على جهازك بمفتاح الاستعادة قبل رفعها؛ الخادم والإدارة لا يستطيعون فتحها (§3.6).
+        </p>
+      </CardHeader>
+      <CardContent>
+        {bootstrap.status === 'loading' ? (
+          <Spinner />
+        ) : pending ? (
+          <RestorePanel emphasized />
+        ) : (
+          <>
+            {bootstrap.status === 'ready' && <BackupSection />}
+            <RestorePanel emphasized={false} />
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
 
 export const RecoveryPages = { Recovery };

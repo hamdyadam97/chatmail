@@ -128,6 +128,19 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   return data as T;
 }
 
+/** طلب ببايتات خام (ciphertext) — نفس المصادقة وتجديد الجلسة مثل apiFetch. */
+export async function rawFetch(path: string, init: RequestInit): Promise<Response> {
+  const go = () =>
+    fetch(`${API_BASE_URL}${path}`, {
+      credentials: 'include',
+      ...init,
+      headers: { ...(init.headers ?? {}), Authorization: `Bearer ${accessToken ?? ''}` },
+    });
+  let res = await go();
+  if (res.status === 401 && (await refreshAccessToken())) res = await go();
+  return res;
+}
+
 function extractErrorMessage(data: unknown): string | undefined {
   if (data && typeof data === 'object') {
     const record = data as Record<string, unknown>;

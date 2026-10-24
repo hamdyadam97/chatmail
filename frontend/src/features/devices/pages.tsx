@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MonitorSmartphone, RefreshCw, ShieldCheck, ShieldOff } from 'lucide-react';
 import { Button, Card, CardContent, CardHeader, CardTitle, Spinner } from '../../shared/ui';
@@ -104,7 +105,10 @@ function DeviceRow({
         {device.status === 'pending' && isCurrent && (
           // الجهاز لا يعتمد نفسه (حماية من إضافة جهاز بصمت): الاعتماد من جهاز موثّق آخر.
           <span className="max-w-xs text-xs text-gray-500">
-            اعتمده من أحد أجهزتك الموثّقة، أو استعد حسابك بمفتاح الاستعادة
+            اعتمده من أحد أجهزتك الموثّقة، أو{' '}
+            <Link to="/recovery" className="text-primary-700 underline">
+              استعد حسابك بمفتاح الاستعادة
+            </Link>
           </span>
         )}
         {(device.status === 'active' || device.status === 'pending') && !isCurrent && (

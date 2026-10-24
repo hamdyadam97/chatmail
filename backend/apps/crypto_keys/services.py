@@ -15,9 +15,14 @@ Python). user.id.bytes is the 16-byte UUID — domain separation between users.
 """
 import base64
 import hashlib
+import re
+import uuid
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -26,7 +31,7 @@ from rest_framework.exceptions import APIException, PermissionDenied, Validation
 from apps.accounts.models import TrustedDevice, User, UserSession
 
 from . import transparency
-from .models import DeviceKeyBundle, UserCryptoIdentity
+from .models import DeviceKeyBundle, EncryptedKeyBackup, UserCryptoIdentity
 
 DEVICE_SIGN_PUB_LEN = 32
 KEM_PUB_LEN = 32
@@ -425,3 +430,167 @@ def claim_keypackages(device_ids: list) -> list[dict]:
             }
         )
     return results
+
+
+# --- Encrypted recovery backups (docs/phase1/03 §3.6) ------------------------------
+#
+# The server is storage only: the bundle is AES-256-GCM ciphertext under a key
+# derived on the client from the Recovery Key, which never reaches Django.
+# Every upload is signed by the uploading device's key, so a stolen login
+# session alone cannot push junk that would rotate real backups out.
+
+BACKUP_SIGNING_CONTEXT = b"key-backup-v1\n"
+RESTORE_SIGNING_CONTEXT = b"device-restore-v1\n"
+BACKUPS_KEPT_PER_DEVICE = 3
+RESTORE_CLOCK_SKEW = timedelta(minutes=5)
+_KEY_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _verify_with_device(device: TrustedDevice, message: bytes, signature: bytes, field: str = "sig") -> None:
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes(device.identity_sign_pub)).verify(signature, message)
+    except (InvalidSignature, ValueError):
+        raise PermissionDenied({field: "توقيع الجهاز غير صالح."})
+
+
+def _uuid(value, field: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        raise ValidationError({field: "معرّف غير صالح."})
+
+
+def _own_keyed_active_device(user, device_id) -> TrustedDevice:
+    device = get_own_device(user, _uuid(device_id, "device_id"))
+    if device.status != "active" or device.identity_sign_pub is None:
+        raise PermissionDenied("الجهاز ليس جهازًا موثّقًا نشطًا.")
+    return device
+
+
+def backup_signing_message(*, user_id, device_id, key_id: str, iv: bytes, ciphertext_sha256: bytes) -> bytes:
+    return BACKUP_SIGNING_CONTEXT + "\n".join(
+        [str(user_id), str(device_id), key_id, b64encode(iv), ciphertext_sha256.hex()]
+    ).encode()
+
+
+@transaction.atomic
+def store_backup(user, *, device_id, key_id: str, iv: bytes, ciphertext: bytes, signature: bytes):
+    if not isinstance(key_id, str) or not _KEY_ID_RE.match(key_id):
+        raise ValidationError({"key_id": "معرّف مفتاح غير صالح."})
+    if len(iv) != 12:
+        raise ValidationError({"iv": "يجب أن يكون 12 بايت."})
+    if not ciphertext or len(ciphertext) > settings.KEY_BACKUP_MAX_BYTES:
+        raise ValidationError({"backup": "حجم النسخة غير مقبول."})
+    device = _own_keyed_active_device(user, device_id)
+    digest = hashlib.sha256(ciphertext).digest()
+    _verify_with_device(
+        device,
+        backup_signing_message(user_id=user.id, device_id=device.id, key_id=key_id, iv=iv, ciphertext_sha256=digest),
+        signature,
+    )
+    User.objects.select_for_update().filter(pk=user.pk).first()  # serialize version allocation
+    last = EncryptedKeyBackup.objects.filter(user=user).order_by("-version").values_list("version", flat=True).first()
+    backup = EncryptedKeyBackup.objects.create(
+        user=user,
+        device=device,
+        version=(last or 0) + 1,
+        key_id=key_id,
+        iv=iv,
+        ciphertext=ciphertext,
+        ciphertext_size=len(ciphertext),
+        ciphertext_sha256=digest,
+    )
+    # A new recovery key on this device supersedes its older-key backups;
+    # beyond that keep only the newest few per device.
+    mine = EncryptedKeyBackup.objects.filter(user=user, device=device)
+    mine.exclude(key_id=key_id).delete()
+    stale = list(mine.order_by("-version").values_list("id", flat=True)[BACKUPS_KEPT_PER_DEVICE:])
+    if stale:
+        EncryptedKeyBackup.objects.filter(id__in=stale).delete()
+    return backup
+
+
+def backup_to_dict(b) -> dict:
+    return {
+        "id": str(b.id),
+        "device_id": str(b.device_id),
+        "device_label": b.device.device_label,
+        "device_status": b.device.status,
+        "version": b.version,
+        "format": b.format,
+        "kdf": b.kdf,
+        "key_id": b.key_id,
+        "iv": b64encode(b.iv),
+        "size": b.ciphertext_size,
+        "created_at": b.created_at.isoformat(),
+    }
+
+
+def list_backups(user):
+    return EncryptedKeyBackup.objects.filter(user=user).select_related("device").order_by("-version")
+
+
+def get_own_backup(user, backup_id):
+    backup = (
+        EncryptedKeyBackup.objects.filter(user=user, id=_uuid(backup_id, "backup_id")).select_related("device").first()
+    )
+    if backup is None:
+        raise PermissionDenied("النسخة غير موجودة.")
+    return backup
+
+
+def restore_signing_message(*, user_id, device_id, backup_id, abandoned_device_id, issued_at: int) -> bytes:
+    return RESTORE_SIGNING_CONTEXT + "\n".join(
+        [str(user_id), str(device_id), str(backup_id), str(abandoned_device_id or ""), str(issued_at)]
+    ).encode()
+
+
+@transaction.atomic
+def complete_restore(user, request, *, device_id, backup_id, abandoned_device_id, issued_at: int,
+                     signature: bytes) -> tuple[TrustedDevice, TrustedDevice | None]:
+    """This browser decrypted a backup and now holds `device_id`'s keys.
+
+    Proof: a signature by that device's key (only someone who opened the
+    backup with the Recovery Key has it). Effects: the browser's own pending
+    registration is withdrawn, this login session is re-anchored to the
+    restored device (so it can approve devices again), and the restore is
+    logged in the transparency chain (§3.6 rule 4)."""
+    device = _own_keyed_active_device(user, device_id)
+    backup = get_own_backup(user, backup_id)
+    if backup.device_id != device.id:
+        raise ValidationError({"backup_id": "النسخة لا تخص هذا الجهاز."})
+    now = timezone.now()
+    try:
+        issued = datetime.fromtimestamp(int(issued_at), tz=dt_timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        raise ValidationError({"issued_at": "قيمة غير صالحة."})
+    if abs(now - issued) > RESTORE_CLOCK_SKEW:
+        raise ValidationError({"issued_at": "انتهت صلاحية الطلب — تأكد من ساعة الجهاز."})
+    _verify_with_device(
+        device,
+        restore_signing_message(
+            user_id=user.id, device_id=device.id, backup_id=backup.id,
+            abandoned_device_id=abandoned_device_id, issued_at=int(issued_at),
+        ),
+        signature,
+    )
+
+    abandoned = None
+    if abandoned_device_id and str(abandoned_device_id) != str(device.id):
+        candidate = get_own_device(user, _uuid(abandoned_device_id, "abandoned_device_id"))
+        if candidate.status == "pending":  # never touch another working device
+            abandoned = revoke_device(user, candidate.id)
+
+    session = request_session(request)
+    if session is not None:
+        session.device = device
+        session.save(update_fields=["device"])
+    device.last_seen_at = now
+    device.save(update_fields=["last_seen_at"])
+    transparency.append_event(
+        "device_restored",
+        user=user,
+        device=device,
+        payload={"user_id": str(user.id), "device_id": str(device.id), "backup_version": backup.version},
+    )
+    return device, abandoned

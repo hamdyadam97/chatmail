@@ -7,6 +7,8 @@ set -euo pipefail
 APP=/opt/correspondence
 ENV_FILE=/etc/correspondence/correspondence.env
 PY="$APP/.venv/bin/python"
+# Private Node.js from install.sh (system Node, if any, belongs to other apps).
+[ -x "$APP/.tools/node/bin/node" ] && export PATH="$APP/.tools/node/bin:$PATH"
 [ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
 
 set -a; . "$ENV_FILE"; . /etc/correspondence/migrate.env; set +a
@@ -32,9 +34,10 @@ echo "== frontend build (same-origin API)"
 ( cd "$APP/frontend" && npm ci --no-audit --no-fund \
   && VITE_API_BASE_URL="https://${DOMAIN}/api/v1" npm run build )
 
-echo "== restart"
+echo "== restart (our service only; nginx is reloaded gracefully, never restarted)"
 systemctl restart correspondence-web
-nginx -t && systemctl reload nginx
+nginx -t || { echo "nginx config invalid - NOT reloading (other sites keep the old config)"; exit 1; }
+systemctl reload nginx
 
 echo "== post-deploy checks"
 ( cd "$APP/backend" && runuser -u correspondence -- "$PY" manage.py check --deploy --fail-level ERROR )

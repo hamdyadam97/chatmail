@@ -166,21 +166,49 @@ function timeLabel(iso: string | null): string {
   return d.toLocaleDateString('ar', sameYear ? { day: 'numeric', month: 'short' } : { dateStyle: 'short' });
 }
 
+interface ConversationGroup {
+  latest: CorrespondenceSummary;
+  ids: string[];
+  unread: boolean;
+}
+
+/** رسائل الخيط الواحد في صف واحد (أسلوب Outlook «عرض كمحادثات»)، بترتيب الأحدث. */
+function groupByConversation(items: CorrespondenceSummary[], folder: Folder): ConversationGroup[] {
+  const groups = new Map<string, ConversationGroup>();
+  for (const item of items) {
+    const key = item.status === 'draft' ? `draft:${item.id}` : item.thread_id;
+    const unread = folder !== 'sent' && item.my_kind !== 'from' && !item.read_at;
+    const g = groups.get(key);
+    if (g) {
+      g.ids.push(item.id);
+      g.unread ||= unread;
+    } else {
+      groups.set(key, { latest: item, ids: [item.id], unread });
+    }
+  }
+  // مثل Outlook: المحادثة ترتفع بآخر نشاط فيها (ولو كان ردّي أنا).
+  const lastAt = (g: ConversationGroup) => g.latest.thread_last_at ?? g.latest.sent_at ?? g.latest.created_at;
+  return [...groups.values()].sort((a, b) => lastAt(b).localeCompare(lastAt(a)));
+}
+
 function MessageRow({
   item,
   folder,
   preview,
   selected,
+  count,
+  unread,
   onOpen,
 }: {
   item: CorrespondenceSummary;
   folder: Folder;
   preview?: Preview;
   selected: boolean;
+  count: number;
+  unread: boolean;
   onOpen: () => void;
 }) {
   const outgoing = folder === 'sent' || item.my_kind === 'from';
-  const unread = !outgoing && !item.read_at;
   const counterpart = outgoing
     ? item.participants.filter((p) => p.kind === 'to').map((p) => p.user.full_name).join('، ') || '—'
     : item.sender.full_name;
@@ -201,8 +229,13 @@ function MessageRow({
           <span className={cn('truncate text-sm', unread ? 'font-bold text-gray-900' : 'text-gray-800')}>
             {outgoing ? `إلى: ${counterpart}` : counterpart}
           </span>
+          {count > 1 && (
+            <span className="shrink-0 rounded-full bg-gray-100 px-1.5 text-xs text-gray-600" title="رسائل في هذه المحادثة">
+              {count}
+            </span>
+          )}
           <span className={cn('shrink-0 text-xs', unread ? 'font-semibold text-primary-700' : 'text-gray-500')}>
-            {timeLabel(item.sent_at ?? item.created_at)}
+            {timeLabel(item.thread_last_at ?? item.sent_at ?? item.created_at)}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -248,6 +281,7 @@ function MessageList({ folder, selectedId }: { folder: Folder; selectedId?: stri
   });
   const items = data?.results ?? NO_ITEMS;
   const previews = usePreviews(items);
+  const groups = useMemo(() => groupByConversation(items, folder), [items, folder]);
 
   return (
     <section className="flex w-[380px] shrink-0 flex-col border-e border-gray-200 bg-white">
@@ -299,14 +333,16 @@ function MessageList({ folder, selectedId }: { folder: Folder; selectedId?: stri
             {query ? 'لا نتائج' : 'لا رسائل في هذا المجلد'}
           </div>
         ) : (
-          items.map((item) => (
+          groups.map(({ latest, ids, unread }) => (
             <MessageRow
-              key={item.id}
-              item={item}
+              key={latest.id}
+              item={latest}
               folder={folder}
-              preview={previews.get(item.id)}
-              selected={item.id === selectedId}
-              onOpen={() => navigate(`/mail/${folderToSlug(folder)}/${item.id}`)}
+              preview={previews.get(latest.id)}
+              selected={selectedId !== undefined && ids.includes(selectedId)}
+              count={Math.max(ids.length, latest.thread_count ?? 1)}
+              unread={unread}
+              onOpen={() => navigate(`/mail/${folderToSlug(folder)}/${latest.id}`)}
             />
           ))
         )}

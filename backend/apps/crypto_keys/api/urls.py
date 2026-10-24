@@ -15,6 +15,9 @@ urlpatterns = [
     path("keys/count/", views.KeyCountView.as_view(), name="crypto-keys-count"),
     path("keys/query/", views.KeyQueryView.as_view(), name="crypto-keys-query"),
     path("keys/claim/", views.KeyClaimView.as_view(), name="crypto-keys-claim"),
+    path("backups/", views.KeyBackupListCreateView.as_view(), name="crypto-backups"),
+    path("backups/restored/", views.KeyBackupRestoredView.as_view(), name="crypto-backup-restored"),
+    path("backups/<uuid:backup_id>/download/", views.KeyBackupDownloadView.as_view(), name="crypto-backup-download"),
     path("transparency/self/", views.TransparencySelfView.as_view(), name="crypto-transparency-self"),
     path("transparency/log-key/", views.TransparencyLogKeyView.as_view(), name="crypto-transparency-log-key"),
 ]

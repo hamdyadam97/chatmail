@@ -6,6 +6,7 @@ import { useAuth } from '../features/auth/AuthContext';
 import { MustChangePasswordModal } from '../features/auth/MustChangePasswordModal';
 import { NotificationBell } from '../features/notifications/NotificationBell';
 import { PushPrompt } from '../features/notifications/PushControls';
+import { RecoveryPrompt } from '../features/recovery/RecoveryPrompt';
 import { Avatar } from '../shared/ui';
 import { cn } from '../shared/lib/cn';
 
@@ -114,6 +115,7 @@ export function AppShell() {
             </button>
           </div>
         </header>
+        <RecoveryPrompt />
         <PushPrompt />
         <main className={cn('min-h-0 flex-1', fullBleed ? 'overflow-hidden' : 'overflow-y-auto p-6')}>
           <Outlet />
