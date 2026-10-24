@@ -1,5 +1,5 @@
 [Unit]
-Description=Correspondence System — announcement acknowledgement reminders
+Description=Correspondence System — reminders (announcement acknowledgements + correspondence due dates)
 After=postgresql.service redis-server.service
 
 [Service]
@@ -9,6 +9,7 @@ Group=correspondence
 EnvironmentFile=/etc/correspondence/correspondence.env
 WorkingDirectory=/opt/correspondence/backend
 ExecStart=/opt/correspondence/.venv/bin/python manage.py send_announcement_reminders
+ExecStart=/opt/correspondence/.venv/bin/python manage.py send_correspondence_reminders
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

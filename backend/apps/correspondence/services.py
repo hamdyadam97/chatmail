@@ -24,6 +24,7 @@ Invariants:
 import hashlib
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -559,6 +560,60 @@ def folder_queryset(user, folder: str):
     return rows.select_related(
         "correspondence", "correspondence__sender", "correspondence__thread"
     )
+
+
+# --- due-date reminders (scheduled) ---------------------------------------------
+
+def _awaiting_my_reply(rows):
+    """Primary recipients who have not replied — same rule as the
+    pending_replies folder (archived = the user dismissed it)."""
+    my_reply = Correspondence.objects.filter(
+        reply_to=OuterRef("correspondence_id"), sender=OuterRef("user_id"), status__in=["sent", "closed"]
+    )
+    return rows.filter(
+        kind="to", removed_at__isnull=True, archived_at__isnull=True,
+        correspondence__status="sent", correspondence__due_date__isnull=False,
+    ).filter(~Exists(my_reply))
+
+
+def send_due_reminders(today=None) -> dict:
+    """Hourly job: generic notifications (no content) about due dates.
+
+    * due today or tomorrow → each waiting primary recipient, once;
+    * past due → each waiting primary recipient once, and the sender once.
+    Closed, archived or answered correspondence never triggers anything.
+    """
+    today = today or timezone.localdate()
+    now = timezone.now()
+    counts = {"due_soon": 0, "overdue": 0, "overdue_sender": 0}
+    pending = _awaiting_my_reply(CorrespondenceParticipant.objects.all())
+
+    with transaction.atomic():
+        soon = list(pending.filter(
+            due_reminded_at__isnull=True,
+            correspondence__due_date__gte=today,
+            correspondence__due_date__lte=today + timedelta(days=1),
+        ))
+        for row in soon:
+            notify([row.user_id], "correspondence_due_soon", ref_type="correspondence", ref_id=row.correspondence_id)
+        CorrespondenceParticipant.objects.filter(id__in=[r.id for r in soon]).update(due_reminded_at=now)
+        counts["due_soon"] = len(soon)
+
+        late = list(pending.filter(overdue_notified_at__isnull=True, correspondence__due_date__lt=today))
+        for row in late:
+            notify([row.user_id], "correspondence_overdue", ref_type="correspondence", ref_id=row.correspondence_id)
+        CorrespondenceParticipant.objects.filter(id__in=[r.id for r in late]).update(overdue_notified_at=now)
+        counts["overdue"] = len(late)
+
+        senders = list(CorrespondenceParticipant.objects.filter(
+            correspondence_id__in={r.correspondence_id for r in late},
+            kind="from", removed_at__isnull=True, overdue_notified_at__isnull=True,
+        ))
+        for row in senders:
+            notify([row.user_id], "correspondence_overdue_sender", ref_type="correspondence", ref_id=row.correspondence_id)
+        CorrespondenceParticipant.objects.filter(id__in=[r.id for r in senders]).update(overdue_notified_at=now)
+        counts["overdue_sender"] = len(senders)
+    return counts
 
 
 # --- encrypted blobs -----------------------------------------------------------

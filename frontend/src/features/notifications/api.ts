@@ -11,7 +11,10 @@ export type NotificationKind =
   | 'approval_decided'
   | 'device_alert'
   | 'announcement'
-  | 'announcement_reminder';
+  | 'announcement_reminder'
+  | 'correspondence_due_soon'
+  | 'correspondence_overdue'
+  | 'correspondence_overdue_sender';
 
 export interface AppNotification {
   id: string;

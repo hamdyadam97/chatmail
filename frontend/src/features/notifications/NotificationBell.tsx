@@ -15,6 +15,9 @@ const INVALIDATES: Record<string, string[][]> = {
   device_alert: [['devices']],
   announcement: [['announcements']],
   announcement_reminder: [['announcements']],
+  correspondence_due_soon: [['correspondences'], ['correspondence-counts']],
+  correspondence_overdue: [['correspondences'], ['correspondence-counts']],
+  correspondence_overdue_sender: [['correspondences']],
 };
 
 /**

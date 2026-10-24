@@ -19,6 +19,9 @@ TITLES = {
     "device_alert": "تغيّرت أجهزة حسابك — راجع قائمة أجهزتك",
     "announcement": "صدر تعميم جديد موجّه إليك",
     "announcement_reminder": "تذكير: تعميم بانتظار تأكيد اطلاعك",
+    "correspondence_due_soon": "تذكير: مراسلة بانتظار ردك يقترب موعدها",
+    "correspondence_overdue": "مراسلة بانتظار ردك تجاوزت موعد الرد",
+    "correspondence_overdue_sender": "مراسلة أرسلتها تجاوزت موعد الرد دون رد",
     # Push-only (no notification row per chat message — the chat sidebar shows unread).
     "new_message": "رسالة محادثة جديدة",
 }

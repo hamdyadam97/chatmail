@@ -20,6 +20,9 @@ class Notification(models.Model):
         ("device_alert", "تنبيه أجهزة"),
         ("announcement", "تعميم"),
         ("announcement_reminder", "تذكير بتعميم"),
+        ("correspondence_due_soon", "اقتراب موعد الرد"),
+        ("correspondence_overdue", "تجاوز موعد الرد"),
+        ("correspondence_overdue_sender", "مراسلة صادرة متأخرة"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

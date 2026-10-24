@@ -34,6 +34,10 @@ echo "== frontend build (same-origin API)"
 ( cd "$APP/frontend" && npm ci --no-audit --no-fund \
   && VITE_API_BASE_URL="https://${DOMAIN}/api/v1" npm run build )
 
+echo "== systemd units (ours only, refreshed on every update)"
+install -m 0644 "$APP"/deploy/systemd/correspondence-*.service "$APP"/deploy/systemd/correspondence-*.timer /etc/systemd/system/
+systemctl daemon-reload
+
 echo "== restart (our service only; nginx is reloaded gracefully, never restarted)"
 systemctl restart correspondence-web
 if ! nginx -t; then

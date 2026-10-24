@@ -217,6 +217,9 @@ class CorrespondenceParticipant(models.Model):
     archived_at = models.DateTimeField(null=True, blank=True)
     is_important = models.BooleanField(default=False)
     removed_at = models.DateTimeField(null=True, blank=True)
+    # Due-date reminders already sent to this participant (each stage once).
+    due_reminded_at = models.DateTimeField(null=True, blank=True)
+    overdue_notified_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
