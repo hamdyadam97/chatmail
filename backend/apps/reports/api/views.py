@@ -1,4 +1,5 @@
 """/api/v1/reports/ — aggregate metadata reports and service health."""
+from django.http import HttpResponse
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -9,6 +10,7 @@ from apps.audit.services import log, request_context
 from apps.authorization.services import has_permission
 
 from .. import services
+from ..export import build_workbook
 
 
 class ReportThrottle(SimpleRateThrottle):
@@ -24,21 +26,43 @@ class ReportView(APIView):
     throttle_classes = [ReportThrottle]
 
     def get(self, request):
-        params = request.query_params
-        unit = services.resolve_unit(params.get("unit_type", "all"), params.get("unit_id"))
-        services.require_report_access(request.user, unit)
-        start, end = services.parse_period(params.get("from"), params.get("to"))
-        report = services.build_report(unit, start, end)
-        # Metadata access by an administrator is itself audited (§5.6).
-        log(
-            actor=request.user,
-            action="report_viewed",
-            target_type=report["scope"]["type"],
-            target_id=unit.id if unit else None,
-            metadata={"from": report["period"]["from"], "to": report["period"]["to"]},
-            **request_context(request),
+        return Response(_audited_report(request, "report_viewed"))
+
+
+def _audited_report(request, action: str) -> dict:
+    params = request.query_params
+    unit = services.resolve_unit(params.get("unit_type", "all"), params.get("unit_id"))
+    services.require_report_access(request.user, unit)
+    start, end = services.parse_period(params.get("from"), params.get("to"))
+    report = services.build_report(unit, start, end)
+    # Metadata access by an administrator is itself audited (§5.6).
+    log(
+        actor=request.user,
+        action=action,
+        target_type=report["scope"]["type"],
+        target_id=unit.id if unit else None,
+        metadata={"from": report["period"]["from"], "to": report["period"]["to"]},
+        **request_context(request),
+    )
+    return report
+
+
+class ReportExportView(APIView):
+    """The same aggregate report as an .xlsx file (same access, audited separately)."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ReportThrottle]
+
+    def get(self, request):
+        report = _audited_report(request, "report_exported")
+        response = HttpResponse(
+            build_workbook(report),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        return Response(report)
+        name = f'report-{report["period"]["from"]}-{report["period"]["to"]}.xlsx'
+        response["Content-Disposition"] = f'attachment; filename="{name}"'
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 class ReportUnitsView(APIView):

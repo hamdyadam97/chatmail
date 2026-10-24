@@ -1,8 +1,9 @@
+import { saveBlob } from '../../shared/lib/download';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, BarChart3, CheckCircle2, Table2, XCircle } from 'lucide-react';
+import { Activity, BarChart3, CheckCircle2, Download, Table2, XCircle } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
-import { apiFetch, toUserMessage } from '../../shared/api';
+import { ApiError, apiFetch, rawFetch, toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
 
 // ---------------------------------------------------------------------------
@@ -203,6 +204,13 @@ function HealthCard() {
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
+/** يصدّر التقرير المعروض نفسه (نفس الوحدة والفترة) كملف Excel. */
+async function downloadExcel(u: ReportUnit, from: string, to: string): Promise<void> {
+  const res = await rawFetch(`/reports/export/?unit_type=${u.type}${u.id ? `&unit_id=${u.id}` : ''}&from=${from}&to=${to}`, {});
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+  saveBlob(await res.blob(), `تقرير-${u.name}-${from}-${to}.xlsx`);
+}
+
 export function Reports() {
   const { data: units, isLoading: unitsLoading } = useQuery({ queryKey: ['reports', 'units'], queryFn: reportsApi.units });
   const [unitKey, setUnitKey] = useState('');
@@ -218,6 +226,21 @@ export function Reports() {
       setApplied({ unit: units[0], from, to });
     }
   }, [units, unitKey, from, to]);
+
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportExcel = async () => {
+    if (!applied) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      await downloadExcel(applied.unit, applied.from, applied.to);
+    } catch (err) {
+      setExportError(toUserMessage(err, 'تعذر تصدير التقرير'));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const { data: report, isFetching, error } = useQuery({
     queryKey: ['reports', 'report', applied],
@@ -250,7 +273,7 @@ export function Reports() {
         <h2 className="text-lg font-semibold text-gray-900">التقارير</h2>
         <p className="text-xs text-gray-500">
           أعداد وأزمنة مجمّعة لكل وحدة فقط — لا أسماء ولا عناوين ولا أطراف مراسلات ولا محتوى. الوحدات الأصغر من{' '}
-          {report?.breakdown.min_group_size ?? 3} موظفين تُدمج حتى لا يُستدل على شخص بعينه. كل عرض لتقرير يُسجَّل في سجل التدقيق.
+          {report?.breakdown.min_group_size ?? 3} موظفين تُدمج حتى لا يُستدل على شخص بعينه. كل عرض أو تصدير لتقرير يُسجَّل في سجل التدقيق.
         </p>
       </div>
       <Card className="p-4">
@@ -279,12 +302,17 @@ export function Reports() {
             <Label htmlFor="r-to">إلى</Label>
             <Input id="r-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
-          <div className="flex items-end">
-            <Button type="submit" className="w-full" loading={isFetching}>
+          <div className="flex items-end gap-2">
+            <Button type="submit" className="flex-1" loading={isFetching}>
               عرض
+            </Button>
+            <Button type="button" variant="outline" onClick={() => void exportExcel()} loading={exporting} disabled={!report} title="تصدير التقرير المعروض كملف Excel">
+              <Download className="h-4 w-4" />
+              Excel
             </Button>
           </div>
         </form>
+        {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
       </Card>
 
       {error && <Card className="p-4 text-sm text-red-600">{toUserMessage(error, 'تعذر تحميل التقرير')}</Card>}

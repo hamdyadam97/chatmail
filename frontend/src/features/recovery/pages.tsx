@@ -1,3 +1,4 @@
+import { saveBlob } from '../../shared/lib/download';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Copy, Download, KeyRound, RefreshCw, ShieldCheck, UploadCloud } from 'lucide-react';
@@ -61,12 +62,7 @@ function CreateKeyWizard({ onDone, rotating = false }: { onDone: () => void; rot
       '',
       'احفظه بعيدًا عن جهازك (ورقة مطبوعة أو مدير كلمات مرور). لا أحد غيرك يستطيع استرجاعه، ولا الإدارة.',
     ].join('\r\n');
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `recovery-key-${user?.username ?? 'account'}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    saveBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), `recovery-key-${user?.username ?? 'account'}.txt`);
   };
 
   if (step === 'intro') {

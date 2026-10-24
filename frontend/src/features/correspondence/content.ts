@@ -8,6 +8,7 @@
  * بصمة SHA-256 للـblob تسافر داخل المحتوى المشفّر، فيكشف العميل أي استبدال
  * للملف على الخادم قبل محاولة فكه.
  */
+import { saveBlob } from '../../shared/lib/download';
 import { b64ToU8, u8ToB64, utf8ToU8 } from '../../crypto/encoding';
 
 export const CONTENT_VERSION = 1;
@@ -155,16 +156,7 @@ export async function decryptAttachment(blob: Uint8Array, meta: AttachmentKey): 
  * داخل أصل التطبيق (HTML/SVG مفكوك قد يحمل سكربتًا — حماية XSS، §21).
  */
 export function saveDecryptedFile(plain: Uint8Array, name: string): void {
-  const safeName = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_') || 'attachment';
-  const url = URL.createObjectURL(new Blob([plain], { type: 'application/octet-stream' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = safeName;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  saveBlob(new Blob([plain], { type: 'application/octet-stream' }), name || 'attachment');
 }
 
 export function formatBytes(n: number): string {

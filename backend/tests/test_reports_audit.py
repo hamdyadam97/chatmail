@@ -153,3 +153,54 @@ def test_my_security_events(api_client, user_factory, branch_a):
     assert all(r["actor"] is None or r["actor"]["id"] == str(me.id) for r in rows)
     assert not any(r["actor"] and r["actor"]["username"] == "aud_other" for r in rows)
     assert DEFAULT_PASSWORD not in json.dumps(rows) and "wrong" not in json.dumps(rows)
+
+
+# --- Excel export ---------------------------------------------------------------------
+
+def _export(client, headers, unit_type, unit_id=None):
+    url = f"{REPORT_URL}export/?unit_type={unit_type}" + (f"&unit_id={unit_id}" if unit_id else "")
+    return client.get(url, **headers)
+
+
+def test_export_matches_report_access_and_is_audited(api_client, activity, branch_a, branch_a2):
+    a = activity
+    assert _export(api_client, a["h_s"], "branch", branch_a.id).status_code == 403
+    assert _export(api_client, a["h_mgr"], "branch", branch_a2.id).status_code == 403
+    r = _export(api_client, a["h_mgr"], "branch", branch_a.id)
+    assert r.status_code == 200
+    assert r["Content-Type"].startswith("application/vnd.openxmlformats")
+    assert AuditLog.objects.filter(action="report_exported", actor=a["manager"], target_id=branch_a.id).exists()
+
+
+def test_export_content_is_the_aggregate_report_only(api_client, activity, branch_a):
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    r = _export(api_client, activity["h_mgr"], "branch", branch_a.id)
+    wb = load_workbook(BytesIO(r.content))
+    assert wb.sheetnames == ["ملخص", "شهري", "حسب الوحدة"]
+    summary = {row[0]: row[1] for row in wb["ملخص"].iter_rows(values_only=True) if row[0]}
+    report = _report(api_client, activity["h_mgr"], "branch", branch_a.id).json()
+    assert summary["المرسلة"] == report["correspondence"]["sent"]
+    assert summary["متأخرة (مفتوحة بعد موعدها)"] == report["correspondence"]["overdue_open"]
+    flat = repr([list(ws.iter_rows(values_only=True)) for ws in wb.worksheets])
+    assert CANARY not in flat
+    for name in ("c_sender", "c_rcpt1", "rep_mgr"):
+        assert name not in flat  # no identities, counts only
+
+
+def test_export_never_writes_formulas(api_client, user_factory, activity, institute_a, branch_a):
+    """A unit name crafted as a formula stays inert text in Excel."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    branch_a.name = '=HYPERLINK("http://evil.example","x")'
+    branch_a.save(update_fields=["name"])
+    head = make_employee(user_factory, "rep_inst2", branch_a)
+    assign_role(head, "institute_manager", institute=institute_a)
+    r = _export(api_client, auth(api_client, "rep_inst2"), "institute", institute_a.id)
+    ws = load_workbook(BytesIO(r.content))["حسب الوحدة"]
+    cells = [c for row in ws.iter_rows() for c in row if isinstance(c.value, str) and c.value.startswith("=")]
+    assert cells and all(c.data_type == "s" for c in cells)

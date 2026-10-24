@@ -23,6 +23,14 @@ const UI_PORT = 5180;
 const UI = `http://localhost:${UI_PORT}`;
 const ARTIFACTS = process.env.UI_SMOKE_ARTIFACTS ?? mkdtempSync(path.join(tmpdir(), 'ui-smoke-art-'));
 
+// Playwright + headless Edge opens an empty page for every download (also on
+// a minimal page — not the app), and closing the browser then rejects that
+// page's pending navigation. Only that specific rejection is ignored.
+process.on('unhandledRejection', (err) => {
+  if (err && err.name === 'TargetClosedError') return;
+  throw err;
+});
+
 const results = [];
 function check(name, ok, detail = '') {
   results.push({ name, ok });
@@ -402,8 +410,29 @@ async function main() {
     })();
     check('التسجيل المعلّق للمتصفح الجديد سُحب', !devicesText.includes('بانتظار الاعتماد'));
 
-    section('8) أخطاء الـConsole');
-    for (const dev of [ahmed, mohamed2]) {
+    section('8) تصدير التقارير إلى Excel');
+    const manager = await newDevice(browser, 'manager', 'Manager@12345');
+    await manager.page.goto(`${UI}/reports`);
+    const excelBtn = manager.page.locator('button:has-text("Excel")');
+    await excelBtn.waitFor({ timeout: 20000 });
+    await manager.page.locator('text=مراسلات مرسلة').first().waitFor({ timeout: 20000 }).catch(() => undefined);
+    const [download] = await Promise.all([
+      manager.page.waitForEvent('download', { timeout: 20000 }).catch(() => null),
+      excelBtn.click(),
+    ]);
+    let xlsxOk = false;
+    if (download) {
+      const file = path.join(ARTIFACTS, 'report.xlsx');
+      await download.saveAs(file);
+      const { readFileSync } = await import('node:fs');
+      const head = readFileSync(file).subarray(0, 2).toString('latin1');
+      xlsxOk = head === 'PK' && download.suggestedFilename().endsWith('.xlsx');
+    }
+    if (!xlsxOk) console.log(`    لقطة: ${await shot(manager, 'export')} — console: ${manager.page.errors.join(' | ')}`);
+    check('manager: نزّل التقرير كملف Excel', xlsxOk);
+
+    section('9) أخطاء الـConsole');
+    for (const dev of [ahmed, mohamed2, manager]) {
       check(`${dev.username}: لا أخطاء JavaScript`, dev.page.errors.length === 0, dev.page.errors.slice(0, 3).join(' | '));
     }
   } finally {
