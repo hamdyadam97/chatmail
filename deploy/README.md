@@ -88,7 +88,7 @@ sudo DOMAIN=mail.example.org CORR_OWNER_PASSWORD=... CORR_APP_PASSWORD=... \
 
 ```bash
 cd /opt/correspondence && sudo git pull
-sudo DOMAIN=mail.example.org deploy/scripts/deploy.sh          # RUN_TESTS=1 لتشغيل الاختبارات على السيرفر أيضًا
+sudo DOMAIN=mail.example.org bash deploy/scripts/deploy.sh          # RUN_TESTS=1 لتشغيل الاختبارات على السيرفر أيضًا
 ```
 
 `deploy.sh` يرحّل بدور المالك ثم يعيد تطبيق `grants.sql`، يبني الواجهة بنفس الأصل (`https://<domain>/api/v1`)، يعيد التشغيل، ثم يفشل إن لم تنجح: `check --deploy`، `verify_integrity --skip-blobs`، والوصول إلى الـAPI عبر nginx.
@@ -110,7 +110,7 @@ sudo bash -c 'set -a; . /etc/correspondence/correspondence.env; set +a; cd /opt/
 - **اختبار الاسترجاع شهريًا** (لا يمس الإنتاج):
 
   ```bash
-  sudo /opt/correspondence/deploy/scripts/restore-test.sh
+  sudo bash /opt/correspondence/deploy/scripts/restore-test.sh
   ```
 
   يتحقق من SHA256، يسترجع في قاعدة `correspondence_restore_test` ومجلد مؤقت، ثم يشغّل `verify_integrity`: الترحيلات، سلسلة الشفافية، كل مرفق بحجمه وبصمته، أن كل رسائل MLS ثنائية (لا نص صريح)، وأن عدّادات الأرقام المرجعية متقدمة على كل رقم صادر.

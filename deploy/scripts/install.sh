@@ -159,6 +159,6 @@ if ! nginx -t >/dev/null 2>&1; then
 fi
 
 echo "== 8. build + migrate + start"
-DOMAIN="$DOMAIN" "$APP/deploy/scripts/deploy.sh"
+DOMAIN="$DOMAIN" bash "$APP/deploy/scripts/deploy.sh"
 systemctl enable --now correspondence-reminders.timer correspondence-backup.timer
 echo "Done. Next: create the first administrator — see deploy/README.md §5."
