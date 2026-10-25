@@ -38,6 +38,20 @@ echo "== systemd units (ours only, refreshed on every update)"
 install -m 0644 "$APP"/deploy/systemd/correspondence-*.service "$APP"/deploy/systemd/correspondence-*.timer /etc/systemd/system/
 systemctl daemon-reload
 
+echo "== nginx site (ours only, refreshed from the template; old copy restored if invalid)"
+SITE=/etc/nginx/sites-available/correspondence
+if [ -f "$SITE" ]; then
+    cp "$SITE" "$SITE.prev"
+    sed "s/mail.example.org/${DOMAIN}/g" "$APP/deploy/nginx/correspondence.conf" > "$SITE"
+    if ! nginx -t >/dev/null 2>&1; then
+        mv "$SITE.prev" "$SITE"
+        echo "   new site config failed nginx -t - previous one restored (nothing else touched)"
+        nginx -t
+    else
+        rm -f "$SITE.prev"
+    fi
+fi
+
 echo "== restart (our service only; nginx is reloaded gracefully, never restarted)"
 systemctl restart correspondence-web
 if ! nginx -t; then
