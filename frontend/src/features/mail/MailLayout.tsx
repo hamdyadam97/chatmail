@@ -66,7 +66,7 @@ function FolderPane({ folder }: { folder: Folder }) {
     pending_replies: counts?.pending_replies,
   };
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-e border-gray-200 bg-gray-50">
+    <aside className="hidden w-56 shrink-0 flex-col border-e border-gray-200 bg-gray-50 md:flex">
       <div className="p-3">
         <button
           type="button"
@@ -265,7 +265,7 @@ function MessageRow({
   );
 }
 
-function MessageList({ folder, selectedId }: { folder: Folder; selectedId?: string }) {
+function MessageList({ folder, selectedId, mobileHidden }: { folder: Folder; selectedId?: string; mobileHidden: boolean }) {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
@@ -284,10 +284,38 @@ function MessageList({ folder, selectedId }: { folder: Folder; selectedId?: stri
   const groups = useMemo(() => groupByConversation(items, folder), [items, folder]);
 
   return (
-    <section className="flex w-[380px] shrink-0 flex-col border-e border-gray-200 bg-white">
+    <section
+      className={cn(
+        'w-full shrink-0 flex-col border-e border-gray-200 bg-white md:flex md:w-[380px]',
+        mobileHidden ? 'hidden' : 'flex',
+      )}
+    >
       <div className="space-y-2 border-b border-gray-200 p-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-gray-900">{FOLDER_LABELS[folder]}</h2>
+          <h2 className="hidden text-base font-semibold text-gray-900 md:block">{FOLDER_LABELS[folder]}</h2>
+          {/* الموبايل: المجلدات قائمة منسدلة + زر رسالة جديدة (لوحة المجلدات مخفية) */}
+          <div className="flex items-center gap-2 md:hidden">
+            <select
+              value={folderToSlug(folder)}
+              onChange={(e) => navigate(`/mail/${e.target.value}`)}
+              aria-label="المجلد"
+              className="h-9 rounded-md border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-900"
+            >
+              {FOLDERS.map(({ key, slug }) => (
+                <option key={key} value={slug}>
+                  {FOLDER_LABELS[key]}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => navigate(`/mail/${folderToSlug(folder)}/compose`)}
+              aria-label="رسالة جديدة"
+              className="rounded-md bg-primary-600 p-2 text-white"
+            >
+              <PenSquare className="h-4 w-4" />
+            </button>
+          </div>
           {folder !== 'sent' && (
             <div className="flex rounded-md bg-gray-100 p-0.5 text-xs">
               {(['الكل', 'غير المقروءة'] as const).map((label, i) => (
@@ -391,11 +419,16 @@ export function MailLayout({ mode }: { mode?: 'compose' | 'legacy' }) {
   // المسودات محلية على الجهاز: قائمتها هي صفحة المسودات نفسها.
   const list =
     folder === 'drafts' ? (
-      <section className={cn('min-w-0 overflow-y-auto border-e border-gray-200 bg-white p-4', composing ? 'w-[380px] shrink-0' : 'flex-1')}>
+      <section
+        className={cn(
+          'min-w-0 overflow-y-auto border-e border-gray-200 bg-white p-4',
+          composing ? 'hidden w-[380px] shrink-0 md:block' : 'flex-1',
+        )}
+      >
         <DraftsPage />
       </section>
     ) : (
-      <MessageList folder={folder} selectedId={selectedId} />
+      <MessageList folder={folder} selectedId={selectedId} mobileHidden={Boolean(selectedId) || composing} />
     );
 
   return (
@@ -404,7 +437,7 @@ export function MailLayout({ mode }: { mode?: 'compose' | 'legacy' }) {
         <FolderPane folder={folder} />
         {list}
         {(folder !== 'drafts' || composing) && (
-          <section className="min-w-0 flex-1 overflow-y-auto bg-gray-50">
+          <section className={cn('min-w-0 flex-1 overflow-y-auto bg-gray-50', !selectedId && !composing && 'hidden md:block')}>
             {composing ? (
               <ComposeForm key={composeKey} embedded onCancel={() => navigate(`/mail/${folderToSlug(folder)}`)} />
             ) : selectedId ? (

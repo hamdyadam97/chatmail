@@ -17,7 +17,7 @@ import { ArchivePage } from '../features/archive/pages';
 import { SecurityPages } from '../features/security/pages';
 import { AuditPages } from '../features/audit/pages';
 import { SearchPage } from '../features/search/pages';
-import { AdminHub, SettingsHub } from '../features/hub/pages';
+import { AdminHub, MoreHub, SettingsHub } from '../features/hub/pages';
 
 /** تحويل يحافظ على ?query (روابط المسودات/الإحالة/البحث القديمة). */
 function Redirect({ to }: { to: string }) {
@@ -76,6 +76,7 @@ export const router = createBrowserRouter([
       { path: 'audit-logs', element: <AuditPages.AuditLogs /> },
 
       { path: 'settings', element: <SettingsHub /> },
+      { path: 'more', element: <MoreHub /> },
       { path: 'notifications', element: <NotificationsPages.Notifications /> },
       { path: 'devices', element: <DevicesPages.Devices /> },
       { path: 'recovery', element: <RecoveryPages.Recovery /> },

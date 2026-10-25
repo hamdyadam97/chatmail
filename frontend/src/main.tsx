@@ -6,6 +6,11 @@ import { AuthProvider } from './features/auth/AuthContext';
 import { router } from './app/router';
 import './index.css';
 
+// Service worker من البداية: يجعل التطبيق قابلًا للتثبيت (PWA) ويستقبل إشعارات سطح المكتب.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <AppProviders>

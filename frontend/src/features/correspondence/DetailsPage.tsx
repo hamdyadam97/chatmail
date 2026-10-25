@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Archive,
+  ArrowRight,
   ArchiveRestore,
   CheckCheck,
   Download,
@@ -501,9 +502,19 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
     'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40';
 
   return (
-    <div className={cn(embedded ? 'space-y-4 px-6 pb-8' : 'mx-auto max-w-4xl space-y-4')}>
+    <div className={cn(embedded ? 'space-y-4 px-3 pb-8 md:px-6' : 'mx-auto max-w-4xl space-y-4')}>
       {/* شريط الأوامر — أسلوب Outlook */}
-      <div className={cn('flex flex-wrap items-center gap-1 border-b border-gray-200 bg-white py-1.5', embedded ? 'sticky top-0 z-10 -mx-6 px-4' : 'rounded-t-xl px-2')}>
+      <div className={cn('flex flex-wrap items-center gap-1 border-b border-gray-200 bg-white py-1.5', embedded ? 'sticky top-0 z-10 -mx-3 px-2 md:-mx-6 md:px-4' : 'rounded-t-xl px-2')}>
+        {embedded && (
+          <button
+            type="button"
+            className={cn(toolbarButton, 'md:hidden')}
+            onClick={() => navigate(`/mail/${folderSlug ?? 'inbox'}`)}
+            aria-label="رجوع للقائمة"
+          >
+            <ArrowRight className="h-5 w-5" />
+          </button>
+        )}
         {canReply && (
           <button
             type="button"

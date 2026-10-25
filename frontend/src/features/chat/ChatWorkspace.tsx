@@ -7,6 +7,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Hash, Lock, MessageSquarePlus, Plus, X } from 'lucide-react';
 import { Avatar, Spinner } from '../../shared/ui';
+import { useIsDesktop } from '../../shared/lib/useMedia';
 import { cn } from '../../shared/lib/cn';
 import { CryptoGate } from '../correspondence/components';
 import { useCryptoBootstrap } from '../../crypto/useCryptoBootstrap';
@@ -71,7 +72,7 @@ function Section({
 
 function MembersPanel({ conversation, onClose }: { conversation: Conversation; onClose: () => void }) {
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-s border-gray-200 bg-white">
+    <aside className="fixed inset-0 z-30 flex flex-col bg-white md:static md:z-auto md:w-72 md:shrink-0 md:border-s md:border-gray-200">
       <div className="flex h-14 items-center justify-between border-b border-gray-200 px-4">
         <h4 className="font-bold text-gray-900">الأعضاء ({conversation.member_count})</h4>
         <button type="button" onClick={onClose} aria-label="إغلاق" className="rounded p-1 text-gray-500 hover:bg-gray-100">
@@ -104,6 +105,7 @@ function Workspace() {
   const [params] = useSearchParams();
   const [dialog, setDialog] = useState<'dm' | 'group' | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
+  const desktop = useIsDesktop();
 
   const { data: conversations, isLoading } = useQuery({
     queryKey: ['conversations'],
@@ -115,18 +117,19 @@ function Workspace() {
   const dms = all.filter((c) => c.type === 'dm');
   const selected = all.find((c) => String(c.id) === String(conversationId));
 
-  // روابط قديمة (?c=) وأول دخول: افتح محادثة.
+  // روابط قديمة (?c=) وأول دخول على شاشة كبيرة: افتح محادثة.
+  // على الموبايل تبقى القائمة ظاهرة حتى يختار المستخدم.
   useEffect(() => {
     const legacy = params.get('c');
     if (legacy) navigate(`/chat/${legacy}`, { replace: true });
-    else if (!conversationId && all.length > 0) navigate(`/chat/${all[0].id}`, { replace: true });
-  }, [params, conversationId, all, navigate]);
+    else if (desktop && !conversationId && all.length > 0) navigate(`/chat/${all[0].id}`, { replace: true });
+  }, [params, conversationId, all, navigate, desktop]);
 
   if (bootstrap.status !== 'ready') return null; // CryptoGate يعرض الحالة
 
   return (
     <div className="flex h-full">
-      <aside className={cn('flex w-64 shrink-0 flex-col', SIDEBAR_BG)}>
+      <aside className={cn('w-full shrink-0 flex-col md:flex md:w-64', selected ? 'hidden' : 'flex', SIDEBAR_BG)}>
         <div className="flex h-14 items-center justify-between border-b border-white/10 px-4">
           <span className="truncate text-lg font-bold text-white">مجموعة المعاهد</span>
           <button
@@ -179,7 +182,7 @@ function Workspace() {
           {membersOpen && selected.type === 'group' && <MembersPanel conversation={selected} onClose={() => setMembersOpen(false)} />}
         </>
       ) : (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-white text-center">
+        <div className="hidden flex-1 flex-col items-center justify-center gap-3 bg-white text-center md:flex">
           <MessageSquarePlus className="h-14 w-14 text-gray-200" />
           <p className="text-sm text-gray-500">ابدأ رسالة مباشرة أو أنشئ قناة من الشريط الجانبي</p>
         </div>

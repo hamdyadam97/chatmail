@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ADMIN_ITEMS, SETTINGS_ITEMS, type HubItem } from '../../app/nav-items';
+import { ADMIN_ITEMS, MORE_ITEMS, SETTINGS_ITEMS, type HubItem } from '../../app/nav-items';
 
 function Hub({ title, note, items }: { title: string; note: string; items: HubItem[] }) {
   return (
@@ -38,3 +38,5 @@ export const AdminHub = () => (
 );
 
 export const SettingsHub = () => <Hub title="الإعدادات" note="أجهزتك ومفاتيحك وأمان حسابك." items={SETTINGS_ITEMS} />;
+
+export const MoreHub = () => <Hub title="المزيد" note="بقية الأقسام." items={MORE_ITEMS} />;

@@ -147,8 +147,8 @@ function teardown() {
 // خطوات الواجهة
 // ---------------------------------------------------------------------------
 
-async function newDevice(browser, username, password) {
-  const context = await browser.newContext({ locale: 'ar', viewport: { width: 1440, height: 900 } });
+async function newDevice(browser, username, password, contextOptions = {}) {
+  const context = await browser.newContext({ locale: 'ar', viewport: { width: 1440, height: 900 }, ...contextOptions });
   const page = await context.newPage();
   page.errors = [];
   page.on('console', (m) => m.type() === 'error' && !/401 \(Unauthorized\)/.test(m.text()) && page.errors.push(m.text()));
@@ -180,7 +180,8 @@ async function newDevice(browser, username, password) {
 async function bootstrap(dev) {
   await dev.page.goto(`${UI}/inbox`);
   const error = dev.page.locator('text=/تعذر تجهيز التشفير|خطأ في طبقة التشفير|بانتظار الاعتماد/');
-  const ready = dev.page.locator('h2:has-text("الوارد")');
+  // الشاشة الكبيرة تعرض عنوان المجلد؛ الموبايل يعرض قائمة المجلدات المنسدلة بدله.
+  const ready = dev.page.locator('h2:has-text("الوارد"):visible, select[aria-label="المجلد"]:visible').first();
   try {
     await Promise.any([error.first().waitFor({ timeout: 30000 }), ready.waitFor({ timeout: 30000 })]);
   } catch {
@@ -459,6 +460,56 @@ async function main() {
       check('archivist: فكّ نسخة الأرشيف على جهازه', text.includes(archSubject) && text.includes(archBody));
     }
 
+    section('7ج) الموبايل (PWA) — شاشة 412×915 لمس');
+    const phone = { viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
+    const sara = await newDevice(browser, 'sara', 'Sara@12345', phone);
+    const saraBoot = await bootstrap(sara);
+    check('sara (موبايل): تهيئة التشفير', saraBoot === null, saraBoot ?? '');
+    const noHScroll = async (dev) => dev.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+    check('موبايل: الشريط السفلي ظاهر والعمود الجانبي مخفي', (await sara.page.locator('nav[aria-label="الأقسام"]:visible').count()) === 1
+      && (await sara.page.locator('a:has-text("المزيد"):visible').count()) === 1);
+    check('موبايل: لا تمرير أفقي في الوارد', await noHScroll(sara));
+
+    const mobSubject = `للموبايل ${Date.now()}`;
+    const mobBody = 'مراسلة تُقرأ على شاشة الموبايل.';
+    await ahmed.page.goto(`${UI}/mail/inbox`);
+    await ahmed.page.click('button:has-text("رسالة جديدة")');
+    await ahmed.page.locator('#subject').waitFor({ timeout: 15000 });
+    await ahmed.page.fill('#to', 'سارة');
+    await ahmed.page.locator('[role="listbox"] [role="option"]:has-text("سارة القحطاني")').first().click();
+    await ahmed.page.fill('#subject', mobSubject);
+    await ahmed.page.fill('#body', mobBody);
+    await ahmed.page.getByRole('button', { name: 'إرسال', exact: true }).click();
+    await ahmed.page.waitForURL(/\/mail\/sent\//, { timeout: 30000 }).catch(() => undefined);
+
+    await sara.page.goto(`${UI}/mail/inbox`);
+    const mobRow = sara.page.locator(`button:has-text("${mobSubject}")`);
+    await mobRow.first().waitFor({ timeout: 30000 }).catch(() => undefined);
+    check('sara (موبايل): المراسلة مفكوكة في القائمة', (await mobRow.count()) > 0);
+    if (process.env.SHOTS) console.log(`    لقطة قائمة الموبايل: ${await shot(sara, 'mobile-list')}`);
+    if (await mobRow.count()) {
+      await mobRow.first().tap();
+      await sara.page.locator(`text=${mobBody}`).first().waitFor({ timeout: 20000 }).catch(() => undefined);
+      const listGone = !(await sara.page.locator(`button:has-text("${mobSubject}")`).first().isVisible().catch(() => false));
+      check('sara (موبايل): الرسالة تملأ الشاشة (القائمة مخفية)', listGone && (await sara.page.locator(`text=${mobBody}`).count()) > 0);
+      check('موبايل: لا تمرير أفقي في الرسالة', await noHScroll(sara));
+      if (process.env.SHOTS) console.log(`    لقطة رسالة الموبايل: ${await shot(sara, 'mobile-read')}`);
+      await sara.page.locator('button[aria-label="رجوع للقائمة"]').tap();
+      await mobRow.first().waitFor({ timeout: 10000 }).catch(() => undefined);
+      check('sara (موبايل): زر الرجوع يعيد القائمة', await mobRow.first().isVisible().catch(() => false));
+    }
+    await sara.page.goto(`${UI}/chat`);
+    await sara.page.locator('text=الرسائل المباشرة').first().waitFor({ timeout: 20000 }).catch(() => undefined);
+    check('sara (موبايل): المحادثات تبدأ بالقائمة لا بمحادثة', /\/chat\/?$/.test(new URL(sara.page.url()).pathname));
+    check('موبايل: لا تمرير أفقي في المحادثات', await noHScroll(sara));
+
+    const manifest = await sara.page.evaluate(async () => (await fetch('/manifest.webmanifest')).json());
+    const iconsOk = await sara.page.evaluate(async (icons) => (await Promise.all(icons.map((i) => fetch(i.src)))).every((r) => r.ok), manifest.icons);
+    check('PWA: manifest بأيقونات 192/512 و maskable وعرض standalone', manifest.display === 'standalone' && iconsOk
+      && manifest.icons.some((i) => i.purpose === 'maskable') && manifest.icons.some((i) => i.sizes === '512x512'));
+    const swOk = await sara.page.evaluate(async () => Boolean(await navigator.serviceWorker.getRegistration('/')));
+    check('PWA: service worker مسجّل', swOk);
+
     section('8) تصدير التقارير إلى Excel');
     const manager = await newDevice(browser, 'manager', 'Manager@12345');
     await manager.page.goto(`${UI}/reports`);
@@ -481,7 +532,7 @@ async function main() {
     check('manager: نزّل التقرير كملف Excel', xlsxOk);
 
     section('9) أخطاء الـConsole');
-    for (const dev of [ahmed, mohamed2, manager, archivist]) {
+    for (const dev of [ahmed, mohamed2, manager, archivist, sara]) {
       check(`${dev.username}: لا أخطاء JavaScript`, dev.page.errors.length === 0, dev.page.errors.slice(0, 3).join(' | '));
     }
   } finally {

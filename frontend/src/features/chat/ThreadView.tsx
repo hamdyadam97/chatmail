@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Hash, Lock, Reply, RotateCcw, Send, ShieldAlert, Users } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Hash, Lock, Reply, RotateCcw, Send, ShieldAlert, Users } from 'lucide-react';
 import { cn } from '../../shared/lib/cn';
 import { Avatar, Button, Spinner } from '../../shared/ui';
 import { ApiError } from '../../shared/api';
@@ -365,8 +365,16 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-white">
       {/* رأس القناة — أسلوب Slack */}
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-5">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-3 md:px-5">
         <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/chat')}
+            aria-label="رجوع للمحادثات"
+            className="rounded-md p-1 text-gray-600 hover:bg-gray-100 md:hidden"
+          >
+            <ArrowRight className="h-5 w-5" />
+          </button>
           {isDm && <Avatar name={title} size="sm" square />}
           <h3 className="truncate text-base font-bold text-gray-900">{heading}</h3>
           <Lock className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-label="مشفّرة طرفًا لطرف" />

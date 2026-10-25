@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive } from 'lucide-react';
+import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu } from 'lucide-react';
 
 export interface RailItem {
   to: string;
@@ -26,6 +26,23 @@ export const RAIL_ITEMS: RailItem[] = [
 
 export const RAIL_BOTTOM: RailItem[] = [
   { to: '/settings', label: 'الإعدادات', icon: Settings, match: ['/settings', '/devices', '/security', '/recovery', '/notifications'] },
+];
+
+/** شريط الموبايل السفلي: أهم أربعة أقسام + «المزيد» (البحث والإدارة والإعدادات). */
+export const MOBILE_TABS: RailItem[] = [
+  ...RAIL_ITEMS.slice(0, 4),
+  {
+    to: '/more',
+    label: 'المزيد',
+    icon: Menu,
+    match: ['/more', ...RAIL_ITEMS.slice(4).flatMap((i) => i.match), ...RAIL_BOTTOM.flatMap((i) => i.match)],
+  },
+];
+
+export const MORE_ITEMS: HubItem[] = [
+  { to: '/search', label: 'البحث', description: 'في بريدك ومحادثاتك — على جهازك فقط', icon: Search },
+  { to: '/admin', label: 'الإدارة', description: 'الموظفون والهيكل والتقارير والأرشيف', icon: Building2 },
+  { to: '/settings', label: 'الإعدادات', description: 'أجهزتي والأمان والاستعادة والإشعارات', icon: Settings },
 ];
 
 export interface HubItem {
