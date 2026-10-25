@@ -5,6 +5,7 @@ export default {
     extend: {
       fontFamily: {
         sans: [
+          '"IBM Plex Sans Arabic"',
           '"Segoe UI"',
           'Tahoma',
           '"Noto Sans Arabic"',
