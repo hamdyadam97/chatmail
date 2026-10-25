@@ -27,6 +27,7 @@ DEMO_USERS = [
     ("sara", "Sara@12345", "سارة", "القحطاني", "موظفة"),
     ("admin", "Admin@12345", "مدير", "النظام", "مدير النظام"),
     ("manager", "Manager@12345", "خالد", "الدوسري", "مدير فرع الرياض"),
+    ("archivist", "Archivist@12345", "نورة", "الحربي", "ضابطة الأرشيف المركزي"),
 ]
 
 AHL_CODE = "AHL"
@@ -34,7 +35,7 @@ RYD_CODE = "RYD"
 
 
 class Command(BaseCommand):
-    help = "Seed demo users (ahmed/mohamed/sara/admin/manager) with memberships and roles."
+    help = "Seed demo users (ahmed/mohamed/sara/admin/manager/archivist) with memberships and roles."
 
     def handle(self, *args, **options):
         institute = Institute.objects.filter(code=AHL_CODE).first()
@@ -89,6 +90,9 @@ class Command(BaseCommand):
         UserRoleAssignment.objects.get_or_create(
             user=manager, role=Role.objects.get(code="branch_manager"), institute=institute, branch=branch
         )
+
+        archivist = User.objects.get(username="archivist")
+        UserRoleAssignment.objects.get_or_create(user=archivist, role=Role.objects.get(code="archive_officer"))
 
         admin = User.objects.get(username="admin")
         role = Role.objects.get(code="sys_admin")

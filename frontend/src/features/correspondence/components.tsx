@@ -1,3 +1,4 @@
+import { archiveKeyApi } from '../../crypto/archive';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Lock, RefreshCw, X } from 'lucide-react';
@@ -218,3 +219,25 @@ export function formatDay(iso: string | null): string {
   return new Intl.DateTimeFormat('ar', { dateStyle: 'medium' }).format(new Date(iso));
 }
 
+/**
+ * المستلم المؤسسي المعلن: يرى المرسل قبل الإرسال أن نسخة مشفّرة ستذهب للأرشيف
+ * المركزي، ومن أنشأ مفتاحه (docs/phase1/README §3 — ليس بابًا خلفيًا).
+ */
+export function ArchiveNotice() {
+  const { data, isLoading } = useQuery({ queryKey: ['archive-key'], queryFn: archiveKeyApi.state, staleTime: 60_000 });
+  if (isLoading) return null;
+  if (!data?.key) {
+    return (
+      <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700" data-testid="archive-notice">
+        هذا التصنيف يرسل نسخة مشفّرة إلى الأرشيف المركزي، لكن الأرشيف لم يُهيأ بعد — لن يمكن الإرسال حتى يهيئه ضابط
+        الأرشيف.
+      </p>
+    );
+  }
+  return (
+    <p className="rounded-lg bg-indigo-50 p-3 text-xs text-indigo-800" data-testid="archive-notice">
+      ستُرسل <strong>نسخة مشفّرة إلى الأرشيف المركزي</strong> (مستلم مؤسسي معلن؛ مفتاحه الإصدار {data.key.version} أنشأه{' '}
+      {data.key.created_by}). يفتحها ضباط الأرشيف المعتمدون فقط، وكل فتح يُسجَّل في سجل التدقيق. الخادم والإدارة لا يقرؤونها.
+    </p>
+  );
+}

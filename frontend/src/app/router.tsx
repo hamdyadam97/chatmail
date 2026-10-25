@@ -13,6 +13,7 @@ import { ReportsPages } from '../features/reports/pages';
 import { NotificationsPages } from '../features/notifications/pages';
 import { DevicesPages } from '../features/devices/pages';
 import { RecoveryPages } from '../features/recovery/pages';
+import { ArchivePage } from '../features/archive/pages';
 import { SecurityPages } from '../features/security/pages';
 import { AuditPages } from '../features/audit/pages';
 import { SearchPage } from '../features/search/pages';
@@ -78,6 +79,7 @@ export const router = createBrowserRouter([
       { path: 'notifications', element: <NotificationsPages.Notifications /> },
       { path: 'devices', element: <DevicesPages.Devices /> },
       { path: 'recovery', element: <RecoveryPages.Recovery /> },
+      { path: 'archive', element: <ArchivePage /> },
       { path: 'security', element: <SecurityPages.Security /> },
     ],
   },

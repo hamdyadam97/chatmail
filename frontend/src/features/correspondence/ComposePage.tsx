@@ -6,7 +6,7 @@ import { Button, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
 import { correspondenceApi, CLASSIFICATION_LABELS, PRIORITY_LABELS, type Classification, type Priority } from './api';
-import { E2EENote, RecipientPicker, formatDate, useDirectory } from './components';
+import { ArchiveNotice, E2EENote, RecipientPicker, formatDate, useDirectory } from './components';
 import { formatBytes } from './content';
 import { deleteDraft, getDraft, newDraftId, saveDraft } from './drafts';
 import { openCorrespondence, sendCorrespondence, type ForwardSource } from './service';
@@ -226,10 +226,9 @@ export function ComposeForm({ embedded = false, onCancel }: { embedded?: boolean
       </div>
 
       {classification === 'institutional_archive_eligible' && (
-        <p className="mx-4 mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-          هذا التصنيف يعلن أن المعاملة تخضع لسياسة حفظ مؤسسية. في المرحلة الحالية هو علامة وصفية فقط: لا تُنشأ أي نسخة مؤسسية ولا
-          يحصل أي طرف إضافي على مفتاح فك. أي نسخة مؤسسية مستقبلًا ستُشفّر لمستلم مؤسسي معلن قبل الإرسال.
-        </p>
+        <div className="mx-4 mt-3">
+          <ArchiveNotice />
+        </div>
       )}
 
       {files.length > 0 && (

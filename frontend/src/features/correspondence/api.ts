@@ -116,6 +116,8 @@ export interface SendBody {
   epoch: number;
   sender_device_id: string;
   attachment_ids: string[];
+  /** نسخة مشفّرة للأرشيف المركزي — للمصنّفة «قابلة للأرشفة المؤسسية» فقط. */
+  archive_copy?: { key_id: string; ephemeral_pub: string; iv: string; ciphertext: string } | null;
 }
 
 export interface ListParams {

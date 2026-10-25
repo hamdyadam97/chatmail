@@ -392,7 +392,10 @@ def send_correspondence(
     epoch: int,
     sender_device_id,
     attachment_ids,
+    archive_copy=None,
 ) -> Correspondence:
+    from apps.archive import services as archive
+
     if correspondence.sender_id != requester.id:
         raise PermissionDenied("Only the sender can send this correspondence.")
     if correspondence.is_sent:
@@ -403,6 +406,7 @@ def send_correspondence(
     if thread_membership is None:
         raise PermissionDenied("You are not a member of this correspondence thread.")
     files = _resolve_attachments(requester, attachment_ids)
+    archive.check_copy(correspondence, archive_copy)  # before anything is broadcast
 
     with transaction.atomic():
         locked = Correspondence.objects.select_for_update().get(pk=correspondence.pk)
@@ -429,6 +433,7 @@ def send_correspondence(
         locked.save(update_fields=["reference_number", "content_message", "status", "sent_at"])
         for stored in files:
             EncryptedAttachment.objects.create(stored_file=stored, correspondence=locked)
+        archive.attach_copy(locked, archive_copy)
         CorrespondenceEvent.objects.create(
             correspondence=locked, actor=requester, event_type="sent",
             metadata={"attachment_count": len(files), "seq": result.message.seq},
@@ -669,8 +674,11 @@ def store_blob(user, data: bytes) -> StoredFile:
 
 
 def can_download(user, stored_file) -> bool:
-    """Uploader before binding, or a reader of any correspondence it is bound
-    to. Holding the blob is useless without the key carried in MLS content."""
+    """Uploader before binding, a reader of any correspondence it is bound
+    to, or an archive officer for archived correspondence. Holding the blob is
+    useless without the key carried in MLS content / the archive copy."""
+    from apps.archive.services import officer_may_download
+
     bindings = list(
         EncryptedAttachment.objects.filter(
             stored_file=stored_file, correspondence__isnull=False
@@ -678,7 +686,7 @@ def can_download(user, stored_file) -> bool:
     )
     if not bindings:
         return stored_file.uploader_id == user.id
-    return any(can_read(user, b.correspondence) for b in bindings)
+    return any(can_read(user, b.correspondence) for b in bindings) or officer_may_download(user, stored_file)
 
 
 def get_downloadable(user, stored_file_id) -> StoredFile:

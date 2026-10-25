@@ -32,6 +32,7 @@ process.on('unhandledRejection', (err) => {
 });
 
 const results = [];
+const serverLog = [];
 function check(name, ok, detail = '') {
   results.push({ name, ok });
   console.log(`  ${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`);
@@ -104,6 +105,13 @@ async function setup() {
   await run(PY, ['manage.py', 'migrate', '-v', '0'], { cwd: backend, env });
   await run(PY, ['manage.py', 'seed_demo'], { cwd: backend, env });
   const server = start(PY, ['manage.py', 'runserver', `127.0.0.1:${API_PORT}`, '--noreload'], { cwd: backend, env, log: true });
+  // آخر سطور سجل الخادم تُطبع عند الفشل (traceback الأخطاء 500).
+  const keep = (buf) => {
+    serverLog.push(...String(buf).split('\n'));
+    if (serverLog.length > 400) serverLog.splice(0, serverLog.length - 400);
+  };
+  server.stdout?.on('data', keep);
+  server.stderr?.on('data', keep);
   if (process.env.TRACE_REFRESH) {
     const t0 = Date.now();
     const onData = (buf) => {
@@ -410,6 +418,47 @@ async function main() {
     })();
     check('التسجيل المعلّق للمتصفح الجديد سُحب', !devicesText.includes('بانتظار الاعتماد'));
 
+    section('7ب) الأرشيف المركزي');
+    const archivist = await newDevice(browser, 'archivist', 'Archivist@12345');
+    const archBoot = await bootstrap(archivist);
+    check('archivist: تهيئة التشفير', archBoot === null, archBoot ?? '');
+    await archivist.page.goto(`${UI}/archive`);
+    await archivist.page.click('button:has-text("إنشاء مفتاح الأرشيف")');
+    const keyReady = await archivist.page.locator('text=(الإصدار 1)').waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    if (!keyReady) console.log(`    لقطة: ${await shot(archivist, 'archive-key')} — console: ${archivist.page.errors.join(' | ')}`);
+    check('archivist: أُنشئ مفتاح الأرشيف', keyReady);
+
+    const archSubject = `مؤرشفة ${Date.now()}`;
+    const archBody = 'نص رسمي يُحفظ في الأرشيف المركزي.';
+    await ahmed.page.goto(`${UI}/mail/inbox`);
+    await ahmed.page.click('button:has-text("رسالة جديدة")');
+    await ahmed.page.locator('#subject').waitFor({ timeout: 15000 });
+    await ahmed.page.fill('#to', 'محمد');
+    await ahmed.page.locator('[role="listbox"] [role="option"]:has-text("محمد الشهري")').first().click();
+    await ahmed.page.selectOption('#classification', 'institutional_archive_eligible');
+    const notice = ahmed.page.locator('[data-testid="archive-notice"]');
+    await notice.waitFor({ timeout: 10000 }).catch(() => undefined);
+    check('ahmed: يرى قبل الإرسال أن نسخة ستذهب للأرشيف', (await notice.innerText().catch(() => '')).includes('نسخة مشفّرة إلى الأرشيف المركزي'));
+    await ahmed.page.fill('#subject', archSubject);
+    await ahmed.page.fill('#body', archBody);
+    await ahmed.page.getByRole('button', { name: 'إرسال', exact: true }).click();
+    const archSent = await ahmed.page.waitForURL(/\/mail\/sent\//, { timeout: 30000 }).then(() => true).catch(() => false);
+    if (!archSent) console.log(`    لم تُرسل: ${(await ahmed.page.locator('.text-red-700, .text-red-600').allInnerTexts()).join(' | ')} — ${await shot(ahmed, 'archive-send')}`);
+    check('ahmed: أُرسلت المراسلة المصنّفة للأرشفة', archSent);
+
+    await archivist.page.goto(`${UI}/archive`);
+    const archRow = archivist.page.locator('button:has-text("أحمد العتيبي")');
+    await archRow.first().waitFor({ timeout: 20000 }).catch(() => undefined);
+    check('archivist: نسخة واحدة فقط في الأرشيف (غير المصنّف لا يُؤرشف)', (await archRow.count()) === 1);
+    if (await archRow.count()) {
+      await archRow.first().click();
+      const viewer = archivist.page.locator('[data-testid="archive-viewer"]');
+      await viewer.waitFor({ timeout: 20000 }).catch(() => undefined);
+      const text = await viewer.innerText().catch(() => '');
+      if (!text.includes(archBody)) console.log(`    لقطة: ${await shot(archivist, 'archive-view')} — console: ${archivist.page.errors.join(' | ')}`);
+      check('archivist: فكّ نسخة الأرشيف على جهازه', text.includes(archSubject) && text.includes(archBody));
+    }
+
     section('8) تصدير التقارير إلى Excel');
     const manager = await newDevice(browser, 'manager', 'Manager@12345');
     await manager.page.goto(`${UI}/reports`);
@@ -432,7 +481,7 @@ async function main() {
     check('manager: نزّل التقرير كملف Excel', xlsxOk);
 
     section('9) أخطاء الـConsole');
-    for (const dev of [ahmed, mohamed2, manager]) {
+    for (const dev of [ahmed, mohamed2, manager, archivist]) {
       check(`${dev.username}: لا أخطاء JavaScript`, dev.page.errors.length === 0, dev.page.errors.slice(0, 3).join(' | '));
     }
   } finally {
@@ -448,5 +497,9 @@ try {
 }
 teardown();
 const failed = results.filter((r) => !r.ok);
+if (failed.length) {
+  const tb = serverLog.findIndex((l) => l.includes('Traceback'));
+  if (tb >= 0) console.log(`\n--- server traceback ---\n${serverLog.slice(tb, tb + 60).join('\n')}`);
+}
 console.log(`\n${failed.length === 0 ? 'PASS' : 'FAIL'} [ui-smoke] — ${results.length - failed.length}/${results.length} (لقطات: ${ARTIFACTS})`);
 process.exitCode = failed.length === 0 && results.length > 0 ? 0 : 1;

@@ -30,7 +30,7 @@ import {
   type Participant,
   type Priority,
 } from './api';
-import { ClassificationBadge, CryptoGate, E2EENote, PriorityBadge, formatDate, formatDay } from './components';
+import { ArchiveNotice, ClassificationBadge, CryptoGate, E2EENote, PriorityBadge, formatDate, formatDay } from './components';
 import { decryptAttachment, formatBytes, saveDecryptedFile, type AttachmentKey } from './content';
 import {
   openCorrespondence,
@@ -243,6 +243,7 @@ function ReplyBox({
           إرسال الرد مشفّرًا
         </Button>
       </div>
+      {detail.classification === 'institutional_archive_eligible' && <ArchiveNotice />}
       {error && <p className="text-sm text-red-600">{error}</p>}
     </Card>
   );

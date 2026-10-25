@@ -1,23 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import {
-  BarChart3,
-  Building2,
-  CheckCheck,
-  Contact,
-  FolderTree,
-  KeyRound,
-  Lock,
-  Mail,
-  Megaphone,
-  MessagesSquare,
-  MonitorSmartphone,
-  Network,
-  ScrollText,
-  Search,
-  Settings,
-  ShieldCheck,
-  Bell,
-} from 'lucide-react';
+import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive } from 'lucide-react';
 
 export interface RailItem {
   to: string;
@@ -38,7 +20,7 @@ export const RAIL_ITEMS: RailItem[] = [
     to: '/admin',
     label: 'الإدارة',
     icon: Building2,
-    match: ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/reports', '/audit-logs'],
+    match: ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/reports', '/audit-logs', '/archive'],
   },
 ];
 
@@ -61,6 +43,7 @@ export const ADMIN_ITEMS: HubItem[] = [
   { to: '/roles', label: 'الأدوار والصلاحيات', description: 'ما يمنحه كل دور والإسنادات', icon: Lock },
   { to: '/reports', label: 'التقارير', description: 'أعداد وأزمنة مجمّعة وحالة الخدمات', icon: BarChart3 },
   { to: '/audit-logs', label: 'سجل التدقيق', description: 'لمراقب الأمن المعلن', icon: ScrollText },
+  { to: '/archive', label: 'الأرشيف المركزي', description: 'نسخ المراسلات المؤرشفة — لضباط الأرشيف', icon: Archive },
 ];
 
 export const SETTINGS_ITEMS: HubItem[] = [

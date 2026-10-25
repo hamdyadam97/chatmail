@@ -107,6 +107,8 @@ class KeyTransparencyEvent(models.Model):
         ("key_rotated", "Key rotated"),
         # A browser took over a lost device from its encrypted recovery backup.
         ("device_restored", "Device restored from backup"),
+        # The central archive public key was created (logged on the creator's chain).
+        ("archive_key_created", "Archive key created"),
     ]
 
     id = models.BigAutoField(primary_key=True)  # bigserial — the global seq

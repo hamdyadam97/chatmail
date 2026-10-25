@@ -29,7 +29,9 @@ def parse_database_url(url):
     if url.startswith("sqlite:"):
         # sqlite:///abs/path or sqlite:///relative.db
         path = url[len("sqlite:///"):]
-        return {"ENGINE": "django.db.backends.sqlite3", "NAME": path}
+        # Dev/trial only: concurrent writers (two browsers at once) wait for
+        # the lock instead of failing with "database is locked".
+        return {"ENGINE": "django.db.backends.sqlite3", "NAME": path, "OPTIONS": {"timeout": 20}}
     if url.startswith("postgres://") or url.startswith("postgresql://"):
         from urllib.parse import urlparse
 
@@ -76,6 +78,7 @@ INSTALLED_APPS = [
     "apps.approvals",
     "apps.announcements",
     "apps.reports",
+    "apps.archive",
 ]
 
 MIDDLEWARE = [

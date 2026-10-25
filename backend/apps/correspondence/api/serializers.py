@@ -128,9 +128,14 @@ class SendSerializer(serializers.Serializer):
     epoch = serializers.IntegerField(min_value=1)
     sender_device_id = serializers.UUIDField()
     attachment_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+    # Encrypted copy for the central archive (institutional_archive_eligible only).
+    archive_copy = serializers.JSONField(required=False, allow_null=True, default=None)
 
     def validate(self, attrs):
+        from apps.archive.services import parse_copy
+
         attrs["mls_payload_raw"] = b64decode(attrs["mls_payload"])
+        attrs["archive_copy"] = parse_copy(attrs.get("archive_copy"))
         return attrs
 
 

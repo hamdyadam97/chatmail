@@ -192,6 +192,7 @@ class SendView(APIView):
             epoch=data["epoch"],
             sender_device_id=data["sender_device_id"],
             attachment_ids=data["attachment_ids"],
+            archive_copy=data["archive_copy"],
         )
         return Response(_detail_payload(request, sent))
 
@@ -228,6 +229,7 @@ class ReplyView(APIView):
             epoch=data["epoch"],
             sender_device_id=data["sender_device_id"],
             attachment_ids=data["attachment_ids"],
+            archive_copy=data["archive_copy"],
         )
         return Response(_detail_payload(request, sent), status=status.HTTP_201_CREATED)
 

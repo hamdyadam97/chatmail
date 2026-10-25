@@ -88,6 +88,11 @@ export function deviceFromSeeds(signSeed: Uint8Array, kemSeed: Uint8Array): Prom
   ]).then(([sign, kem]) => ({ sign, kem }));
 }
 
+/** مفتاح X25519 من بذرة 32B (مفتاح الأرشيف المركزي). */
+export function x25519FromSeed(seed: Uint8Array): Promise<KeyMaterial> {
+  return keyFromSeed(X25519_PKCS8_PREFIX, seed, { name: 'X25519' });
+}
+
 /** مفاتيح جهاز: توقيع Ed25519 + KEM X25519 — كلاهما ببذور 32B. */
 export interface DeviceKeyMaterial {
   sign: KeyMaterial;

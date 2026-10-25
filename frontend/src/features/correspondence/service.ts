@@ -10,6 +10,7 @@
  * - كل محتوى مفكوك يُتحقق من: ربطه بالصف (correspondence_id/reply_to_id)،
  *   وأن مرسله الموثّق في MLS هو المستخدم والجهاز اللذان يدّعيهما الخادم.
  */
+import { archiveKeyApi, sealArchiveCopy, type ArchiveKeyInfo } from '../../crypto/archive';
 import { chatApi, type Message } from '../chat/api';
 import {
   encryptMessage,
@@ -118,11 +119,21 @@ export interface ForwardSource {
   stored: StoredContent;
 }
 
+const ARCHIVE_ELIGIBLE: Classification = 'institutional_archive_eligible';
+
+/** المفتاح العام للأرشيف المركزي — يُجلب قبل أي تجهيز حتى لا تنشأ مسودة يتعذر إرسالها. */
+async function requireArchiveKey(): Promise<ArchiveKeyInfo> {
+  const { key } = await archiveKeyApi.state();
+  if (!key) throw new Error('الأرشيف المركزي غير مُهيأ بعد — لا يمكن إرسال مراسلة مصنّفة للأرشفة المؤسسية');
+  return key;
+}
+
 export async function sendCorrespondence(
   input: ComposeInput,
   forwardOf?: ForwardSource,
 ): Promise<CorrespondenceDetail> {
   const deviceId = String(await getCurrentDeviceId());
+  const archiveKey = input.classification === ARCHIVE_ELIGIBLE ? await requireArchiveKey() : null;
   const newKeys = await uploadAttachments(input.files);
   // الإحالة تعيد مشاركة مفاتيح مرفقات الأصل داخل المحتوى الجديد (المستلم الجديد
   // لا ينضم لخيط الأصل) ويربطها الخادم بالمراسلة الجديدة لصلاحية التنزيل.
@@ -176,12 +187,14 @@ export async function sendCorrespondence(
       { id: prepared.thread.id, mls_group_id: prepared.thread.mls_group_id },
       JSON.stringify(content),
     );
+    const clientMsgId = uuid4();
     return correspondenceApi.send(prepared.id, {
       mls_payload: encrypted.mls_payload_b64,
-      client_msg_id: uuid4(),
+      client_msg_id: clientMsgId,
       epoch: encrypted.epoch,
       sender_device_id: deviceId,
       attachment_ids: attachments.map((a) => a.id),
+      archive_copy: archiveKey ? await sealArchiveCopy(archiveKey, JSON.stringify(content), clientMsgId) : null,
     });
   });
   // MLS لا يفك ما أرسلناه من هذا الجهاز — نسختنا المحلية هي المرجع.
@@ -214,6 +227,8 @@ export async function replyToCorrespondence(
   input: ReplyInput,
 ): Promise<CorrespondenceDetail> {
   const deviceId = String(await getCurrentDeviceId());
+  // الرد يرث تصنيف الأصل؛ المؤرشف يُرسل نسخته للأرشيف أيضًا.
+  const archiveKey = parent.classification === ARCHIVE_ELIGIBLE ? await requireArchiveKey() : null;
   const attachments = await uploadAttachments(input.files);
   const content = decodeContent(
     encodeContent({
@@ -231,15 +246,17 @@ export async function replyToCorrespondence(
     serialized(thread.id, async () => {
       await catchUpThread(thread, deviceId); // نصل لآخر جيل قبل التشفير
       const encrypted = await encryptMessage(thread, JSON.stringify(content));
+      const clientMsgId = uuid4();
       return correspondenceApi.reply(parent.id, {
         client_ref: clientRef,
         priority: input.priority,
         due_date: input.dueDate,
         mls_payload: encrypted.mls_payload_b64,
-        client_msg_id: uuid4(),
+        client_msg_id: clientMsgId,
         epoch: encrypted.epoch,
         sender_device_id: deviceId,
         attachment_ids: attachments.map((a) => a.id),
+        archive_copy: archiveKey ? await sealArchiveCopy(archiveKey, JSON.stringify(content), clientMsgId) : null,
       });
     });
 
