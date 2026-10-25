@@ -53,6 +53,11 @@ class MeView(APIView):
 
         data = PublicUserSerializer(request.user).data
         data["roles"] = user_scope_summary(request.user)
+        # The caller's own primary institute (for its logo in the header).
+        membership = request.user.memberships.filter(is_primary=True).select_related("institute").first()
+        data["institute"] = (
+            {"code": membership.institute.code, "name": membership.institute.name} if membership else None
+        )
         return Response(data)
 
 

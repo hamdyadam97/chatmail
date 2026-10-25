@@ -5,6 +5,8 @@ export interface User {
   username: string;
   full_name: string;
   must_change_password: boolean;
+  /** المعهد الرئيسي للمستخدم نفسه (لشعاره في الرأس). */
+  institute?: { code: string; name: string } | null;
 }
 
 /** Successful password login (MFA not enabled or not challenged). */

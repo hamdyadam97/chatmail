@@ -342,6 +342,9 @@ async function main() {
       await ahmed.page.locator('button:has-text("رد:")').first().click();
       await ahmed.page.waitForTimeout(2500);
       console.log(`    لقطة البريد: ${await shot(ahmed, 'mail')}`);
+      await ahmed.page.goto(`${UI}/institutes`);
+      await ahmed.page.waitForTimeout(2000);
+      console.log(`    لقطة المعاهد: ${await shot(ahmed, 'institutes')}`);
       await mohamed.page.goto(`${UI}/chat`);
       await mohamed.page.waitForTimeout(3000);
       console.log(`    لقطة المحادثات: ${await shot(mohamed, 'chat')}`);

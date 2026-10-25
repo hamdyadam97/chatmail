@@ -9,6 +9,7 @@ import { PushPrompt } from '../features/notifications/PushControls';
 import { RecoveryPrompt } from '../features/recovery/RecoveryPrompt';
 import { InstallPrompt } from '../features/install/InstallPrompt';
 import { Avatar } from '../shared/ui';
+import { InstituteLogo } from '../shared/brand';
 import { cn } from '../shared/lib/cn';
 
 /** أقسام تملأ الشاشة بلوحاتها (البريد بثلاث لوحات، المحادثات بأسلوب Slack). */
@@ -141,6 +142,13 @@ export function AppShell() {
               <Search className="h-5 w-5" />
             </Link>
             <NotificationBell />
+            {user?.institute && (
+              <InstituteLogo
+                code={user.institute.code}
+                name={user.institute.name}
+                className="hidden h-8 max-w-[7rem] border-e border-gray-200 pe-3 md:block"
+              />
+            )}
             <span className="flex items-center gap-2">
               <Avatar name={user?.full_name || user?.username || '؟'} size="sm" />
               <span className="hidden text-sm text-gray-700 md:inline">{user?.full_name}</span>

@@ -1,9 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, Eye, EyeOff, KeyRound, Lock, Mail, MonitorSmartphone, ShieldCheck, User } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, KeyRound, Lock, MonitorSmartphone, ShieldCheck, User } from 'lucide-react';
 import { toUserMessage } from '../../shared/api';
 import { Button } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
+import { GROUP_INSTITUTES, InstituteLogo, OWNER } from '../../shared/brand';
 import { useAuth } from './AuthContext';
 
 type Step = 'password' | 'otp';
@@ -14,11 +15,19 @@ const POINTS = [
   { icon: MonitorSmartphone, title: 'على الكمبيوتر والموبايل', text: 'نفس الحماية في المتصفح وفي التطبيق المثبّت على هاتفك.' },
 ];
 
-function Logo({ className }: { className?: string }) {
+/** شعارات معاهد المجموعة على بطاقة بيضاء (ألوان الشعارات لا تظهر على الأزرق). */
+function InstitutesStrip({ className }: { className?: string }) {
   return (
-    <span className={cn('flex items-center justify-center rounded-2xl bg-white/15 text-white ring-1 ring-white/25', className)}>
-      <Mail className="h-1/2 w-1/2" />
-    </span>
+    <div className={cn('rounded-2xl bg-white p-4 shadow-sm ring-1 ring-black/5', className)}>
+      <p className="mb-3 text-center text-xs font-medium text-gray-500">معاهد المجموعة</p>
+      <ul className="grid grid-cols-4 items-center gap-x-3 gap-y-4">
+        {GROUP_INSTITUTES.map((i) => (
+          <li key={i.code} className="flex h-12 items-center justify-center">
+            <InstituteLogo code={i.code} name={i.name} className="max-h-12 w-full" />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -115,8 +124,10 @@ export default function LoginPage() {
           style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)', backgroundSize: '22px 22px' }}
           aria-hidden="true"
         />
-        <div className="relative flex items-center gap-3 px-6 py-6 lg:p-0" style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))' }}>
-          <Logo className="h-11 w-11 lg:h-12 lg:w-12" />
+        <div className="relative flex items-center gap-4 px-6 py-5 lg:p-0" style={{ paddingTop: 'max(1.25rem, env(safe-area-inset-top))' }}>
+          <span className="flex h-14 shrink-0 items-center rounded-2xl bg-white px-3 shadow-sm lg:h-16">
+            <img src={OWNER.logo} alt={OWNER.name} className="h-10 w-auto lg:h-12" />
+          </span>
           <div>
             <p className="text-lg font-bold leading-tight lg:text-xl">نظام المراسلات الداخلية</p>
             <p className="text-sm text-white/70">مجموعة المعاهد</p>
@@ -140,7 +151,10 @@ export default function LoginPage() {
           </ul>
         </div>
 
-        <p className="relative hidden text-xs text-white/50 lg:block">استخدام هذا النظام مقصور على منسوبي المعاهد المصرّح لهم.</p>
+        <div className="relative hidden space-y-3 lg:block">
+          <InstitutesStrip />
+          <p className="text-xs text-white/50">استخدام هذا النظام مقصور على منسوبي المعاهد المصرّح لهم.</p>
+        </div>
       </aside>
 
       {/* النموذج */}
@@ -203,6 +217,7 @@ export default function LoginPage() {
               <p className="mt-6 text-center text-sm text-gray-500">
                 نسيت كلمة المرور؟ تواصل مع مسؤول النظام لإعادة تعيينها — لا يؤثر ذلك على مفاتيح تشفيرك.
               </p>
+              <InstitutesStrip className="mt-10 lg:hidden" />
             </>
           ) : (
             <>

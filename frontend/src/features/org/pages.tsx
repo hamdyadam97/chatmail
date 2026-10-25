@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Building2, FolderTree, Network, Pencil, Plus } from 'lucide-react';
+import { FolderTree, Network, Pencil, Plus } from 'lucide-react';
+import { InstituteLogo } from '../../shared/brand';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
@@ -65,8 +66,10 @@ export function Institutes() {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {institutes.map((i) => (
             <Card key={i.id} className="p-4">
+              <div className="mb-3 flex h-16 items-center justify-center rounded-lg bg-gray-50">
+                <InstituteLogo code={i.code} name={i.name} className="h-12 max-w-[70%] px-2" />
+              </div>
               <div className="flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-gray-400" />
                 <span className="font-medium text-gray-900">{i.name}</span>
                 <span className="ms-auto font-mono text-xs text-gray-500" dir="ltr">
                   {i.code}

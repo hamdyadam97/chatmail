@@ -183,8 +183,23 @@ def test_org_lists_open_to_authenticated(api_client, user_factory):
 def test_seeded_institutes_present(api_client, user_factory):
     user_factory("seed_check")
     access = _access(api_client, "seed_check")
-    names = {i["name"] for i in api_client.get("/api/v1/org/institutes/", **auth_headers(access)).json()}
-    assert names == {"الأهلي", "الفاو", "الثقة الدائمة", "المورد الوافي", "آفاق التطور"}
+    rows = api_client.get("/api/v1/org/institutes/", **auth_headers(access)).json()
+    # 0003: الفاو split into المتقدم (FAW) + التخصصي (FAS), and Vision 3020 (VSN) joined.
+    assert {i["code"]: i["name"] for i in rows} == {
+        "AHL": "الأهلي",
+        "FAW": "الفاو المتقدم",
+        "FAS": "الفاو التخصصي",
+        "THQ": "الثقة الدائمة",
+        "MWR": "المورد الوافي",
+        "AFQ": "آفاق التطور",
+        "VSN": "Vision 3020 للتدريب",
+    }
+
+
+def test_me_carries_own_primary_institute(api_client, user_factory, branch_a):
+    user_factory("me_inst", membership_unit=branch_a)
+    me = api_client.get("/api/v1/users/me/", **auth_headers(_access(api_client, "me_inst"))).json()
+    assert me["institute"] == {"code": branch_a.institute.code, "name": branch_a.institute.name}
 
 
 def test_structure_write_requires_permission(api_client, user_factory, institute_a):
