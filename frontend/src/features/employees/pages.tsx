@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import { externalApi } from '../external/service';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Contact, KeyRound, LogOut, Plus, Search, ShieldOff, UserCheck, UserX } from 'lucide-react';
+import { Contact, KeyRound, LogOut, Plus, Search, ShieldOff, UserCheck, UserX, Globe } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { ApiError, toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
@@ -154,6 +155,69 @@ function CreateEmployee({ onClose, onCreated }: { onClose: () => void; onCreated
 // تفاصيل موظف
 // ---------------------------------------------------------------------------
 
+/** البريد الخارجي للموظف: العنوان واسم البريد والاستقبال والإرسال (لا يمس أي محتوى). */
+function ExternalMailboxSection({ userId }: { userId: string }) {
+  const queryClient = useQueryClient();
+  const { data, error } = useQuery({ queryKey: ['admin', 'external-mailbox', userId], queryFn: () => externalApi.mailbox(userId), retry: false });
+  const [localPart, setLocalPart] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
+  const update = useMutation({
+    mutationFn: (body: Parameters<typeof externalApi.updateMailbox>[1]) => externalApi.updateMailbox(userId, body),
+    onSuccess: (mb) => {
+      queryClient.setQueryData(['admin', 'external-mailbox', userId], mb);
+      setLocalPart(null);
+      setMessage({ tone: 'ok', text: 'حُفظ.' });
+    },
+    onError: (err) => setMessage({ tone: 'err', text: toUserMessage(err, 'تعذر الحفظ') }),
+  });
+  if (error || !data || !data.receiving_configured) return null;
+  return (
+    <div className="space-y-3 border-t border-gray-100 pt-4">
+      <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+        <Globe className="h-4 w-4" />
+        البريد الخارجي
+      </h4>
+      <p className="text-sm">
+        <span className="text-gray-500">العنوان: </span>
+        <span dir="ltr" className="font-mono">{data.address ?? '— (اسم المستخدم لا يصلح عنوانًا؛ حدّد اسم بريد)'}</span>
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <div>
+          <Label htmlFor="mb-local">اسم البريد (فارغ = اسم المستخدم)</Label>
+          <Input
+            id="mb-local"
+            dir="ltr"
+            value={localPart ?? data.local_part ?? ''}
+            onChange={(e) => setLocalPart(e.target.value)}
+            placeholder="a.alotaibi"
+            className="w-56 font-mono"
+          />
+        </div>
+        <Button size="sm" variant="outline" disabled={localPart === null} loading={update.isPending} onClick={() => update.mutate({ local_part: localPart || null })}>
+          حفظ الاسم
+        </Button>
+      </div>
+      <div className="flex flex-wrap gap-4 text-sm">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" className="accent-primary-600" checked={data.receiving_enabled} onChange={(e) => update.mutate({ receiving_enabled: e.target.checked })} />
+          يستقبل من الخارج
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            className="accent-primary-600"
+            checked={data.sending_enabled}
+            disabled={!data.sending_configured}
+            onChange={(e) => update.mutate({ sending_enabled: e.target.checked })}
+          />
+          يرسل للخارج {!data.sending_configured && <span className="text-xs text-gray-400">(الإرسال غير مُعد على الخادم)</span>}
+        </label>
+      </div>
+      {message && <p className={cn('text-xs', message.tone === 'ok' ? 'text-emerald-700' : 'text-red-600')}>{message.text}</p>}
+    </div>
+  );
+}
+
 function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClose: () => void; onChanged: () => void }) {
   const queryClient = useQueryClient();
   const { data: memberships } = useQuery({ queryKey: ['admin', 'memberships', user.id], queryFn: () => adminApi.memberships(user.id) });
@@ -277,6 +341,8 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
             </div>
           )}
         </div>
+
+        <ExternalMailboxSection userId={user.id} />
 
         <div className="flex flex-wrap gap-2 border-t border-gray-100 pt-4">
           <Button size="sm" variant="outline" onClick={() => action.mutate('reset')} loading={action.isPending && action.variables === 'reset'}>

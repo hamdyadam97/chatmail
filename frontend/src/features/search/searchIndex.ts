@@ -38,7 +38,7 @@ export function tokenize(text: string): string[] {
 
 export interface SearchDoc {
   id: string;
-  kind: 'correspondence' | 'announcement' | 'chat';
+  kind: 'correspondence' | 'announcement' | 'chat' | 'external';
   title: string;
   body: string;
   /** سطر وصفي (رقم مرجعي، مرسل…) — مفهرس بوزن منخفض. */

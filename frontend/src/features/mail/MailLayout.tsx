@@ -23,6 +23,7 @@ import {
   Lock,
   Mail,
   PenSquare,
+  Globe,
   Reply,
   Search,
   Send,
@@ -34,6 +35,7 @@ import { toUserMessage } from '../../shared/api';
 import { correspondenceApi, FOLDER_LABELS, type CorrespondenceSummary, type Folder } from '../correspondence/api';
 import { ComposeForm } from '../correspondence/ComposePage';
 import { CryptoGate } from '../correspondence/components';
+import { ExternalMail, useMailbox } from '../external/ExternalMail';
 import { Details } from '../correspondence/DetailsPage';
 import { DraftsPage } from '../correspondence/DraftsPage';
 import { getStoredContent, openCorrespondence } from '../correspondence/service';
@@ -50,11 +52,33 @@ const FOLDERS: Array<{ key: Folder; slug: string; icon: typeof Inbox }> = [
 const slugToFolder = (slug?: string): Folder => FOLDERS.find((f) => f.slug === slug)?.key ?? 'inbox';
 const folderToSlug = (folder: Folder) => FOLDERS.find((f) => f.key === folder)?.slug ?? 'inbox';
 
+/** الموبايل: المجلدات (ومنها البريد الخارجي) في قائمة منسدلة. */
+function FolderSelect({ value }: { value: string }) {
+  const navigate = useNavigate();
+  const { data: mailbox } = useMailbox();
+  return (
+    <select
+      value={value}
+      onChange={(e) => navigate(`/mail/${e.target.value}`)}
+      aria-label="المجلد"
+      className="h-9 rounded-md border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-900"
+    >
+      {FOLDERS.map(({ key, slug }) => (
+        <option key={key} value={slug}>
+          {FOLDER_LABELS[key]}
+        </option>
+      ))}
+      {mailbox?.receiving_configured && <option value="external">البريد الخارجي</option>}
+    </select>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // لوحة المجلدات
 // ---------------------------------------------------------------------------
 
-function FolderPane({ folder }: { folder: Folder }) {
+function FolderPane({ folder }: { folder: Folder | 'external' }) {
+  const { data: mailbox } = useMailbox();
   const navigate = useNavigate();
   const { data: counts } = useQuery({
     queryKey: ['correspondence-counts'],
@@ -71,7 +95,7 @@ function FolderPane({ folder }: { folder: Folder }) {
         <button
           type="button"
           // كما في Outlook: الرسالة الجديدة تُفتح في لوحة القراءة والمجلد والقائمة باقيان.
-          onClick={() => navigate(`/mail/${folderToSlug(folder)}/compose`)}
+          onClick={() => navigate(`/mail/${folder === 'external' ? 'inbox' : folderToSlug(folder)}/compose`)}
           className="flex w-full items-center justify-center gap-2 rounded-md bg-primary-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700"
         >
           <PenSquare className="h-4 w-4" />
@@ -97,6 +121,19 @@ function FolderPane({ folder }: { folder: Folder }) {
             </Link>
           );
         })}
+        {mailbox?.receiving_configured && (
+          <Link
+            to="/mail/external"
+            className={cn(
+              'mt-3 flex items-center gap-3 rounded-md border-t border-gray-200 px-3 pb-1.5 pt-3 text-sm',
+              folder === 'external' ? 'bg-primary-100 font-semibold text-primary-900' : 'text-gray-700 hover:bg-gray-200/60',
+            )}
+          >
+            <Globe className={cn('h-4 w-4', folder === 'external' ? 'text-primary-700' : 'text-gray-500')} />
+            <span className="flex-1">البريد الخارجي</span>
+            {mailbox.unread ? <span className="text-xs font-semibold text-primary-700">{mailbox.unread}</span> : null}
+          </Link>
+        )}
       </nav>
       <p className="flex items-start gap-1.5 p-3 text-[11px] leading-5 text-gray-500">
         <Lock className="mt-0.5 h-3 w-3 shrink-0 text-emerald-600" />
@@ -295,18 +332,7 @@ function MessageList({ folder, selectedId, mobileHidden }: { folder: Folder; sel
           <h2 className="hidden text-base font-semibold text-gray-900 md:block">{FOLDER_LABELS[folder]}</h2>
           {/* الموبايل: المجلدات قائمة منسدلة + زر رسالة جديدة (لوحة المجلدات مخفية) */}
           <div className="flex items-center gap-2 md:hidden">
-            <select
-              value={folderToSlug(folder)}
-              onChange={(e) => navigate(`/mail/${e.target.value}`)}
-              aria-label="المجلد"
-              className="h-9 rounded-md border border-gray-200 bg-white px-2 text-sm font-semibold text-gray-900"
-            >
-              {FOLDERS.map(({ key, slug }) => (
-                <option key={key} value={slug}>
-                  {FOLDER_LABELS[key]}
-                </option>
-              ))}
-            </select>
+            <FolderSelect value={folderToSlug(folder)} />
             <button
               type="button"
               onClick={() => navigate(`/mail/${folderToSlug(folder)}/compose`)}
@@ -415,6 +441,17 @@ export function MailLayout({ mode }: { mode?: 'compose' | 'legacy' }) {
   const composeKey = useMemo(() => location.search, [location.search]);
   const selectedId = params.id;
   const composing = mode === 'compose';
+
+  if (params.folder === 'external') {
+    return (
+      <CryptoGate>
+        <div className="flex h-full">
+          <FolderPane folder="external" />
+          <ExternalMail id={params.id} composing={composing} folderSelect={<FolderSelect value="external" />} />
+        </div>
+      </CryptoGate>
+    );
+  }
 
   // المسودات محلية على الجهاز: قائمتها هي صفحة المسودات نفسها.
   const list =

@@ -1,0 +1,5 @@
+# --- correspondence system (install-mail.sh) ---
+policyd-spf  unix  -       n       n       -       0       spawn
+  user=policyd-spf argv=/usr/bin/policyd-spf
+corrmail  unix  -       n       n       -       4       pipe
+  flags=Rq user=correspondence argv=/opt/correspondence/deploy/scripts/mail-ingest.sh ${recipient} ${sender}

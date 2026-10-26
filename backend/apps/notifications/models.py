@@ -23,6 +23,7 @@ class Notification(models.Model):
         ("correspondence_due_soon", "اقتراب موعد الرد"),
         ("correspondence_overdue", "تجاوز موعد الرد"),
         ("correspondence_overdue_sender", "مراسلة صادرة متأخرة"),
+        ("external_mail", "بريد خارجي"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

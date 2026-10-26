@@ -1,0 +1,17 @@
+[Unit]
+Description=Correspondence System — refresh the Postfix recipient map (external mail)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=correspondence
+Group=correspondence
+EnvironmentFile=/etc/correspondence/correspondence.env
+WorkingDirectory=/opt/correspondence/backend
+ExecStart=/opt/correspondence/.venv/bin/python manage.py export_mail_recipients --output /var/lib/correspondence-mail/recipients
+ExecStartPost=/usr/sbin/postmap /var/lib/correspondence-mail/recipients
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/correspondence-mail

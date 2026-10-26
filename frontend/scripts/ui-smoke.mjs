@@ -9,6 +9,7 @@
  * كل حساب في سياق متصفح مستقل (= جهاز مستقل بمفاتيحه).
  */
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -44,6 +45,10 @@ const section = (t) => console.log(`\n== ${t} ==`);
 // ---------------------------------------------------------------------------
 
 const work = mkdtempSync(path.join(tmpdir(), 'ui-smoke-'));
+// بريد خارجي: Brevo وهمي محلي يسجّل ما يُرسَل (لا يخرج بريد حقيقي من الاختبار).
+const MAIL_DOMAIN = 'm3had-system.test';
+const BREVO_PORT = 8098;
+const brevoCalls = [];
 const env = {
   ...process.env,
   // UI_SMOKE_DATABASE_URL: run against a real PostgreSQL as the restricted
@@ -52,6 +57,9 @@ const env = {
   DATABASE_URL: process.env.UI_SMOKE_DATABASE_URL ?? `sqlite:///${path.join(work, 'db.sqlite3').replace(/\\/g, '/')}`,
   ENCRYPTED_BLOB_ROOT: path.join(work, 'blobs'),
   DEV_EXTRA_CORS_ORIGINS: UI,
+  EXTERNAL_MAIL_DOMAIN: MAIL_DOMAIN,
+  BREVO_API_KEY: 'ui-smoke-key',
+  BREVO_API_BASE: `http://127.0.0.1:${BREVO_PORT}`,
   PYTHONWARNINGS: 'ignore',
 };
 const children = [];
@@ -94,6 +102,38 @@ async function portBusy(port) {
   } catch {
     return false;
   }
+}
+
+/** مثل أنبوب Postfix: يمرر رسالة خام على stdin لأمر التسليم ويعيد كود الخروج. */
+function deliverMail(raw, recipient) {
+  return new Promise((resolve) => {
+    const p = spawn(PY, ['manage.py', 'ingest_external_mail', '--recipient', recipient], {
+      cwd: path.join(ROOT, 'backend'),
+      env,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    p.on('exit', (code) => resolve(code));
+    p.stdin.end(raw);
+  });
+}
+
+function runPython(code) {
+  return run(PY, ['manage.py', 'shell', '-c', code], { cwd: path.join(ROOT, 'backend'), env });
+}
+
+function startBrevoMock() {
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      brevoCalls.push({ url: req.url, headers: req.headers, json: body ? JSON.parse(body) : null });
+      res.writeHead(201, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ messageId: '<mock@brevo>' }));
+    });
+  });
+  server.listen(BREVO_PORT, '127.0.0.1');
+  server.unref(); // لا يُبقي العملية حيّة إن توقف السيناريو مبكرًا
+  return server;
 }
 
 async function setup() {
@@ -463,6 +503,57 @@ async function main() {
       check('archivist: فكّ نسخة الأرشيف على جهازه', text.includes(archSubject) && text.includes(archBody));
     }
 
+    section('7د) البريد الخارجي — استقبال (كأنبوب Postfix) ورد عبر Brevo');
+    const brevo = startBrevoMock();
+    await runPython("from apps.accounts.models import User; from apps.external_mail.models import ExternalMailbox; "
+      + "ExternalMailbox.objects.update_or_create(user=User.objects.get(username='ahmed'), defaults={'sending_enabled': True})");
+    const extSubject = `عرض توريد ${Date.now()}`;
+    const extBody = 'نرفق لكم عرض الأسعار المطلوب للفصل القادم.';
+    const raw = [
+      'From: Supplier Co <sales@supplier.example>',
+      `To: ahmed@${MAIL_DOMAIN}`,
+      `Subject: =?utf-8?B?${Buffer.from(extSubject).toString('base64')}?=`,
+      'Message-ID: <offer-1@supplier.example>',
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=utf-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      Buffer.from(extBody).toString('base64'),
+      '',
+    ].join('\r\n');
+    check('Postfix: سُلّمت الرسالة لأحمد (كود 0)', (await deliverMail(raw, `ahmed@${MAIL_DOMAIN}`)) === 0);
+    check('Postfix: عنوان غير موجود يُرفض (كود 67)', (await deliverMail(raw, `nobody@${MAIL_DOMAIN}`)) === 67);
+
+    await ahmed.page.goto(`${UI}/mail/external`);
+    const extRow = ahmed.page.locator(`button:has-text("${extSubject}")`);
+    await extRow.first().waitFor({ timeout: 30000 }).catch(() => undefined);
+    if (!(await extRow.count())) console.log(`    لقطة: ${await shot(ahmed, 'external-list')} — console: ${ahmed.page.errors.join(' | ')}`);
+    check('ahmed: الرسالة الخارجية مفكوكة في المجلد', (await extRow.count()) > 0);
+    if (await extRow.count()) {
+      await extRow.first().click();
+      const reader = ahmed.page.locator('[data-testid="external-reader"]');
+      await reader.locator(`text=${extBody.slice(0, 15)}`).first().waitFor({ timeout: 20000 }).catch(() => undefined);
+      const text = await reader.innerText().catch(() => '');
+      check('ahmed: النص مفكوك مع تحذير «مرسل غير موثّق»', text.includes(extBody.slice(0, 15)) && text.includes('لم يُتحقق من هوية المرسل'));
+      if (process.env.SHOTS) console.log(`    لقطة البريد الخارجي: ${await shot(ahmed, 'external-read')}`);
+      await reader.getByRole('button', { name: 'رد', exact: true }).click();
+      const compose = ahmed.page.locator('[data-testid="external-compose"]');
+      await compose.waitFor({ timeout: 10000 });
+      await ahmed.page.locator('#ext-to[value="sales@supplier.example"]').waitFor({ timeout: 10000 }).catch(() => undefined);
+      check('ahmed: الرد مملوء بعنوان المرسل والتحذير ظاهر', (await ahmed.page.inputValue('#ext-to')) === 'sales@supplier.example'
+        && (await compose.innerText()).includes('غير مشفّرة طرفًا لطرف'));
+      await ahmed.page.fill('#ext-body', 'شكرًا، استلمنا العرض.');
+      await ahmed.page.click('button:has-text("إرسال للخارج")');
+      const sentOk = await ahmed.page.waitForURL(/\/mail\/external\/[0-9a-f-]{36}$/, { timeout: 20000 }).then(() => true).catch(() => false);
+      const call = brevoCalls.find((c) => c.url === '/v3/smtp/email');
+      check('Brevo: أُرسل باسم أحمد ومن عنوانه ومربوطًا بالأصل', sentOk && call
+        && call.json.sender.email === `ahmed@${MAIL_DOMAIN}` && call.json.to[0].email === 'sales@supplier.example'
+        && call.json.headers['In-Reply-To'] === '<offer-1@supplier.example>' && call.headers['api-key'] === 'ui-smoke-key');
+      await ahmed.page.locator('text=شكرًا، استلمنا العرض.').first().waitFor({ timeout: 20000 }).catch(() => undefined);
+      check('ahmed: نسخة الرد المرسل مفكوكة لديه', (await ahmed.page.locator('text=شكرًا، استلمنا العرض.').count()) > 0);
+    }
+    brevo.close();
+
     section('7ج) الموبايل (PWA) — شاشة 412×915 لمس');
     const phone = { viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 };
     const sara = await newDevice(browser, 'sara', 'Sara@12345', phone);
@@ -554,6 +645,8 @@ const failed = results.filter((r) => !r.ok);
 if (failed.length) {
   const tb = serverLog.findIndex((l) => l.includes('Traceback'));
   if (tb >= 0) console.log(`\n--- server traceback ---\n${serverLog.slice(tb, tb + 60).join('\n')}`);
+  const errs = serverLog.filter((l) => /" 5\d\d |Internal Server Error|Exception|Error:/.test(l)).slice(-15);
+  if (errs.length) console.log(`\n--- server errors ---\n${errs.join('\n')}`);
 }
 console.log(`\n${failed.length === 0 ? 'PASS' : 'FAIL'} [ui-smoke] — ${results.length - failed.length}/${results.length} (لقطات: ${ARTIFACTS})`);
 process.exitCode = failed.length === 0 && results.length > 0 ? 0 : 1;

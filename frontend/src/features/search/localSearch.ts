@@ -12,6 +12,7 @@ import { correspondenceApi, type Folder } from '../correspondence/api';
 import { openCorrespondence, type StoredContent } from '../correspondence/service';
 import { announcementsApi } from '../announcements/api';
 import { openAnnouncement, type StoredAnnouncement } from '../announcements/service';
+import type { StoredExternal } from '../external/service';
 import { SearchIndex } from './searchIndex';
 
 const MAX_AGE_MS = 30_000;
@@ -29,6 +30,20 @@ export async function getLocalIndex(force = false): Promise<SearchIndex> {
 
   for (const [key, value] of await getAllEntries<StoredContent | StoredAnnouncement | unknown>('mail')) {
     if (key.startsWith('seq:')) continue; // نسخ وسيطة بالـseq — العنصر نفسه مفهرس بمعرّفه
+    if (key.startsWith('ext:')) {
+      const e = value as StoredExternal;
+      if (!e?.content) continue;
+      index.add({
+        id: key,
+        kind: 'external',
+        title: e.content.subject,
+        body: [e.content.body, e.content.attachments.map((a) => a.name).join(' ')].join('\n'),
+        meta: [e.content.from.address, ...e.content.to.map((t) => t.address)].join(' '),
+        date: e.meta?.created_at ?? null,
+        link: `/mail/external/${key.slice(4)}`,
+      });
+      continue;
+    }
     if (key.startsWith('ann:')) {
       const a = value as StoredAnnouncement;
       if (!a?.content) continue;

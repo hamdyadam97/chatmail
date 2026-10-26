@@ -69,7 +69,7 @@ function ParticipantsLine({ label, people, showReceipts }: { label: string; peop
   );
 }
 
-function AttachmentRow({ meta }: { meta: AttachmentKey }) {
+export function AttachmentRow({ meta }: { meta: AttachmentKey }) {
   const [state, setState] = useState<'idle' | 'busy' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const download = async () => {

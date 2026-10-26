@@ -14,7 +14,8 @@ export type NotificationKind =
   | 'announcement_reminder'
   | 'correspondence_due_soon'
   | 'correspondence_overdue'
-  | 'correspondence_overdue_sender';
+  | 'correspondence_overdue_sender'
+  | 'external_mail';
 
 export interface AppNotification {
   id: string;
@@ -47,6 +48,7 @@ export function notificationTarget(n: AppNotification): string {
   if (n.ref_type === 'correspondence' && n.ref_id) return `/correspondence/${n.ref_id}`;
   if (n.ref_type === 'approval_request' && n.ref_id) return `/approvals/${n.ref_id}`;
   if (n.ref_type === 'announcement' && n.ref_id) return `/announcements/${n.ref_id}`;
+  if (n.ref_type === 'external_message' && n.ref_id) return `/mail/external/${n.ref_id}`;
   if (n.ref_type === 'trusted_device') return '/devices';
   return '/notifications';
 }

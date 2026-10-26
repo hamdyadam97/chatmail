@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     "apps.announcements",
     "apps.reports",
     "apps.archive",
+    "apps.external_mail",
 ]
 
 MIDDLEWARE = [
@@ -167,6 +168,15 @@ REST_FRAMEWORK = {
 # downloads go through the participant-gated /api/v1/attachments/{id}/ view.
 ENCRYPTED_BLOB_ROOT = Path(os.environ.get("ENCRYPTED_BLOB_ROOT", BASE_DIR / "var" / "blobs"))
 ENCRYPTED_ATTACHMENT_MAX_BYTES = int(os.environ.get("ENCRYPTED_ATTACHMENT_MAX_BYTES", 25 * 1024 * 1024))
+# External (Internet) mail — off unless EXTERNAL_MAIL_DOMAIN is set. Inbound
+# arrives through the local Postfix; outbound leaves through Brevo's API.
+EXTERNAL_MAIL_DOMAIN = os.environ.get("EXTERNAL_MAIL_DOMAIN", "")
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+BREVO_API_BASE = os.environ.get("BREVO_API_BASE", "https://api.brevo.com")
+EXTERNAL_MAIL_MAX_BYTES = int(os.environ.get("EXTERNAL_MAIL_MAX_BYTES", 25 * 1024 * 1024))
+EXTERNAL_MAIL_MAX_SEND_BYTES = int(os.environ.get("EXTERNAL_MAIL_MAX_SEND_BYTES", 10 * 1024 * 1024))
+EXTERNAL_MAIL_DAILY_LIMIT = int(os.environ.get("EXTERNAL_MAIL_DAILY_LIMIT", 50))
+CLAMD_SOCKET = os.environ.get("CLAMD_SOCKET", "")  # e.g. /run/clamav/clamd.ctl; empty = no virus scan
 # Encrypted recovery bundle (keys + MLS state + locally decrypted mail/chat).
 KEY_BACKUP_MAX_BYTES = int(os.environ.get("KEY_BACKUP_MAX_BYTES", 25 * 1024 * 1024))
 CORRESPONDENCE_MAX_ATTACHMENTS = 20

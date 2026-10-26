@@ -15,6 +15,8 @@ import { useAuthUser } from './authBridge';
 
 const KEY_CONTEXT = 'corr-archive-key-v1\n';
 const HKDF_INFO = utf8ToU8('corr-archive-seal-v1');
+/** نفس الختم بتسمية مختلفة للبريد الخارجي (يختمه الخادم لأجهزة المستخدم). */
+export const EXTERNAL_SEAL_INFO = utf8ToU8('corr-external-seal-v1');
 
 export interface ArchiveKeyInfo {
   id: string;
@@ -59,7 +61,13 @@ export const archiveKeyApi = {
 
 // --- الختم -------------------------------------------------------------------------------
 
-async function sealKey(ourPrivate: CryptoKey, theirPub: Uint8Array, ephPub: Uint8Array, recipientPub: Uint8Array) {
+async function sealKey(
+  ourPrivate: CryptoKey,
+  theirPub: Uint8Array,
+  ephPub: Uint8Array,
+  recipientPub: Uint8Array,
+  info: Uint8Array = HKDF_INFO,
+) {
   const peer = await crypto.subtle.importKey('raw', theirPub, { name: 'X25519' }, false, []);
   const shared = await crypto.subtle.deriveBits({ name: 'X25519', public: peer }, ourPrivate, 256);
   const base = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
@@ -67,7 +75,7 @@ async function sealKey(ourPrivate: CryptoKey, theirPub: Uint8Array, ephPub: Uint
   salt.set(ephPub);
   salt.set(recipientPub, ephPub.length);
   return crypto.subtle.deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt, info: HKDF_INFO },
+    { name: 'HKDF', hash: 'SHA-256', salt, info },
     base,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -87,9 +95,10 @@ export async function unseal(
   recipient: { privateKey: CryptoKey; pub: Uint8Array },
   sealed: Sealed,
   aad: string,
+  info: Uint8Array = HKDF_INFO,
 ): Promise<Uint8Array> {
   const ephPub = b64ToU8(sealed.ephemeral_pub);
-  const key = await sealKey(recipient.privateKey, ephPub, ephPub, recipient.pub);
+  const key = await sealKey(recipient.privateKey, ephPub, ephPub, recipient.pub, info);
   const plain = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv: b64ToU8(sealed.iv), additionalData: utf8ToU8(aad) },
     key,

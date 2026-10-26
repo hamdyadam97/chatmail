@@ -1,0 +1,43 @@
+# /etc/postfix/main.cf — written by deploy/scripts/install-mail.sh
+# CORRESPONDENCE-RECEIVE-ONLY (marker: install-mail.sh only rewrites a file carrying it)
+#
+# Receive-only MX for the correspondence system: mail for __MAIL_DOMAIN__ is
+# piped to Django (manage.py ingest_external_mail), sealed to the recipient's
+# devices at once, and never delivered or stored anywhere else. This server
+# sends NO mail (outbound goes through Brevo's API).
+compatibility_level = 3.6
+myhostname = __MAIL_HOST__
+mydomain = __MAIL_DOMAIN__
+myorigin = $myhostname
+mydestination =
+local_recipient_maps =
+local_transport = error:local delivery is disabled
+default_transport = error:this server does not send mail
+relay_domains = __MAIL_DOMAIN__
+relay_recipient_maps = hash:/var/lib/correspondence-mail/recipients
+transport_maps = hash:/etc/postfix/corr_transport
+corrmail_destination_recipient_limit = 1
+inet_interfaces = all
+inet_protocols = all
+smtpd_banner = $myhostname ESMTP
+biff = no
+append_dot_mydomain = no
+message_size_limit = 26214400
+smtpd_helo_required = yes
+disable_vrfy_command = yes
+smtpd_tls_cert_file = /etc/letsencrypt/live/__MAIL_HOST__/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/__MAIL_HOST__/privkey.pem
+smtpd_tls_security_level = may
+smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_relay_restrictions = reject_unauth_destination
+# unknown addresses are refused during the SMTP dialogue (no backscatter);
+# SPF "fail" senders are refused, others get a Received-SPF header we trust.
+smtpd_recipient_restrictions =
+    reject_non_fqdn_recipient,
+    reject_unauth_destination,
+    reject_unlisted_recipient,
+    check_policy_service unix:private/policyd-spf
+policyd-spf_time_limit = 3600
+smtpd_client_connection_rate_limit = 30
+smtpd_client_message_rate_limit = 60
+anvil_rate_time_unit = 60s

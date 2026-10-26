@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { FileText, Lock, Megaphone, MessageCircle, RefreshCw, Search as SearchIcon } from 'lucide-react';
+import { FileText, Lock, Megaphone, MessageCircle, RefreshCw, Search as SearchIcon, Globe } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { CryptoGate } from '../correspondence/components';
@@ -10,6 +10,7 @@ import { highlightParts, type SearchDoc, type SearchHit } from './searchIndex';
 const KIND_META: Record<SearchDoc['kind'], { label: string; icon: typeof FileText }> = {
   correspondence: { label: 'مراسلة', icon: FileText },
   announcement: { label: 'تعميم', icon: Megaphone },
+  external: { label: 'بريد خارجي', icon: Globe },
   chat: { label: 'محادثة', icon: MessageCircle },
 };
 
@@ -107,6 +108,7 @@ function SearchView() {
           <option value="">الكل</option>
           <option value="correspondence">المراسلات</option>
           <option value="announcement">التعاميم</option>
+          <option value="external">البريد الخارجي</option>
           <option value="chat">المحادثات</option>
         </select>
         <Button type="submit" loading={busy}>

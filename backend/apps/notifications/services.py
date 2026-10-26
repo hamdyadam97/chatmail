@@ -22,6 +22,7 @@ TITLES = {
     "correspondence_due_soon": "تذكير: مراسلة بانتظار ردك يقترب موعدها",
     "correspondence_overdue": "مراسلة بانتظار ردك تجاوزت موعد الرد",
     "correspondence_overdue_sender": "مراسلة أرسلتها تجاوزت موعد الرد دون رد",
+    "external_mail": "وصلك بريد خارجي",
     # Push-only (no notification row per chat message — the chat sidebar shows unread).
     "new_message": "رسالة محادثة جديدة",
 }
@@ -51,6 +52,8 @@ def app_url(ref_type: str, ref_id) -> str:
         return f"/approvals/{ref_id}"
     if ref_type == "announcement" and ref_id:
         return f"/announcements/{ref_id}"
+    if ref_type == "external_message" and ref_id:
+        return f"/mail/external/{ref_id}"
     if ref_type == "trusted_device":
         return "/devices"
     return "/notifications"
