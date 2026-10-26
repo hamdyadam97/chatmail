@@ -49,7 +49,7 @@ function DeviceRow({
 
   const approveMutation = useMutation({
     mutationFn: async () => {
-      await devicesApi.approve(device.id);
+      await devicesApi.approve(user!.id, device.id);
       // مزامنة الجهاز الجديد مع مجموعات MLS الخاصة بنا (§3.3) — تتطلب
       // أن يكون لدى هذا الجهاز (الموثّق) مفاتيح محلية؛ وإلا نكتفي بالاعتماد.
       const local = await loadCurrentDevice(user!.id).catch(() => undefined);

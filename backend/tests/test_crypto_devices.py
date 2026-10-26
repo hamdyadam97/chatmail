@@ -162,6 +162,63 @@ def test_approve_rejects_other_peoples_devices(owner_setup, api_client, user_fac
     assert TrustedDevice.objects.get(id=phone_id).status == "pending"
 
 
+def _signed_proof(user, approver_id, keys, device_id, issued_at=None):
+    from apps.crypto_keys.services import approve_signing_message
+
+    issued_at = int(issued_at if issued_at is not None else timezone.now().timestamp())
+    message = approve_signing_message(
+        user_id=user.id, approver_device_id=approver_id, device_id=device_id, issued_at=issued_at
+    )
+    return {"approver_device_id": str(approver_id), "issued_at": issued_at, "signature": b64e(keys.sign_priv.sign(message))}
+
+
+@pytest.fixture
+def relogged_owner(api_client, user_factory, device_keys_factory):
+    """Owner whose keyed device exists, but whose CURRENT login session is
+    anchored to a keyless placeholder (what every later login produces)."""
+    from .conftest import bootstrap_payload, new_signing_key
+
+    owner = user_factory("owner")
+    _, identity_pub = new_signing_key()
+    laptop_keys = make_device_keys()
+    login_and_get_access(api_client, "owner")
+    assert api_client.post(f"{CRYPTO_BASE}/identity/", bootstrap_payload(owner, identity_pub, laptop_keys),
+                           format="json").status_code == 201
+    laptop = TrustedDevice.objects.get(user=owner, identity_sign_pub=laptop_keys.sign_pub)
+    login_and_get_access(api_client, "owner")
+    phone_keys = device_keys_factory()
+    phone_id = api_client.post(f"{CRYPTO_BASE}/devices/register/",
+                               register_device_payload(owner, identity_pub, phone_keys), format="json").json()["id"]
+    return owner, laptop, laptop_keys, phone_id
+
+
+def test_relogged_session_approves_with_device_signature(relogged_owner, api_client):
+    owner, laptop, laptop_keys, phone_id = relogged_owner
+    url = f"{CRYPTO_BASE}/devices/{phone_id}/approve/"
+    # The session alone no longer names a keyed device...
+    assert api_client.post(url, {}, format="json").status_code == 403
+    # ...the keyed device's signature does.
+    resp = api_client.post(url, _signed_proof(owner, laptop.id, laptop_keys, phone_id), format="json")
+    assert resp.status_code == 200, resp.content
+    phone = TrustedDevice.objects.get(id=phone_id)
+    assert phone.status == "active" and phone.approved_by_device_id == laptop.id
+    event = KeyTransparencyEvent.objects.get(user=owner, event_type="device_approved")
+    assert event.payload["approved_by_device_id"] == str(laptop.id)
+
+
+def test_signed_approval_rejects_forged_stale_or_foreign_proofs(relogged_owner, api_client, device_keys_factory):
+    owner, laptop, laptop_keys, phone_id = relogged_owner
+    url = f"{CRYPTO_BASE}/devices/{phone_id}/approve/"
+    forged = _signed_proof(owner, laptop.id, device_keys_factory(), phone_id)
+    assert api_client.post(url, forged, format="json").status_code == 403
+    stale = _signed_proof(owner, laptop.id, laptop_keys, phone_id, issued_at=timezone.now().timestamp() - 3600)
+    assert api_client.post(url, stale, format="json").status_code == 400
+    # A signature for another device cannot be replayed onto this one.
+    other = _signed_proof(owner, laptop.id, laptop_keys, laptop.id)
+    assert api_client.post(url, other, format="json").status_code == 403
+    assert TrustedDevice.objects.get(id=phone_id).status == "pending"
+
+
 def test_approve_requires_pending_status(owner_setup, api_client):
     owner, _, bootstrap_device = owner_setup
     resp = api_client.post(

@@ -9,6 +9,7 @@ Contract (frontend depends on this):
   POST devices/                      -> 201 {id, label, platform, status,
                                           created_at}  (status=pending)
   POST devices/{id}/approve/         -> 200 {id, status}   (pending -> active)
+       {approver_device_id, issued_at, signature}  (approver's device signature)
   POST devices/{id}/revoke/          -> 200 {id, status}   (-> revoked)
   POST keys/upload/                  -> 201 {id, device_id, keypackage_hash,
                                           uploaded_at, expires_at}
@@ -159,7 +160,8 @@ class DeviceApproveView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, device_id):
-        device = services.approve_device(request.user, request, device_id)
+        proof = request.data if isinstance(request.data, dict) else None
+        device = services.approve_device(request.user, request, device_id, proof)
         notify([request.user.id], "device_alert", ref_type="trusted_device", ref_id=device.id)
         _audit(
             request,

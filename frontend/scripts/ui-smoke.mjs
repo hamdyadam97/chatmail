@@ -462,6 +462,35 @@ async function main() {
     })();
     check('التسجيل المعلّق للمتصفح الجديد سُحب', !devicesText.includes('بانتظار الاعتماد'));
 
+    section('7أ-2) اعتماد جهاز جديد بعد إعادة الدخول على الجهاز الموثّق');
+    // كل دخول جديد يربط الجلسة بصف بلا مفاتيح؛ الاعتماد يجب أن يثبته توقيع الجهاز.
+    await ahmed.context.clearCookies();
+    await ahmed.page.goto(`${UI}/login`);
+    await ahmed.page.fill('#username', 'ahmed');
+    await ahmed.page.fill('#password', 'Ahmed@12345');
+    await ahmed.page.click('button[type="submit"]');
+    await ahmed.page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000, waitUntil: 'commit' });
+    check('ahmed: أعاد الدخول ومفاتيحه باقية', (await bootstrap(ahmed)) === null);
+    const ahmedNew = await newDevice(browser, 'ahmed', 'Ahmed@12345');
+    check('ahmed (متصفح ثانٍ): بانتظار الاعتماد', ((await bootstrap(ahmedNew)) ?? '').includes('بانتظار الاعتماد'));
+    await ahmed.page.goto(`${UI}/devices`);
+    const approveBtn = ahmed.page.getByRole('button', { name: 'اعتماد', exact: true });
+    await approveBtn.first().waitFor({ timeout: 15000 }).catch(() => undefined);
+    await approveBtn.first().click();
+    const approvedOk = await ahmed.page
+      .locator('text=بانتظار الاعتماد')
+      .waitFor({ state: 'detached', timeout: 30000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!approvedOk) {
+      const msg = await ahmed.page.locator('.text-red-600').allInnerTexts();
+      console.log(`    اعتماد فشل: ${msg.join(' | ')} — ${await shot(ahmed, 'approve')} — console: ${ahmed.page.errors.join(' | ')}`);
+    }
+    check('ahmed: اعتمد الجهاز الجديد من جهازه الموثّق', approvedOk);
+    await ahmedNew.page.reload();
+    check('ahmed (متصفح ثانٍ): صار جاهزًا بعد الاعتماد', (await bootstrap(ahmedNew)) === null);
+    await ahmedNew.context.close();
+
     section('7ب) الأرشيف المركزي');
     const archivist = await newDevice(browser, 'archivist', 'Archivist@12345');
     const archBoot = await bootstrap(archivist);

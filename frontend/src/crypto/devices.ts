@@ -3,7 +3,28 @@
  * (list/approve/revoke؛ الواجهة في pages/devices.)
  */
 import { cryptoApi } from './api';
-import { refreshDeviceStatus } from './identity';
+import { u8ToB64, utf8ToU8 } from './encoding';
+import { loadCurrentDevice, refreshDeviceStatus, signWithCurrentDevice } from './identity';
+
+const APPROVE_CONTEXT = 'device-approve-v1\n';
+
+/**
+ * الاعتماد يثبت أن جهازنا الموثّق هو من وافق: نوقّعه بمفتاحه. جلسة الدخول
+ * وحدها مربوطة بصف جهاز بلا مفاتيح فلا تكفي الخادم ليعرف الجهاز الموثّق.
+ */
+async function approveSigned(userId: number | string, deviceId: number | string) {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const local = await loadCurrentDevice(userId);
+  if (!local) throw new Error('لا توجد مفاتيح جهاز على هذا المتصفح');
+  const approverId = local.deviceId;
+  const message = APPROVE_CONTEXT + [userId, approverId, deviceId, String(issuedAt)].join('\n');
+  const { signature } = await signWithCurrentDevice(userId, utf8ToU8(message));
+  return cryptoApi.approveDevice(deviceId, {
+    approver_device_id: String(approverId),
+    issued_at: issuedAt,
+    signature: u8ToB64(signature),
+  });
+}
 
 export interface ApiDevice {
   id: number | string;
@@ -16,7 +37,7 @@ export interface ApiDevice {
 
 export const devicesApi = {
   list: () => cryptoApi.listDevices(),
-  approve: (deviceId: number | string) => cryptoApi.approveDevice(deviceId),
+  approve: (userId: number | string, deviceId: number | string) => approveSigned(userId, deviceId),
   revoke: (deviceId: number | string) => cryptoApi.revokeDevice(deviceId),
 };
 

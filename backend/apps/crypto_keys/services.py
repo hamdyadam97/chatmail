@@ -231,26 +231,61 @@ def get_own_device(user, device_id) -> TrustedDevice:
     return device
 
 
+APPROVE_SIGNING_CONTEXT = b"device-approve-v1\n"
+
+
+def approve_signing_message(*, user_id, approver_device_id, device_id, issued_at: int) -> bytes:
+    return APPROVE_SIGNING_CONTEXT + "\n".join(
+        [str(user_id), str(approver_device_id), str(device_id), str(issued_at)]
+    ).encode()
+
+
+def _signed_approver(user, device, proof: dict) -> TrustedDevice:
+    """The approving device proves possession of its own key. A login session
+    is anchored to a keyless placeholder row (accounts.ensure_active_device),
+    so the session alone cannot tell which keyed device the browser holds."""
+    approver = _own_keyed_active_device(user, proof.get("approver_device_id"))
+    try:
+        issued = datetime.fromtimestamp(int(proof.get("issued_at")), tz=dt_timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        raise ValidationError({"issued_at": "قيمة غير صالحة."})
+    if abs(timezone.now() - issued) > RESTORE_CLOCK_SKEW:
+        raise ValidationError({"issued_at": "انتهت صلاحية الطلب — تأكد من ساعة الجهاز."})
+    signature = b64decode_field(proof.get("signature"), "signature", ED25519_SIGNATURE_LEN)
+    _verify_with_device(
+        approver,
+        approve_signing_message(
+            user_id=user.id, approver_device_id=approver.id, device_id=device.id, issued_at=int(proof["issued_at"]),
+        ),
+        signature,
+        field="signature",
+    )
+    return approver
+
+
 @transaction.atomic
-def approve_device(user, request, device_id: str) -> TrustedDevice:
+def approve_device(user, request, device_id: str, proof: dict | None = None) -> TrustedDevice:
     """Approve one of MY pending devices; the call must come from one of my
     own ACTIVE devices that carry cryptographic keys (§3.3/§3.5 — اعتماد من
-    جهاز موثّق فعلًا، لا من أي جلسة دخول). Activates + transparency event."""
+    جهاز موثّق فعلًا، لا من أي جلسة دخول). Proof is the approver's device
+    signature (`proof`), or else a session anchored to such a device (the
+    first device, bootstrapped in this session). Activates + transparency event."""
     device = get_own_device(user, device_id)
-    session = request_session(request)
-    if session is None or session.device_id is None:
-        raise PermissionDenied("الاعتماد يتطلب جلسة جهاز نشطة.")
-    approver = session.device
-    if (
-        approver is None
-        or approver.status != "active"
-        or approver.identity_sign_pub is None
-    ):
-        raise PermissionDenied("الاعتماد يجب أن يتم من جهازك الموثّق (نشط وبمفاتيح تشفير).")
+    if proof and proof.get("signature"):
+        approver = _signed_approver(user, device, proof)
+    else:
+        session = request_session(request)
+        approver = session.device if session is not None and session.device_id else None
+        if (
+            approver is None
+            or approver.status != "active"
+            or approver.identity_sign_pub is None
+        ):
+            raise PermissionDenied("الاعتماد يجب أن يتم من جهازك الموثّق (نشط وبمفاتيح تشفير).")
     if device.status != "pending":
         raise Conflict("الجهاز ليس في حالة انتظار.")
     device.status = "active"
-    device.approved_by_device = session.device
+    device.approved_by_device = approver
     device.approved_at = timezone.now()
     device.save(update_fields=["status", "approved_by_device", "approved_at"])
     transparency.append_event(
@@ -260,7 +295,7 @@ def approve_device(user, request, device_id: str) -> TrustedDevice:
         payload={
             "user_id": str(user.id),
             "device_id": str(device.id),
-            "approved_by_device_id": str(session.device_id) if session.device_id else None,
+            "approved_by_device_id": str(approver.id),
         },
     )
     return device

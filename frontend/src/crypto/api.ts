@@ -110,8 +110,10 @@ export const cryptoApi = {
     sig: string;
   }) => apiFetch<ApiDevice>(`${BASE}/devices/register/`, { method: 'POST', body: payload }),
 
-  approveDevice: (deviceId: number | string) =>
-    apiFetch<null>(`${BASE}/devices/${deviceId}/approve/`, { method: 'POST' }),
+  approveDevice: (
+    deviceId: number | string,
+    proof: { approver_device_id: string; issued_at: number; signature: string },
+  ) => apiFetch<null>(`${BASE}/devices/${deviceId}/approve/`, { method: 'POST', body: proof }),
 
   revokeDevice: (deviceId: number | string) =>
     apiFetch<null>(`${BASE}/devices/${deviceId}/revoke/`, { method: 'POST' }),
