@@ -115,6 +115,15 @@ def test_publish_permission_is_scoped(api_client, org, case):
     assert resp.status_code == 403, resp.content
 
 
+def test_central_executive_publishes_to_all_institutes(api_client, user_factory, org):
+    exe = make_employee(user_factory, "a_exe", org["branch_a"])
+    assign_role(exe, "executive")  # central
+    resp = prepare(api_client, auth(api_client, "a_exe"), "all")
+    assert resp.status_code == 201, resp.content
+    users = set(Announcement.objects.get(id=resp.json()["id"]).recipients.values_list("user__username", flat=True))
+    assert {"a_e1", "a_other", "a_foreign"} <= users
+
+
 def test_named_users_and_department_targets(api_client, org):
     resp = prepare(api_client, org["h_pub"], "users", user_ids=[org["e1"].id])
     assert resp.status_code == 201
