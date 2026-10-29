@@ -88,6 +88,8 @@ sh frontend/scripts/run-e2e-fresh.sh e2e-multidevice.mjs
 
 - تم: **إشعارات سطح المكتب (Web Push/VAPID)** — `notifications.push` (pywebpush، قائمة سماح لمضيفي خدمات الدفع ضد SSRF، تسليم بعد الـcommit على thread pool، حذف الاشتراكات 404/410)، `PushSubscription` (endpoint فريد ينتقل بين الحسابات على نفس المتصفح)، API `notifications/push/{public-key,subscribe,unsubscribe,test}/`، كل `notify()` يدفع إشعارًا عامًا + اسم الفاعل، ورسائل الشات (dm/group) تدفع للأعضاء الآخرين فقط (`kind=new_message`، tag لكل محادثة). الواجهة: `public/sw.js`، `features/notifications/push.ts` + `PushControls.tsx` (شريط تفعيل + بطاقة في صفحة الإشعارات)، إلغاء الاشتراك عند الخروج، عدد غير المقروء في عنوان التبويب. مفتاح التطوير يُولّد تلقائيًا في `backend/var/vapid-dev.key` عند DEBUG.
 
+- تم: **تكرار الأجهزة**: اعتماد جهاز جديد يثبته توقيع الجهاز الموثّق (`device-approve-v1`) لأن كل دخول بعد الأول يربط الجلسة بصف بلا مفاتيح. والتسجيلات المعلّقة أكثر من 7 أيام تُبطَل (`manage.py expire_pending_devices` على مؤقت التذكيرات، بحدث شفافية). والعميل يطلب `navigator.storage.persist()` عند التهيئة، وتنبيه iPhone يعود أسبوعيًا في Safari (يمسح بيانات الموقع بعد 7 أيام). `UI_BROWSER=chrome npm run test:ui` بديل حين لا يقلع Edge.
+
 ## قرارات افتراضية معتمدة (قابلة للرجوع)
 
 - BCC: مبني لكن معطّل افتراضيًا (feature flag) حتى طلب صريح.

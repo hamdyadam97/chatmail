@@ -322,6 +322,23 @@ def revoke_device(user, device_id: str) -> TrustedDevice:
     return device
 
 
+PENDING_DEVICE_TTL = timedelta(days=7)
+
+
+def expire_pending_devices(now=None) -> int:
+    """Withdraw registrations nobody approved within PENDING_DEVICE_TTL. They
+    are left behind whenever a browser loses its local store (Safari after 7
+    idle days, private windows, cleared data) and registers again. Each one
+    is revoked through revoke_device, so it lands in the transparency log."""
+    cutoff = (now or timezone.now()) - PENDING_DEVICE_TTL
+    stale = TrustedDevice.objects.filter(status="pending", created_at__lt=cutoff).select_related("user")
+    count = 0
+    for device in stale:
+        revoke_device(device.user, device.id)
+        count += 1
+    return count
+
+
 def _notify_device_revoked(user_id, device_id) -> None:
     """Best-effort channel-layer broadcast; a no-op when channels is not
     configured (e.g. plain test runs without CHANNEL_LAYERS)."""

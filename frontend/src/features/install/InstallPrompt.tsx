@@ -20,9 +20,14 @@ function isIos(): boolean {
   return /iPhone|iPad|iPod/.test(navigator.userAgent) && !/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
 }
 
-function dismissed(): boolean {
+const IOS_REMIND_MS = 7 * 24 * 3600 * 1000;
+
+/** Safari على iPhone يعود التنبيه فيه بعد أسبوع: فتح النظام منه يضيّع المفاتيح لاحقًا. */
+function dismissed(ios: boolean): boolean {
   try {
-    return localStorage.getItem(DISMISS_KEY) === '1';
+    const value = localStorage.getItem(DISMISS_KEY);
+    if (!value) return false;
+    return !ios || Date.now() - Number(value) < IOS_REMIND_MS;
   } catch {
     return false;
   }
@@ -34,7 +39,7 @@ function dismissed(): boolean {
  */
 export function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
-  const [hidden, setHidden] = useState(() => dismissed() || isStandalone());
+  const [hidden, setHidden] = useState(() => dismissed(isIos()) || isStandalone());
 
   useEffect(() => {
     const onPrompt = (e: Event) => {
@@ -55,7 +60,7 @@ export function InstallPrompt() {
 
   const dismiss = () => {
     try {
-      localStorage.setItem(DISMISS_KEY, '1');
+      localStorage.setItem(DISMISS_KEY, String(Date.now()));
     } catch {
       // تفضيل عرض محلي فقط.
     }
@@ -70,8 +75,9 @@ export function InstallPrompt() {
           'ثبّت التطبيق على موبايلك ليفتح كتطبيق مستقل وتصلك الإشعارات.'
         ) : (
           <>
-            لتثبيت التطبيق: اضغط <Share className="inline h-4 w-4" aria-label="مشاركة" /> ثم «إضافة إلى الشاشة الرئيسية». الإشعارات
-            على iPhone تعمل بعد التثبيت فقط.
+            استخدم التطبيق المثبّت لا Safari: Safari يمسح مفاتيح التشفير بعد أسبوع بلا فتح فيطلب اعتماد جهاز من جديد. للتثبيت
+            اضغط <Share className="inline h-4 w-4" aria-label="مشاركة" /> ثم «إضافة إلى الشاشة الرئيسية»، ولو مثبّت افتح من
+            أيقونته.
           </>
         )}
       </span>

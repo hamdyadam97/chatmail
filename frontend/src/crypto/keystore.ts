@@ -255,6 +255,20 @@ export async function getAllPublic<T>(store: StoreName): Promise<T[]> {
   return (await db.getAll(store)) as T[];
 }
 
+/**
+ * يطلب من المتصفح ألا يمسح هذا المخزن عند ضيق المساحة. مسحه يضيّع مفاتيح
+ * الجهاز فيُسجَّل المتصفح كجهاز جديد. أفضل جهد: الرفض أو غياب الواجهة لا يوقف شيئًا.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  try {
+    if (!navigator.storage?.persist) return false;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
 /** يمحو كل المخزن (تسجيل خروج/إعادة ضبط). الـKEK نفسه يُمسح مع meta. */
 export async function wipeCryptoStore(): Promise<void> {
   kekPromise = null;

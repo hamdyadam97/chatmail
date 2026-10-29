@@ -219,6 +219,24 @@ def test_signed_approval_rejects_forged_stale_or_foreign_proofs(relogged_owner, 
     assert TrustedDevice.objects.get(id=phone_id).status == "pending"
 
 
+def test_stale_pending_registrations_expire(owner_setup, api_client, device_keys_factory):
+    from django.core.management import call_command
+
+    owner, identity_pub, bootstrap_device = owner_setup
+    ids = [
+        api_client.post(f"{CRYPTO_BASE}/devices/register/",
+                        register_device_payload(owner, identity_pub, device_keys_factory()), format="json").json()["id"]
+        for _ in range(2)
+    ]
+    TrustedDevice.objects.filter(id=ids[0]).update(created_at=timezone.now() - timedelta(days=8))
+    call_command("expire_pending_devices")
+    assert TrustedDevice.objects.get(id=ids[0]).status == "revoked"
+    assert TrustedDevice.objects.get(id=ids[1]).status == "pending"  # still within 7 days
+    assert TrustedDevice.objects.get(id=bootstrap_device.id).status == "active"  # active ones untouched
+    event = KeyTransparencyEvent.objects.get(user=owner, event_type="device_revoked")
+    assert event.payload["device_id"] == str(ids[0])
+
+
 def test_approve_requires_pending_status(owner_setup, api_client):
     owner, _, bootstrap_device = owner_setup
     resp = api_client.post(

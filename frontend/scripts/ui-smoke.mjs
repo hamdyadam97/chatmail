@@ -244,7 +244,8 @@ async function main() {
   await setup();
   check('الخادم والواجهة يعملان', true);
 
-  const browser = await chromium.launch({ channel: 'msedge', headless: !process.env.HEADED });
+  // UI_BROWSER=chrome بديلًا عندما يكون Edge في منتصف تحديث ولا يقلع.
+  const browser = await chromium.launch({ channel: process.env.UI_BROWSER || 'msedge', headless: !process.env.HEADED });
   try {
     section('1) دخول وتهيئة التشفير لكل جهاز');
     const ahmed = await newDevice(browser, 'ahmed', 'Ahmed@12345');

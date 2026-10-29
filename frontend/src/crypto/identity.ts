@@ -19,7 +19,7 @@
  *   يعتمد جهاز موثّق موجود (§3.3/§3.5).
  */
 import { cryptoApi } from './api';
-import { deleteRecord, getAllRecords, getRecord, putRecord } from './keystore';
+import { deleteRecord, getAllRecords, getRecord, putRecord, requestPersistentStorage } from './keystore';
 import { b64ToU8, u8ToB64, randomBytes } from './encoding';
 
 const ED25519_PKCS8_PREFIX = new Uint8Array([
@@ -199,6 +199,7 @@ async function resolveOwnDeviceId(label: string): Promise<number | string | unde
  *    موثّق (§3.3).
  */
 export async function bootstrapUserCrypto(user: { id: number | string }): Promise<BootstrapResult> {
+  void requestPersistentStorage();
   const existing = await loadIdentity(user.id);
   if (existing) {
     const device = await loadCurrentDevice(user.id);
