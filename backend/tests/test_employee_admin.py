@@ -94,6 +94,17 @@ def test_branch_manager_moves_staff_within_branch_only(api_client, staff):
     assert AuditLog.objects.filter(action="employee_transferred", target_id=staff["emp"].id).count() == 1
 
 
+def test_transfer_to_another_institute_grants_employee_there_once(api_client, staff):
+    faw_institute = staff["branch_b"].institute
+    url = f"{USERS}{staff['emp'].id}/transfer/"
+    body = {"institute": str(faw_institute.id), "branch": str(staff["branch_b"].id)}
+    assert api_client.post(url, body, format="json", **staff["h_central"]).status_code == 201
+    assert staff["emp"].role_assignments.filter(role__code="employee", institute=faw_institute).count() == 1
+    # moving again inside the same institute adds nothing
+    assert api_client.post(url, body, format="json", **staff["h_central"]).status_code == 201
+    assert staff["emp"].role_assignments.filter(role__code="employee", institute=faw_institute).count() == 1
+
+
 def test_end_and_promote_memberships(api_client, staff):
     url = f"{USERS}{staff['emp'].id}/memberships/"
     second = api_client.post(url, {"institute": str(staff["branch_a2"].institute_id), "branch": str(staff["branch_a2"].id)},

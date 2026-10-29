@@ -23,7 +23,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.audit.services import log, request_context
-from apps.authorization.services import active_assignments, has_permission
+from apps.authorization.services import active_assignments, grant_default_role, has_permission
 from apps.org.models import Branch, Department, EmployeeMembership, Institute
 
 from ..models import User
@@ -211,6 +211,8 @@ class MembershipsView(APIView):
                     current.is_primary = False
                     current.save(update_fields=["is_primary"])
             m.save()
+            if m.is_primary:
+                grant_default_role(target, m.institute, granted_by=request.user, request=request)
         _audit(request, "membership_added", target, membership_id=str(m.id), is_primary=m.is_primary)
         return Response(_membership_dict(m), status=status.HTTP_201_CREATED)
 
@@ -249,6 +251,7 @@ class MembershipDetailView(APIView):
                     current.save(update_fields=["is_primary"])
                 m.is_primary = True
                 m.save(update_fields=["is_primary"])
+                grant_default_role(target, m.institute, granted_by=request.user, request=request)
             if d.get("end"):
                 if m.is_primary:
                     raise ValidationError({"end": "لا تُنهى العضوية الرئيسية مباشرة — استخدم النقل أو اجعل عضوية أخرى رئيسية."})
@@ -279,6 +282,7 @@ class TransferView(APIView):
                 current.ended_on = timezone.localdate()
                 current.save(update_fields=["is_primary", "ended_on"])
             new.save()
+            grant_default_role(target, new.institute, granted_by=request.user, request=request)
         _audit(request, "employee_transferred", target,
                from_membership=str(current.id) if current else None, to_membership=str(new.id))
         return Response(_membership_dict(new), status=status.HTTP_201_CREATED)

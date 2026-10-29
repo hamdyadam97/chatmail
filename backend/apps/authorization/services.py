@@ -39,6 +39,40 @@ def active_assignments(user):
     )
 
 
+DEFAULT_ROLE = "employee"
+
+
+def grant_default_role(user, institute, *, granted_by, request=None):
+    """Give an employee the base `employee` role in their primary institute
+    (user decision: every staff member is an employee). No-op when the user
+    already holds it there. Audited like a manual grant."""
+    from apps.audit.services import log, request_context
+
+    from .models import Role
+
+    role = Role.objects.filter(code=DEFAULT_ROLE).first()
+    if role is None or active_assignments(user).filter(role=role, institute=institute).exists():
+        return None
+    assignment = UserRoleAssignment.objects.create(
+        user=user, role=role, institute=institute, granted_by=granted_by
+    )
+    log(
+        actor=granted_by,
+        action="permission_granted",
+        target_type="user_role_assignment",
+        target_id=assignment.id,
+        org_scope=institute.code,
+        **request_context(request),
+        metadata={
+            "user": user.username,
+            "role": role.code,
+            "scope": {"institute": institute.code, "branch": None, "department": None},
+            "automatic": True,
+        },
+    )
+    return assignment
+
+
 def has_permission(user, code, unit=None) -> bool:
     """True iff an active assignment grants `code` within `unit`'s subtree.
 

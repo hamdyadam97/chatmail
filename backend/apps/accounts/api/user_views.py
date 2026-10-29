@@ -16,7 +16,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.audit.services import log, primary_org_scope, request_context
-from apps.authorization.services import has_permission
+from apps.authorization.services import grant_default_role, has_permission
 
 from ..models import User
 from ..password_policy import generate_temp_password, validate_password_policy
@@ -122,6 +122,7 @@ class UserDirectoryView(APIView):
                     is_primary=True,
                     started_on=timezone.now().date(),
                 )
+                grant_default_role(user, membership_data["institute"], granted_by=request.user, request=request)
         log(
             actor=request.user,
             action="account_created",

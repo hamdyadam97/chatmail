@@ -68,6 +68,12 @@ def test_admin_creates_employee_with_membership(api_client, user_factory, role_f
     membership = user.memberships.get()
     assert membership.department_id == department_a.id
     assert AuditLog.objects.filter(action="account_created").exists()
+    # every new staff member is an employee of their institute (user decision)
+    grant = user.role_assignments.get()
+    assert (grant.role.code, grant.institute_id, grant.branch_id) == ("employee", institute_a.id, None)
+    assert grant.granted_by == admin
+    assert AuditLog.objects.filter(action="permission_granted", target_id=grant.id,
+                                   metadata__automatic=True).exists()
 
 
 def test_admin_create_rejects_inconsistent_membership(api_client, user_factory, role_factory,
