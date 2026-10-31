@@ -177,15 +177,12 @@ EXTERNAL_MAIL_MAX_BYTES = int(os.environ.get("EXTERNAL_MAIL_MAX_BYTES", 25 * 102
 EXTERNAL_MAIL_MAX_SEND_BYTES = int(os.environ.get("EXTERNAL_MAIL_MAX_SEND_BYTES", 10 * 1024 * 1024))
 EXTERNAL_MAIL_DAILY_LIMIT = int(os.environ.get("EXTERNAL_MAIL_DAILY_LIMIT", 50))
 CLAMD_SOCKET = os.environ.get("CLAMD_SOCKET", "")  # e.g. /run/clamav/clamd.ctl; empty = no virus scan
-# Encrypted recovery bundle (keys + MLS state + locally decrypted mail/chat).
-KEY_BACKUP_MAX_BYTES = int(os.environ.get("KEY_BACKUP_MAX_BYTES", 25 * 1024 * 1024))
 CORRESPONDENCE_MAX_ATTACHMENTS = 20
 # Decided default (AGENTS.md): BCC off until explicitly requested.
 CORRESPONDENCE_BCC_ENABLED = os.environ.get("CORRESPONDENCE_BCC_ENABLED", "0") == "1"
 
-# Announcements: one MLS group per announcement. Handshake size grows ~335 B
-# per member (1000 members -> 335 KB welcome), so the audience is capped.
-ANNOUNCEMENT_MAX_RECIPIENTS = int(os.environ.get("ANNOUNCEMENT_MAX_RECIPIENTS", 1000))
+# Announcement audience cap (recipient rows are written in one transaction).
+ANNOUNCEMENT_MAX_RECIPIENTS = int(os.environ.get("ANNOUNCEMENT_MAX_RECIPIENTS", 5000))
 
 # Web Push (desktop/phone notifications while the site is closed). The VAPID
 # key is a base64url PKCS#8 EC P-256 private key (gen-secrets.sh prints one);
@@ -226,6 +223,16 @@ if not AUTH_FERNET_KEY:
         stacklevel=2,
     )
 
+# Server-side content encryption at rest (user decision: Outlook-style mail —
+# any login of the account sees its mail; no per-device keys). base64 of 32
+# random bytes. Losing it loses every message and attachment: back it up with
+# /etc/correspondence. Dev default is deterministic like AUTH_FERNET_KEY.
+CONTENT_ENCRYPTION_KEY = os.environ.get("CONTENT_ENCRYPTION_KEY")
+if not CONTENT_ENCRYPTION_KEY:
+    CONTENT_ENCRYPTION_KEY = base64.b64encode(
+        hashlib.sha256(b"correspondence-dev-content-key-do-not-use-in-prod").digest()
+    ).decode()
+
 TOTP_ISSUER_NAME = os.environ.get("TOTP_ISSUER_NAME", "مجموعة المعاهد")
 
 # CORS (frontend dev server talks to the API cross-origin in dev).
@@ -233,13 +240,4 @@ CORS_ALLOW_ALL_ORIGINS = False
 # The refresh-token cookie must be sent/received cross-origin, so responses
 # must carry Access-Control-Allow-Credentials (and a specific origin, never '*').
 CORS_ALLOW_CREDENTIALS = True
-# Encrypted backup uploads carry their metadata in headers (body = ciphertext).
-from corsheaders.defaults import default_headers  # noqa: E402
 
-CORS_ALLOW_HEADERS = (
-    *default_headers,
-    "x-backup-device",
-    "x-backup-key-id",
-    "x-backup-iv",
-    "x-backup-signature",
-)

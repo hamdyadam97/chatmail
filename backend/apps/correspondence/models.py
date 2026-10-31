@@ -1,12 +1,11 @@
 """Official correspondence models per docs/phase1/04-erd.md §4.2 (د + ز).
 
-Encryption model (docs/phase1/03-key-management.md §3.4): every correspondence
-thread is one MLS group, carried by a ``messaging.Conversation`` of type
-``correspondence``. The encrypted subject + body + per-attachment file keys of
-one correspondence travel together as a single MLS application message
-(``content_message``). The server stores only that opaque ciphertext plus
-metadata (reference number, priority, dates, who-is-addressed) — never the
-subject, body, file names or file keys.
+Storage model: every correspondence thread is a ``messaging.Conversation`` of
+type ``correspondence``. The subject + body + attachment ids of one sent item
+are one message sealed with the server key (apps.vault, ``content_message``);
+an unsent draft keeps the same content in ``draft_enc``. Files and their
+names are sealed too. Nothing readable is stored (user decision 2026-10-31:
+Outlook-style, server-side encryption at rest).
 
 Authorization to read (docs/phase1/05-permissions-design.md §5.3) derives
 exclusively from ``CorrespondenceParticipant`` rows; no role grants it.
@@ -79,9 +78,8 @@ class Correspondence(models.Model):
         ("institutional_archive_eligible", "قابلة للأرشفة المؤسسية"),
     ]
     STATUSES = [
-        # Thread prepared (MLS group being set up), content not yet sent.
-        # Visible to the sender only. User-facing drafts stay on the device.
-        ("draft", "قيد الإعداد"),
+        # Saved draft, visible to the sender only (any of their logins).
+        ("draft", "مسودة"),
         ("sent", "مرسلة"),
         ("closed", "مغلقة"),
     ]
@@ -104,7 +102,7 @@ class Correspondence(models.Model):
     reply_to = models.ForeignKey(
         "self", on_delete=models.PROTECT, null=True, blank=True, related_name="replies"
     )
-    # Opaque MLS application message: encrypted {subject, body, attachment keys}.
+    # Sealed {subject, body, attachments, forwarded} once sent.
     content_message = models.OneToOneField(
         "messaging.Message",
         on_delete=models.PROTECT,
@@ -112,6 +110,8 @@ class Correspondence(models.Model):
         blank=True,
         related_name="correspondence",
     )
+    # Sealed draft content (same shape) until sent; cleared on send.
+    draft_enc = models.BinaryField(null=True, blank=True)
     priority = models.CharField(max_length=16, choices=PRIORITIES, default="normal")
     classification = models.CharField(max_length=40, choices=CLASSIFICATIONS, default="normal")
     status = models.CharField(max_length=16, choices=STATUSES, default="draft")
@@ -240,10 +240,10 @@ class CorrespondenceParticipant(models.Model):
 
 
 class CorrespondenceForwarding(models.Model):
-    """Forward = a NEW thread whose content the forwarder re-encrypted.
+    """Forward = a NEW thread carrying a copy of the source content.
 
-    The new recipients never join the source thread's MLS group, so they get
-    exactly what was forwarded and nothing else of the source thread.
+    The new recipients never join the source thread, so they get exactly what
+    was forwarded and nothing else of it.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -303,17 +303,17 @@ class CorrespondenceEvent(models.Model):
 
 
 class StoredFile(models.Model):
-    """An uploaded, client-side encrypted blob (docs/phase1/04-erd.md §4.2 ز).
+    """An uploaded file sealed with the server key (docs/phase1/04-erd.md §4.2 ز).
 
-    The server knows its size and SHA-256 only. The file name, type and the
-    content key live inside the MLS content of the correspondence(s) it is
-    attached to.
+    Size/SHA-256 describe the sealed blob on disk; name, type and real size are
+    in ``meta_enc``.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     storage_key = models.CharField(max_length=128, unique=True)
     ciphertext_size = models.BigIntegerField()
     ciphertext_sha256 = models.BinaryField(max_length=32)
+    meta_enc = models.BinaryField(null=True, blank=True)
     uploader = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="stored_files"
     )
@@ -333,9 +333,8 @@ class StoredFile(models.Model):
 class EncryptedAttachment(models.Model):
     """Binds a stored blob to a correspondence (or, later, a chat message).
 
-    A blob may be bound to several correspondences: replying with or
-    forwarding an attachment re-shares its key inside the new MLS content and
-    adds a binding here, so download rights follow participation.
+    A file may be bound to several correspondences (a forward carries the
+    source's files), so download rights follow participation.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -1,13 +1,8 @@
-"""External e-mail (Internet mail) — deliberately separate from E2EE correspondence.
+"""External e-mail (Internet mail), separate from internal correspondence.
 
-Mail from or to the outside world is plaintext by nature: the server sees it
-at the moment it arrives (inbound, via the local Postfix) or leaves (outbound,
-via Brevo). It is never STORED readable:
-
-  * inbound: parsed in memory, attachments encrypted like client attachments,
-    and the content sealed to each of the recipient's active devices
-    (X25519 + HKDF + AES-GCM — the same seal the archive uses);
-  * outbound: the sender's own copy is sealed the same way after Brevo accepts it.
+Inbound mail arrives through the local Postfix, outbound leaves through
+Brevo. It is never STORED readable: content and attachments are sealed with
+the server key (apps.vault) right after parsing / after Brevo accepts it.
 
 Only routing metadata (addresses, Message-ID, times, sizes, authentication
 result) is kept in clear, like the metadata of internal correspondence.
@@ -52,25 +47,12 @@ class ExternalMessage(models.Model):
     attachment_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     read_at = models.DateTimeField(null=True, blank=True)
+    # Sealed {from, to, cc, subject, date, body, attachments, ...} (apps.vault).
+    content_enc = models.BinaryField(null=True, blank=True)
 
     class Meta:
         db_table = "external_messages"
         indexes = [models.Index(fields=["owner", "-created_at"], name="idx_ext_msg_owner_time")]
-
-
-class ExternalMessageCopy(models.Model):
-    """The message content sealed to one device of its owner."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    message = models.ForeignKey(ExternalMessage, on_delete=models.CASCADE, related_name="copies")
-    device = models.ForeignKey("accounts.TrustedDevice", on_delete=models.CASCADE, related_name="+")
-    ephemeral_pub = models.BinaryField(max_length=32)
-    iv = models.BinaryField(max_length=12)
-    ciphertext = models.BinaryField()
-
-    class Meta:
-        db_table = "external_message_copies"
-        constraints = [models.UniqueConstraint(fields=["message", "device"], name="uq_ext_copy_device")]
 
 
 class ExternalAttachment(models.Model):

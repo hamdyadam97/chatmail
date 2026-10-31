@@ -3,6 +3,7 @@ from datetime import timedelta
 from hashlib import sha256
 
 from django.conf import settings
+from django.db.models import F
 from django.utils import timezone
 
 from ..models import TrustedDevice, UserSession
@@ -39,25 +40,22 @@ def parse_device_info(user_agent: str) -> tuple[str, str]:
 
 
 def ensure_active_device(user, request) -> TrustedDevice:
-    """Get or create the placeholder trusted_devices binding for a login.
-
-    Real device identity (Ed25519/HPKE public keys) arrives in the crypto
-    phase; for now a login binds to an active placeholder row per
-    (user, platform, browser label) so sessions have a device anchor.
-    """
+    """Get or create the trusted_devices row a login binds to: one per
+    (user, platform, browser label), so sessions have a device anchor."""
     user_agent = request.META.get("HTTP_USER_AGENT", "") if request is not None else ""
     label, platform = parse_device_info(user_agent)
-    # Only keyless placeholder rows are reused. A row carrying crypto keys is
-    # a real E2EE device: a login must never pick it up — and above all never
-    # reactivate it after the user revoked it (stolen laptop).
-    device, created = TrustedDevice.objects.get_or_create(
-        user=user,
-        device_label=label,
-        platform=platform,
-        identity_sign_pub__isnull=True,
-        defaults={"app_version": "api/1.0", "status": "active"},
+    # Rows from the old per-device-key era may repeat a label: reuse the
+    # most recently seen one.
+    device = (
+        TrustedDevice.objects.filter(user=user, device_label=label, platform=platform)
+        .order_by(F("last_seen_at").desc(nulls_last=True), "-created_at")
+        .first()
     )
-    if not created and device.status != "active":
+    if device is None:
+        device = TrustedDevice.objects.create(
+            user=user, device_label=label, platform=platform, app_version="api/1.0", status="active"
+        )
+    elif device.status != "active":
         device.status = "active"
         device.save(update_fields=["status"])
     device.last_seen_at = timezone.now()

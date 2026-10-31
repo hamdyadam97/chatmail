@@ -4,8 +4,6 @@ Every request object goes through services.get_viewable (participants of the
 correspondence only). There is no role that sees approval requests outside
 that rule.
 """
-import base64
-import binascii
 
 from django.db import transaction
 from rest_framework import serializers, status
@@ -42,11 +40,7 @@ def _decision_dict(d) -> dict:
         "slot_user_id": str(d.slot_user_id),
         "approver": _user_ref(d.approver),
         "delegated": d.delegation_id is not None,
-        "device_id": str(d.approver_device_id),
         "decided_at": d.decided_at.isoformat(),
-        # Verifiable by any participant against the directory's device key.
-        "payload": base64.b64encode(bytes(d.decision_payload)).decode(),
-        "signature": base64.b64encode(bytes(d.signature)).decode(),
     }
 
 
@@ -83,7 +77,6 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         "completed_at": req.completed_at.isoformat() if req.completed_at else None,
         "steps": steps,
         "my_slot": {"slot_user_id": slot[0], "delegated": slot[1] is not None} if slot else None,
-        "signing_context": services.SIGNING_CONTEXT.decode(),
     }
 
 
@@ -149,17 +142,7 @@ class ApprovalDetailView(APIView):
 
 
 class DecideSerializer(serializers.Serializer):
-    payload = serializers.CharField(max_length=4096)
-    signature = serializers.CharField(max_length=200)
-    device_id = serializers.UUIDField()
-
-    def validate(self, attrs):
-        try:
-            attrs["payload_raw"] = base64.b64decode(attrs["payload"], validate=True)
-            attrs["signature_raw"] = base64.b64decode(attrs["signature"], validate=True)
-        except (binascii.Error, ValueError):
-            raise serializers.ValidationError("base64 غير صالح.")
-        return attrs
+    decision = serializers.ChoiceField(choices=list(services.DECISIONS))
 
 
 class DecideView(APIView):
@@ -169,13 +152,8 @@ class DecideView(APIView):
     def post(self, request, request_id):
         serializer = DecideSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
         decision = services.decide(
-            user=request.user,
-            request_id=request_id,
-            payload=data["payload_raw"],
-            signature=data["signature_raw"],
-            device_id=data["device_id"],
+            user=request.user, request_id=request_id, decision=serializer.validated_data["decision"]
         )
         return Response(request_dict(decision.request, request.user), status=status.HTTP_201_CREATED)
 

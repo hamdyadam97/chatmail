@@ -1,11 +1,9 @@
 """Users API under /api/v1/users/.
 
-SEC-08 ISOLATION CONTRACT: this module manages login credentials ONLY.
-It has no import path to any crypto store: user_crypto_identities does
-not exist yet, and trusted_devices crypto columns (identity_sign_pub /
-kem_pub) are not part of any flow here. Password reset must never touch
-device key material; the SEC-08 test locks this with a canary on
-trusted_devices rows.
+This module manages accounts and login credentials. Password reset gives
+login access only: what a user can READ still derives solely from
+participation (correspondence / chat / announcement rows), never from
+anything set here.
 """
 from django.db import transaction
 from django.utils import timezone

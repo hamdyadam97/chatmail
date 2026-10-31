@@ -13,7 +13,6 @@ from .correspondence_utils import (  # noqa: F401  (fixtures)
     CORR_URL,
     _blob_root,
     make_employee,
-    mls_payload,
     office,
     prepare_and_send,
     reply,
@@ -32,11 +31,10 @@ def activity(api_client, user_factory, office, branch_a, branch_a2):
     """office (4 employees in branch_a) exchanges correspondence; a manager
     of branch_a; one lone employee in branch_a2 (a 'small unit')."""
     o = office
-    payload = b"\x14" + CANARY.encode() + mls_payload(16)
     yesterday = (timezone.localdate() - timedelta(days=1)).isoformat()
-    overdue = prepare_and_send(api_client, o["h_s"], o["d_s"], [o["r1"]], payload=payload, due_date=yesterday)
-    answered = prepare_and_send(api_client, o["h_s"], o["d_s"], [o["r1"]], [o["r2"]], payload=payload)
-    assert reply(api_client, o["h_r1"], answered["id"], o["d_r1"], payload=payload).status_code == 201
+    overdue = prepare_and_send(api_client, o["h_s"], [o["r1"]], subject=CANARY, due_date=yesterday)
+    answered = prepare_and_send(api_client, o["h_s"], [o["r1"]], [o["r2"]], body=CANARY)
+    assert reply(api_client, o["h_r1"], answered["id"], body=CANARY).status_code == 201
     assert api_client.post(f"{CORR_URL}{answered['id']}/close/", **o["h_s"]).status_code == 200
     manager = make_employee(user_factory, "rep_mgr", branch_a)
     assign_role(manager, "branch_manager", institute=branch_a.institute, branch=branch_a)
@@ -120,7 +118,7 @@ def test_bad_period_is_rejected(api_client, activity, branch_a):
 def test_health_for_report_viewers_only(api_client, activity):
     assert api_client.get(f"{REPORT_URL}health/", **activity["h_s"]).status_code == 403
     health = api_client.get(f"{REPORT_URL}health/", **activity["h_mgr"]).json()
-    assert set(health["checks"]) == {"database", "cache", "realtime", "blob_storage", "key_transparency"}
+    assert set(health["checks"]) == {"database", "cache", "realtime", "blob_storage", "content_key"}
     assert health["checks"]["database"]["ok"] is True
 
 

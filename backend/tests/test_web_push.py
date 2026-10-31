@@ -10,11 +10,10 @@ from apps.notifications.models import NotificationPreference, PushSubscription
 
 from .correspondence_utils import (  # noqa: F401  (fixtures)
     _blob_root,
-    mls_payload,
     office,
     prepare_and_send,
 )
-from .messaging_utils import auth, create_conversation, make_device, post_message
+from .messaging_utils import auth, create_conversation, post_message
 
 PUSH_URL = "/api/v1/notifications/push/"
 CANARY = "CANARY-push-91c4-subject"
@@ -80,9 +79,8 @@ def test_subscribe_rejects_non_push_hosts(api_client, office, endpoint):
 
 @pytest.mark.django_db
 def test_correspondence_push_is_generic(api_client, office, sent, django_capture_on_commit_callbacks):
-    payload = b"\x14" + CANARY.encode() + mls_payload(16)
     with django_capture_on_commit_callbacks(execute=True):
-        prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]], payload=payload)
+        prepare_and_send(api_client, office["h_s"], [office["r1"]], subject=CANARY, body=CANARY)
     assert len(sent) == 1
     users, body = sent[0]
     assert users == {str(office["r1"].id)}
@@ -95,7 +93,7 @@ def test_correspondence_push_is_generic(api_client, office, sent, django_capture
 def test_muted_kind_is_not_pushed(api_client, office, sent, django_capture_on_commit_callbacks):
     NotificationPreference.objects.create(user=office["r1"], prefs={"muted_kinds": ["new_correspondence"]})
     with django_capture_on_commit_callbacks(execute=True):
-        prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
+        prepare_and_send(api_client, office["h_s"], [office["r1"]])
     assert sent == []
 
 
@@ -104,12 +102,8 @@ def test_chat_message_pushes_other_members_only(api_client, user_factory, sent, 
     a, b = user_factory("push_a"), user_factory("push_b")
     h_a = auth(api_client, "push_a")
     conv_id = create_conversation(api_client, h_a, "dm", [b.id]).json()["id"]
-    dev_a = make_device(a)
-    assert post_message(api_client, h_a, conv_id, "commit", mls_payload(), sender_device_id=dev_a.id).status_code == 201
-    assert sent == []  # handshakes are silent
     with django_capture_on_commit_callbacks(execute=True):
-        r = post_message(api_client, h_a, conv_id, "application", b"\x14" + CANARY.encode() + mls_payload(16),
-                         sender_device_id=dev_a.id)
+        r = post_message(api_client, h_a, conv_id, CANARY)
     assert r.status_code == 201, r.json()
     users, body = sent[0]
     assert users == {str(b.id)}

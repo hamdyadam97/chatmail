@@ -4,16 +4,18 @@
 
 Checks (exit code 1 if any fails):
   1. migrations    — no unapplied migration (schema matches the code).
-  2. transparency  — the key-transparency hash chain and log signatures verify.
-  3. blobs         — every encrypted attachment exists in ENCRYPTED_BLOB_ROOT
-                     with the recorded size and SHA-256 (DB and file backup
-                     belong together).
-  4. ciphertext    — every MLS payload is binary wire data; no stored message
-                     decodes as text (no plaintext slipped in — SEC-03).
+  2. content_key   — CONTENT_ENCRYPTION_KEY opens the most recent stored
+                     messages and files (a restore with the wrong key would
+                     otherwise look fine and lose every message).
+  3. blobs         — every attachment exists in ENCRYPTED_BLOB_ROOT with the
+                     recorded size and SHA-256 (DB and file backup belong
+                     together).
+  4. ciphertext    — every stored message is a sealed blob (nothing readable
+                     slipped in — SEC-03).
   5. sequences     — every issued reference number is ≤ its counter, so new
                      numbers after a restore cannot collide with old ones.
 
-Nothing here decrypts anything or prints any payload.
+Nothing is printed except counts and identifiers.
 """
 import hashlib
 import re
@@ -33,7 +35,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         checks = [
             ("migrations", self._migrations),
-            ("transparency", self._transparency),
+            ("content_key", self._content_key),
             ("ciphertext", self._ciphertext),
             ("sequences", self._sequences),
         ]
@@ -62,15 +64,20 @@ class Command(BaseCommand):
             return False, f"{len(pending)} unapplied migration(s)"
         return True, "schema up to date"
 
-    def _transparency(self):
-        from apps.crypto_keys.models import KeyTransparencyEvent
-        from apps.crypto_keys.transparency import verify_all_chains
+    def _content_key(self):
+        from apps import vault
+        from apps.correspondence.models import StoredFile
+        from apps.messaging.models import Message
 
-        events = list(KeyTransparencyEvent.objects.order_by("id"))
-        problems = verify_all_chains(events)
-        if problems:
-            return False, f"{len(problems)} problem(s), first: {problems[0]}"
-        return True, f"{len(events)} event(s) verified"
+        sample = 50
+        messages = list(Message.objects.order_by("-created_at")[:sample])
+        bad = [m.id for m in messages
+               if _opens(vault, m.content_enc, "message", m.conversation_id) is False]
+        files = list(StoredFile.objects.filter(meta_enc__isnull=False).order_by("-uploaded_at")[:sample])
+        bad += [f.id for f in files if _opens(vault, f.meta_enc, "file-meta", f.id) is False]
+        if bad:
+            return False, f"{len(bad)} recent item(s) do not open with CONTENT_ENCRYPTION_KEY, first: {bad[0]}"
+        return True, f"key opens {len(messages)} recent message(s) and {len(files)} file(s)"
 
     def _blobs(self):
         from apps.correspondence.models import StoredFile
@@ -97,18 +104,18 @@ class Command(BaseCommand):
         return True, f"{count} blob(s) present with matching SHA-256"
 
     def _ciphertext(self):
+        from apps import vault
         from apps.messaging.models import Message
-        from apps.messaging.services import payload_is_mls_binary
 
         bad = 0
         total = 0
-        for payload in Message.objects.values_list("mls_payload", flat=True).iterator():
+        for blob in Message.objects.values_list("content_enc", flat=True).iterator():
             total += 1
-            if not payload_is_mls_binary(bytes(payload)):
+            if not bytes(blob).startswith(vault.VERSION):
                 bad += 1
         if bad:
-            return False, f"{bad}/{total} stored message(s) are not binary MLS data"
-        return True, f"{total} message(s) are binary ciphertext"
+            return False, f"{bad}/{total} stored message(s) are not sealed"
+        return True, f"{total} message(s) are sealed"
 
     def _sequences(self):
         from apps.announcements.models import Announcement, AnnouncementSequence
@@ -146,3 +153,11 @@ class Command(BaseCommand):
         if issues:
             return False, f"{len(issues)} counter(s) behind issued numbers, first: {issues[0]}"
         return True, "reference counters ahead of every issued number"
+
+
+def _opens(vault, blob, purpose, owner) -> bool:
+    try:
+        vault.open_(blob, purpose=purpose, owner=owner)
+        return True
+    except vault.VaultError:
+        return False

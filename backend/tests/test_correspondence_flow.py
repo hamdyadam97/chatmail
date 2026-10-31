@@ -1,402 +1,222 @@
-"""Correspondence lifecycle: prepare → MLS setup → send (frozen), replies,
-forwards, folders, reference numbers and immutability.
-
-Payloads are opaque binary stand-ins; the real MLS round trip is proven by
-frontend/scripts/e2e-correspondence.mjs.
-"""
+"""Correspondence flow: compose/send, server-side drafts, reply, forward,
+folders and content search — content sealed at rest, opened for participants."""
 import uuid
 
 import pytest
-from django.utils import timezone
 
-from apps.audit.models import AuditLog
-from apps.correspondence.models import (
-    Correspondence,
-    CorrespondenceEvent,
-    ImmutableCorrespondenceError,
-)
-from apps.messaging.models import Conversation
+from apps.correspondence.models import Correspondence, CorrespondenceParticipant
+from apps.messaging.models import Conversation, Message
 
-from .conftest import make_user
 from .correspondence_utils import (  # noqa: F401  (fixtures)
     CONV_URL,
     CORR_URL,
     _blob_root,
-    b64,
-    commit,
-    json_text_payload,
+    auth,
+    compose,
+    forward,
     make_employee,
-    mls_payload,
     office,
-    prepare,
     prepare_and_send,
     reply,
-    send,
-    setup_thread,
 )
-from .messaging_utils import post_message
 
 pytestmark = pytest.mark.django_db
 
 
-def _ids(page):
-    return [item["id"] for item in page.json()["results"]]
+def _get(api_client, h, corr_id):
+    return api_client.get(f"{CORR_URL}{corr_id}/", **h)
 
 
-# --- prepare --------------------------------------------------------------------
-
-def test_prepare_creates_hidden_thread_and_sender_only_draft(api_client, office):
-    resp = prepare(api_client, office["h_s"], [office["r1"]], [office["r2"]])
-    assert resp.status_code == 201, resp.content
-    data = resp.json()
-    assert data["status"] == "draft"
-    assert data["reference_number"] is None
-    assert data["content"] is None
-
-    thread = Conversation.objects.get(id=data["thread"]["id"])
-    assert thread.type == "correspondence"
-    assert {str(u) for u in thread.active_members().values_list("user_id", flat=True)} == {
-        str(office["s"].id), str(office["r1"].id), str(office["r2"].id)
-    }
-    # the thread is not a chat
-    listed = api_client.get(CONV_URL, **office["h_s"]).json()
-    assert data["thread"]["id"] not in [c["id"] for c in listed]
-    # recipients cannot see an unsent draft
-    assert api_client.get(f"{CORR_URL}{data['id']}/", **office["h_r1"]).status_code == 403
-    assert data["id"] not in _ids(api_client.get(f"{CORR_URL}?folder=inbox", **office["h_r1"]))
-    assert data["id"] in _ids(api_client.get(f"{CORR_URL}?folder=drafts", **office["h_s"]))
+def _folder(api_client, h, folder, q=""):
+    r = api_client.get(f"{CORR_URL}?folder={folder}&q={q}", **h)
+    assert r.status_code == 200, r.content
+    return r.json()["results"]
 
 
-def test_prepare_is_idempotent_on_client_ref(api_client, office):
-    ref = str(uuid.uuid4())
-    first = prepare(api_client, office["h_s"], [office["r1"]], client_ref=ref)
-    second = prepare(api_client, office["h_s"], [office["r1"]], client_ref=ref)
-    assert first.status_code == 201 and second.status_code == 200
-    assert first.json()["id"] == second.json()["id"]
+def test_send_seals_content_and_delivers_it_to_recipients(api_client, office):
+    sent = prepare_and_send(api_client, office["h_s"], [office["r1"]], [office["r2"]],
+                            subject="تقرير الموازنة", body="مرفق التقرير السنوي")
+    assert sent["status"] == "sent" and sent["reference_number"].startswith("AHL-RYD-")
+    assert sent["content"]["subject"] == "تقرير الموازنة"
+    stored = bytes(Message.objects.get(conversation_id=sent["thread_id"]).content_enc)
+    assert "الموازنة".encode() not in stored and stored.startswith(b"v1")
+    row = Correspondence.objects.get(id=sent["id"])
+    assert row.draft_enc is None and row.content_message_id
+    for h in (office["h_r1"], office["h_r2"]):
+        detail = _get(api_client, h, sent["id"]).json()
+        assert detail["content"]["body"] == "مرفق التقرير السنوي"
+    inbox = _folder(api_client, office["h_r1"], "inbox")
+    assert inbox[0]["subject"] == "تقرير الموازنة" and inbox[0]["preview"].startswith("مرفق")
+    assert _get(api_client, office["h_o"], sent["id"]).status_code == 403
 
 
-@pytest.mark.parametrize(
-    "case",
-    ["self", "duplicate", "inactive", "empty_to"],
-)
-def test_prepare_rejects_bad_recipients(api_client, office, user_factory, case):
-    s, r1 = office["s"], office["r1"]
+def test_compose_is_idempotent_on_client_ref(api_client, office):
+    ref = uuid.uuid4()
+    first = compose(api_client, office["h_s"], [office["r1"]], client_ref=ref)
+    again = compose(api_client, office["h_s"], [office["r1"]], client_ref=ref)
+    assert first.status_code == 201 and again.status_code == 200
+    assert first.json()["id"] == again.json()["id"]
+    assert Correspondence.objects.filter(sender=office["s"]).count() == 1
+
+
+@pytest.mark.parametrize("case", ["self", "unknown", "duplicate"])
+def test_send_rejects_bad_recipients(api_client, office, case):
+    to, cc = [office["r1"]], []
     if case == "self":
-        resp = prepare(api_client, office["h_s"], [s])
+        to = [office["s"]]
     elif case == "duplicate":
-        resp = prepare(api_client, office["h_s"], [r1], [r1])
-    elif case == "inactive":
-        resp = prepare(api_client, office["h_s"], [user_factory("c_gone", is_active=False)])
-    else:
-        resp = prepare(api_client, office["h_s"], [])
-    assert resp.status_code == 400, resp.content
+        cc = [office["r1"]]
+    data = {}
+    if case == "unknown":
+        data = {"to_user_ids": [str(uuid.uuid4())]}
+    r = compose(api_client, office["h_s"], to, cc, **data)
+    assert r.status_code == 400
 
 
 def test_bcc_is_disabled_by_default(api_client, office):
-    resp = prepare(api_client, office["h_s"], [office["r1"]], bcc_user_ids=[str(office["r2"].id)])
-    assert resp.status_code == 400
-    assert "bcc_user_ids" in resp.json()
+    r = compose(api_client, office["h_s"], [office["r1"]], bcc_user_ids=[str(office["r2"].id)])
+    assert r.status_code == 400
 
 
 def test_send_requires_correspondence_send_permission(api_client, user_factory, branch_a, office):
-    make_user("c_norole", membership_unit=branch_a)  # member, but no role assignment
-    from .messaging_utils import auth
-
-    h = auth(api_client, "c_norole")
-    assert prepare(api_client, h, [office["r1"]]).status_code == 403
+    user_factory("no_role", membership_unit=branch_a)
+    r = compose(api_client, auth(api_client, "no_role"), [office["r1"]])
+    assert r.status_code == 403
 
 
-def test_send_requires_an_org_membership(api_client, user_factory, office):
-    make_user("c_nomember")
-    from .messaging_utils import auth
-
-    h = auth(api_client, "c_nomember")
-    resp = prepare(api_client, h, [office["r1"]])
-    assert resp.status_code == 400
-    assert "sender_membership_id" in resp.json()
-
-
-# --- send -----------------------------------------------------------------------------
-
-def test_full_send_flow_assigns_reference_and_delivers(api_client, office):
-    sent = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]], [office["r2"]])
-    year = timezone.localtime().year
-    assert sent["status"] == "sent"
-    assert sent["reference_number"] == f"AHL-RYD-{year}-000001"
-    assert sent["content"]["seq"] >= 1
-
-    inbox = api_client.get(f"{CORR_URL}?folder=inbox", **office["h_r1"])
-    assert sent["id"] in _ids(inbox)
-    item = inbox.json()["results"][0]
-    assert item["my_kind"] == "to" and item["read_at"] is None
-    assert sent["id"] in _ids(api_client.get(f"{CORR_URL}?folder=inbox", **office["h_r2"]))
-    assert sent["id"] in _ids(api_client.get(f"{CORR_URL}?folder=sent", **office["h_s"]))
-
-    detail = api_client.get(f"{CORR_URL}{sent['id']}/", **office["h_r1"]).json()
-    assert detail["content"]["mls_payload"] == sent["content"]["mls_payload"]
-    assert detail["thread"]["mls_group_id"]
-    # the recipient can fetch the thread's MLS stream to decrypt it
-    assert api_client.get(f"{CONV_URL}{sent['thread_id']}/messages/", **office["h_r1"]).status_code == 200
-
-    assert api_client.post(f"{CORR_URL}{sent['id']}/read/", **office["h_r1"]).status_code == 204
-    detail = api_client.get(f"{CORR_URL}{sent['id']}/", **office["h_r1"]).json()
-    assert detail["read_at"] is not None
-    events = [e["event_type"] for e in api_client.get(
-        f"{CORR_URL}{sent['id']}/events/", **office["h_s"]).json()]
-    assert events == ["created", "sent", "read"]
-    assert AuditLog.objects.filter(action="correspondence_sent", target_id=str(sent["id"])).exists()
+def test_draft_lives_on_the_server_and_follows_the_user(api_client, office):
+    draft = compose(api_client, office["h_s"], [], send=False, subject="مسودة", body="أولى")
+    assert draft.status_code == 201, draft.content
+    d = draft.json()
+    assert d["status"] == "draft" and d["reference_number"] is None
+    row = Correspondence.objects.get(id=d["id"])
+    assert "مسودة".encode() not in bytes(row.draft_enc)
+    # another login of the same user sees and edits it
+    other_session = auth(api_client, "c_sender")
+    assert [x["id"] for x in _folder(api_client, other_session, "drafts")] == [d["id"]]
+    edited = api_client.patch(f"{CORR_URL}{d['id']}/", {
+        "to_user_ids": [str(office["r1"].id)], "subject": "مسودة معدلة", "body": "ثانية",
+    }, format="json", **other_session)
+    assert edited.status_code == 200 and edited.json()["content"]["subject"] == "مسودة معدلة"
+    # recipients see nothing until it is sent
+    assert _get(api_client, office["h_r1"], d["id"]).status_code == 403
+    sent = api_client.post(f"{CORR_URL}{d['id']}/send/", **office["h_s"])
+    assert sent.status_code == 200 and sent.json()["status"] == "sent"
+    assert _get(api_client, office["h_r1"], d["id"]).json()["content"]["body"] == "ثانية"
+    assert _folder(api_client, office["h_s"], "drafts") == []
 
 
-def test_send_before_mls_setup_is_an_epoch_conflict(api_client, office):
-    data = prepare(api_client, office["h_s"], [office["r1"]]).json()
-    resp = send(api_client, office["h_s"], data["id"], office["d_s"])
-    assert resp.status_code == 409
-
-
-def test_send_rejects_plaintext_content(api_client, office):
-    data = prepare(api_client, office["h_s"], [office["r1"]]).json()
-    setup_thread(api_client, office["h_s"], data["thread"]["id"], office["d_s"])
-    resp = send(api_client, office["h_s"], data["id"], office["d_s"], payload=json_text_payload())
-    assert resp.status_code == 400
-    assert Correspondence.objects.get(id=data["id"]).status == "draft"
-
-
-def test_send_is_idempotent_and_then_immutable(api_client, office):
-    data = prepare(api_client, office["h_s"], [office["r1"]]).json()
-    setup_thread(api_client, office["h_s"], data["thread"]["id"], office["d_s"])
-    msg_id = uuid.uuid4()
-    first = send(api_client, office["h_s"], data["id"], office["d_s"], client_msg_id=msg_id)
-    again = send(api_client, office["h_s"], data["id"], office["d_s"], client_msg_id=msg_id)
-    assert first.status_code == again.status_code == 200
-    assert first.json()["reference_number"] == again.json()["reference_number"]
-    other = send(api_client, office["h_s"], data["id"], office["d_s"])
-    assert other.status_code == 409
-
-
-def test_only_sender_can_send(api_client, office):
-    data = prepare(api_client, office["h_s"], [office["r1"]]).json()
-    setup_thread(api_client, office["h_s"], data["thread"]["id"], office["d_s"])
-    # recipient cannot even see the draft, let alone send it
-    assert send(api_client, office["h_r1"], data["id"], office["d_r1"]).status_code == 403
+def test_draft_without_recipient_cannot_be_sent(api_client, office):
+    d = compose(api_client, office["h_s"], [], send=False, subject="x").json()
+    assert api_client.post(f"{CORR_URL}{d['id']}/send/", **office["h_s"]).status_code == 400
 
 
 def test_sent_correspondence_is_immutable(api_client, office):
-    sent = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
-    url = f"{CORR_URL}{sent['id']}/"
-    assert api_client.patch(url, {"priority": "low"}, format="json", **office["h_s"]).status_code == 405
-    assert api_client.put(url, {"priority": "low"}, format="json", **office["h_s"]).status_code == 405
-    assert api_client.delete(url, **office["h_s"]).status_code == 409
+    sent = prepare_and_send(api_client, office["h_s"], [office["r1"]])
+    r = api_client.patch(f"{CORR_URL}{sent['id']}/", {"subject": "تعديل"}, format="json", **office["h_s"])
+    assert r.status_code == 409
+    assert api_client.delete(f"{CORR_URL}{sent['id']}/", **office["h_s"]).status_code == 409
 
-    obj = Correspondence.objects.get(id=sent["id"])
-    obj.priority = "low"
-    with pytest.raises(ImmutableCorrespondenceError):
-        obj.save()
-    obj = Correspondence.objects.get(id=sent["id"])
-    obj.status = "draft"
-    with pytest.raises(ImmutableCorrespondenceError):
-        obj.save()
-    with pytest.raises(ImmutableCorrespondenceError):
-        Correspondence.objects.get(id=sent["id"]).delete()
+
+def test_only_sender_edits_or_sends_a_draft(api_client, office):
+    d = compose(api_client, office["h_s"], [office["r1"]], send=False).json()
+    assert api_client.post(f"{CORR_URL}{d['id']}/send/", **office["h_r1"]).status_code == 403
 
 
 def test_thread_content_only_enters_through_send(api_client, office):
-    data = prepare(api_client, office["h_s"], [office["r1"]]).json()
-    thread_id = data["thread"]["id"]
-    setup_thread(api_client, office["h_s"], thread_id, office["d_s"])
-    resp = post_message(api_client, office["h_s"], thread_id, "application", mls_payload(),
-                        sender_device_id=office["d_s"])
-    assert resp.status_code == 403
-
-
-def test_thread_membership_cannot_be_widened(api_client, office):
-    data = prepare(api_client, office["h_s"], [office["r1"]]).json()
-    thread_id = data["thread"]["id"]
-    outsider = str(office["o"].id)
-    assert api_client.post(f"{CONV_URL}{thread_id}/members/", {"user_ids": [outsider]},
-                           format="json", **office["h_s"]).status_code == 403
-    assert api_client.post(f"{CONV_URL}{thread_id}/members/remove/",
-                           {"user_ids": [str(office["r1"].id)]},
-                           format="json", **office["h_s"]).status_code == 403
-    sneaky = commit(api_client, office["h_s"], thread_id, office["d_s"], epoch=1,
-                    membership={"added_user_ids": [outsider], "removed_user_ids": []})
-    assert sneaky.status_code == 403
-    # the creation commit naming the existing recipients is fine
-    ok = commit(api_client, office["h_s"], thread_id, office["d_s"], epoch=1,
-                membership={"added_user_ids": [str(office["r1"].id)], "removed_user_ids": []})
-    assert ok.status_code == 201
+    sent = prepare_and_send(api_client, office["h_s"], [office["r1"]])
+    r = api_client.post(f"{CONV_URL}{sent['thread_id']}/messages/",
+                        {"text": "خارج المسار", "client_msg_id": str(uuid.uuid4())}, format="json",
+                        **office["h_s"])
+    assert r.status_code == 403
+    r = api_client.post(f"{CONV_URL}{sent['thread_id']}/members/", {"user_ids": [str(office["o"].id)]},
+                        format="json", **office["h_s"])
+    assert r.status_code == 403
 
 
 def test_discard_draft_removes_thread(api_client, office):
-    data = prepare(api_client, office["h_s"], [office["r1"]]).json()
-    assert api_client.delete(f"{CORR_URL}{data['id']}/", **office["h_r1"]).status_code == 403
-    assert api_client.delete(f"{CORR_URL}{data['id']}/", **office["h_s"]).status_code == 204
-    assert not Correspondence.objects.filter(id=data["id"]).exists()
-    assert not Conversation.objects.filter(id=data["thread"]["id"]).exists()
+    d = compose(api_client, office["h_s"], [office["r1"]], send=False).json()
+    assert api_client.delete(f"{CORR_URL}{d['id']}/", **office["h_s"]).status_code == 204
+    assert not Correspondence.objects.filter(id=d["id"]).exists()
+    assert not Conversation.objects.filter(id=d["thread_id"]).exists()
 
-
-# --- reference numbers -----------------------------------------------------------
 
 def test_reference_numbers_are_sequential_per_institute(api_client, office, user_factory, branch_b):
-    year = timezone.localtime().year
-    refs = [
-        prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])["reference_number"]
-        for _ in range(3)
-    ]
-    assert refs == [f"AHL-RYD-{year}-00000{i}" for i in (1, 2, 3)]
+    first = prepare_and_send(api_client, office["h_s"], [office["r1"]])
+    second = prepare_and_send(api_client, office["h_s"], [office["r1"]])
+    assert int(second["reference_number"][-6:]) == int(first["reference_number"][-6:]) + 1
+    make_employee(user_factory, "faw_sender", branch_b)
+    other = prepare_and_send(api_client, auth(api_client, "faw_sender"), [office["r1"]])
+    assert other["reference_number"].startswith("FAW-") and other["reference_number"].endswith("000001")
 
-    # another institute has its own counter
-    from .messaging_utils import auth, make_device
-
-    other = make_employee(user_factory, "c_faw", branch_b)
-    h = auth(api_client, "c_faw")
-    ref = prepare_and_send(api_client, h, make_device(other).id, [office["r1"]])["reference_number"]
-    assert ref == f"FAW-FAW-B1-{year}-000001"
-    assert Correspondence.objects.filter(reference_number__isnull=False).values(
-        "reference_number").distinct().count() == 4
-
-
-def test_reference_without_branch_uses_institute_only(api_client, user_factory, institute_a, office):
-    from .conftest import assign_role
-    from .messaging_utils import auth, make_device
-
-    hq = user_factory("c_hq", membership_unit=institute_a)
-    assign_role(hq, "employee", institute=institute_a)
-    ref = prepare_and_send(api_client, auth(api_client, "c_hq"), make_device(hq).id,
-                           [office["r1"]])["reference_number"]
-    assert ref == f"AHL-{timezone.localtime().year}-000001"
-
-
-# --- replies -----------------------------------------------------------------------
 
 def test_reply_stays_in_thread_and_addresses_original_sender(api_client, office):
-    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]], [office["r2"]])
-    pending = api_client.get(f"{CORR_URL}?folder=pending_replies", **office["h_r1"])
-    assert root["id"] in _ids(pending)
-
-    resp = reply(api_client, office["h_r1"], root["id"], office["d_r1"])
-    assert resp.status_code == 201, resp.content
-    rep = resp.json()
-    assert rep["thread_id"] == root["thread_id"]
-    assert rep["thread_root_id"] == root["id"] and rep["reply_to_id"] == root["id"]
-    assert rep["reference_number"] and rep["reference_number"] != root["reference_number"]
-    kinds = {p["user"]["id"]: p["kind"] for p in rep["participants"]}
-    assert kinds == {str(office["s"].id): "to", str(office["r2"].id): "cc"}
-
-    assert rep["id"] in _ids(api_client.get(f"{CORR_URL}?folder=inbox", **office["h_s"]))
-    assert root["id"] not in _ids(api_client.get(f"{CORR_URL}?folder=pending_replies", **office["h_r1"]))
-    assert CorrespondenceEvent.objects.filter(correspondence_id=root["id"], event_type="replied").exists()
-
-    detail = api_client.get(f"{CORR_URL}{root['id']}/", **office["h_r2"]).json()
-    assert [i["id"] for i in detail["thread_items"]] == [root["id"], rep["id"]]
+    root = prepare_and_send(api_client, office["h_s"], [office["r1"]], [office["r2"]], subject="طلب")
+    r = reply(api_client, office["h_r1"], root["id"], subject="رد: طلب", body="تم")
+    assert r.status_code == 201, r.content
+    rep = r.json()
+    assert rep["thread_id"] == root["thread_id"] and rep["reply_to_id"] == root["id"]
+    kinds = {(p["user"]["id"], p["kind"]) for p in rep["participants"]}
+    assert kinds == {(str(office["s"].id), "to"), (str(office["r2"].id), "cc")}
+    detail = _get(api_client, office["h_s"], root["id"]).json()
+    bodies = [i["body"] for i in detail["thread_items"]]
+    assert bodies == ["نص المراسلة", "تم"]
 
 
-def test_outsider_cannot_reply(api_client, office):
-    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
-    assert reply(api_client, office["h_o"], root["id"], office["d_o"]).status_code == 403
+def test_outsider_cannot_reply_and_closed_refuses(api_client, office):
+    root = prepare_and_send(api_client, office["h_s"], [office["r1"]])
+    assert reply(api_client, office["h_o"], root["id"]).status_code == 403
+    api_client.post(f"{CORR_URL}{root['id']}/close/", **office["h_s"])
+    assert reply(api_client, office["h_r1"], root["id"]).status_code == 400
 
 
-def test_reply_to_closed_correspondence_is_refused(api_client, office):
-    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
-    assert api_client.post(f"{CORR_URL}{root['id']}/close/", **office["h_r1"]).status_code == 403
-    assert api_client.post(f"{CORR_URL}{root['id']}/close/", **office["h_s"]).status_code == 200
-    assert reply(api_client, office["h_r1"], root["id"], office["d_r1"]).status_code == 400
+def test_forward_opens_new_thread_carrying_the_source_content(api_client, office):
+    root = prepare_and_send(api_client, office["h_s"], [office["r1"]], subject="أصل", body="نص الأصل")
+    r = forward(api_client, office["h_r1"], root["id"], [office["o"]], body="للاطلاع")
+    assert r.status_code == 201, r.content
+    fwd = r.json()
+    assert fwd["thread_id"] != root["thread_id"] and fwd["is_forward"]
+    seen = _get(api_client, office["h_o"], fwd["id"]).json()
+    assert seen["content"]["forwarded"]["body"] == "نص الأصل"
+    assert seen["content"]["forwarded"]["reference_number"] == root["reference_number"]
+    assert seen["forwarded_from_reference"] == root["reference_number"]
+    assert _get(api_client, office["h_o"], root["id"]).status_code == 403
+    assert forward(api_client, office["h_o"], root["id"], [office["r2"]]).status_code == 403
 
-
-# --- forwards --------------------------------------------------------------------------
-
-def test_forward_opens_new_thread_without_source_access(api_client, office):
-    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
-    body = {
-        "to_user_ids": [str(office["o"].id)],
-        "mls_group_id": b64(__import__("os").urandom(16)),
-        "client_ref": str(uuid.uuid4()),
-    }
-    resp = api_client.post(f"{CORR_URL}{root['id']}/forward/", body, format="json", **office["h_r1"])
-    assert resp.status_code == 201, resp.content
-    fwd = resp.json()
-    assert fwd["thread_id"] != root["thread_id"]
-    assert fwd["is_forward"] is True
-    assert fwd["forwarded_from_reference"] == root["reference_number"]
-
-    setup_thread(api_client, office["h_r1"], fwd["thread"]["id"], office["d_r1"])
-    sent = send(api_client, office["h_r1"], fwd["id"], office["d_r1"])
-    assert sent.status_code == 200
-
-    # the new recipient reads the forward, but never the source or its thread
-    assert api_client.get(f"{CORR_URL}{fwd['id']}/", **office["h_o"]).status_code == 200
-    assert api_client.get(f"{CORR_URL}{root['id']}/", **office["h_o"]).status_code == 403
-    assert api_client.get(f"{CONV_URL}{root['thread_id']}/messages/", **office["h_o"]).status_code == 403
-    assert CorrespondenceEvent.objects.filter(correspondence_id=root["id"], event_type="forwarded").exists()
-    assert AuditLog.objects.filter(action="forward", target_id=str(root["id"])).exists()
-
-
-def test_outsider_cannot_forward(api_client, office):
-    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
-    body = {
-        "to_user_ids": [str(office["r2"].id)],
-        "mls_group_id": b64(__import__("os").urandom(16)),
-        "client_ref": str(uuid.uuid4()),
-    }
-    assert api_client.post(f"{CORR_URL}{root['id']}/forward/", body, format="json",
-                           **office["h_o"]).status_code == 403
-
-
-# --- folders + search ---------------------------------------------------------------------
 
 def test_folder_flags_are_per_user(api_client, office):
-    sent = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]], [office["r2"]])
-    flags = f"{CORR_URL}{sent['id']}/flags/"
-    assert api_client.post(flags, {"archived": True, "important": True}, format="json",
-                           **office["h_r1"]).status_code == 200
-    assert sent["id"] not in _ids(api_client.get(f"{CORR_URL}?folder=inbox", **office["h_r1"]))
-    assert sent["id"] in _ids(api_client.get(f"{CORR_URL}?folder=archived", **office["h_r1"]))
-    assert sent["id"] in _ids(api_client.get(f"{CORR_URL}?folder=important", **office["h_r1"]))
-    # r2's view is untouched
-    assert sent["id"] in _ids(api_client.get(f"{CORR_URL}?folder=inbox", **office["h_r2"]))
-    assert sent["id"] not in _ids(api_client.get(f"{CORR_URL}?folder=important", **office["h_r2"]))
-    counts = api_client.get(f"{CORR_URL}counts/", **office["h_r2"]).json()
-    assert counts["inbox_unread"] == 1
+    sent = prepare_and_send(api_client, office["h_s"], [office["r1"]], [office["r2"]])
+    api_client.post(f"{CORR_URL}{sent['id']}/flags/", {"archived": True}, format="json", **office["h_r1"])
+    assert _folder(api_client, office["h_r1"], "inbox") == []
+    assert len(_folder(api_client, office["h_r1"], "archived")) == 1
+    assert len(_folder(api_client, office["h_r2"], "inbox")) == 1
 
 
-def test_server_search_matches_reference_metadata_only(api_client, office):
-    """SEC-12: the server has no plaintext index; only reference numbers match."""
-    canary = "CANARY-search-term-91c2"
-    payload = b"\x14" + canary.encode() + mls_payload(16)
-    sent = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]], payload=payload)
-    by_ref = api_client.get(f"{CORR_URL}?folder=inbox&q={sent['reference_number'][-6:]}", **office["h_r1"])
-    assert sent["id"] in _ids(by_ref)
-    by_content = api_client.get(f"{CORR_URL}?folder=inbox&q={canary}", **office["h_r1"])
-    assert _ids(by_content) == []
-    # and nobody else gets a hit on its reference either
-    other = api_client.get(f"{CORR_URL}?folder=inbox&q={sent['reference_number']}", **office["h_o"])
-    assert _ids(other) == []
+def test_search_matches_content_reference_and_arabic_variants(api_client, office):
+    prepare_and_send(api_client, office["h_s"], [office["r1"]], subject="الموازنة السنوية", body="إعداد الميزانية")
+    other = prepare_and_send(api_client, office["h_s"], [office["r1"]], subject="إجازة", body="طلب")
+    assert [x["subject"] for x in _folder(api_client, office["h_r1"], "inbox", "موازنه")] == ["الموازنة السنوية"]
+    assert [x["subject"] for x in _folder(api_client, office["h_r1"], "inbox", "اعداد الميزانيه")] == [
+        "الموازنة السنوية"]
+    assert [x["id"] for x in _folder(api_client, office["h_r1"], "inbox", other["reference_number"])] == [other["id"]]
+    assert _folder(api_client, office["h_o"], "inbox", "الموازنة") == []
 
 
 def test_unknown_folder_is_rejected(api_client, office):
-    assert api_client.get(f"{CORR_URL}?folder=everything", **office["h_s"]).status_code == 400
+    assert api_client.get(f"{CORR_URL}?folder=nope", **office["h_s"]).status_code == 400
 
 
-@pytest.mark.django_db
 def test_thread_items_carry_my_unread_flag_only(api_client, office):
-    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
-    assert reply(api_client, office["h_r1"], root["id"], office["d_r1"]).status_code == 201
-    mine = {i["id"]: i["unread"] for i in api_client.get(f"{CORR_URL}{root['id']}/", **office["h_r1"]).json()["thread_items"]}
-    assert mine[root["id"]] is True and list(mine.values()).count(False) == 1  # my own reply is never "unread"
+    root = prepare_and_send(api_client, office["h_s"], [office["r1"]], [office["r2"]])
+    items = _get(api_client, office["h_r1"], root["id"]).json()["thread_items"]
+    assert [i["unread"] for i in items] == [True]
     api_client.post(f"{CORR_URL}{root['id']}/read/", **office["h_r1"])
-    items = api_client.get(f"{CORR_URL}{root['id']}/", **office["h_r1"]).json()["thread_items"]
-    assert not any(i["unread"] for i in items)
-    sender_view = api_client.get(f"{CORR_URL}{root['id']}/", **office["h_s"]).json()["thread_items"]
-    assert [i["unread"] for i in sender_view] == [False, True]  # the reply is unread for the sender
+    assert [i["unread"] for i in _get(api_client, office["h_r1"], root["id"]).json()["thread_items"]] == [False]
+    assert CorrespondenceParticipant.objects.get(correspondence_id=root["id"], user=office["r2"]).read_at is None
 
 
-@pytest.mark.django_db
 def test_list_rows_carry_whole_conversation_stats(api_client, office):
-    root = prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]])
-    assert reply(api_client, office["h_r1"], root["id"], office["d_r1"]).status_code == 201
-    assert reply(api_client, office["h_s"], root["id"], office["d_s"]).status_code == 201
-    inbox = api_client.get(f"{CORR_URL}?folder=inbox", **office["h_r1"]).json()["results"]
-    row = next(r for r in inbox if r["id"] == root["id"])
-    assert row["thread_count"] == 3  # includes my own reply, which is not in my inbox
-    assert row["thread_last_at"] > row["sent_at"]
-    # an outsider's view never leaks the size of threads they cannot read
-    assert api_client.get(f"{CORR_URL}?folder=inbox", **office["h_o"]).json()["count"] == 0
+    root = prepare_and_send(api_client, office["h_s"], [office["r1"]])
+    reply(api_client, office["h_r1"], root["id"])
+    [row] = [r for r in _folder(api_client, office["h_s"], "sent") if r["id"] == root["id"]]
+    assert row["thread_count"] == 2

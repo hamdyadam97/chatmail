@@ -1,29 +1,26 @@
-"""Serializers for the messaging API — output shapes only.
+"""Serializers for the messaging API.
 
-All serialized message fields are metadata or base64 ciphertext; the server
-never sees plaintext (docs/phase1/02-protocol-comparison.md §2.4).
+Message content is opened from its sealed blob for active members only
+(the views gate membership before anything here runs).
 """
 from rest_framework import serializers
 
 from ..models import Conversation, Message
-from ..services import b64encode
+from ..services import conversation_title, message_content, message_payload
 
 
 def conversation_to_dict(conversation: Conversation, membership) -> dict:
-    title_enc = b64encode(bytes(conversation.title_enc)) if conversation.title_enc else None
     return {
         "id": str(conversation.id),
         "type": conversation.type,
-        "title_enc": title_enc,
-        "title_plain": conversation.title_plain,
-        "mls_group_id": b64encode(bytes(conversation.mls_group_id)),
-        "current_epoch": conversation.current_epoch,
+        "title": conversation_title(conversation) or conversation.title_plain,
         "created_at": conversation.created_at.isoformat(),
         "joined_at": membership.joined_at.isoformat(),
         "member_count": conversation.active_members().count(),
         "my_role": membership.member_role,
-        # Names of current members (directory metadata, never content) — lets
-        # the client title a DM by the other person and label message senders.
+        "last_read_seq": membership.last_read_seq,
+        # Names of current members (directory data) — titles a DM by the
+        # other person and labels message senders.
         "members": [
             {"id": str(m.user_id), "full_name": m.user.full_name, "username": m.user.username}
             for m in conversation.active_members().select_related("user").order_by("joined_at")
@@ -32,61 +29,24 @@ def conversation_to_dict(conversation: Conversation, membership) -> dict:
 
 
 def message_to_dict(message: Message) -> dict:
-    return {
-        "seq": message.seq,
-        "kind": message.kind,
-        "sender_user_id": str(message.sender_id) if message.sender_id else None,
-        "sender_device_id": str(message.sender_device_id) if message.sender_device_id else None,
-        "epoch": message.epoch,
-        "mls_payload": b64encode(bytes(message.mls_payload)),
-        "reply_to_seq": message.reply_to.seq if message.reply_to_id else None,
-        "created_at": message.created_at.isoformat(),
-        "client_msg_id": str(message.client_msg_id),
-    }
+    return message_payload(message, message_content(message))
 
 
 class CreateConversationSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=["dm", "group"])
-    member_user_ids = serializers.ListField(
-        child=serializers.UUIDField(), allow_empty=False
-    )
-    title_enc = serializers.CharField(required=False, allow_blank=False)
-    mls_group_id = serializers.CharField()  # base64, 16-32 bytes decoded
-
-    def validate(self, attrs):
-        from ..services import b64decode
-
-        raw = b64decode(attrs["mls_group_id"])
-        if not (16 <= len(raw) <= 32):
-            raise serializers.ValidationError(
-                {"mls_group_id": "mls_group_id must be 16-32 bytes when decoded."}
-            )
-        attrs["mls_group_id_raw"] = raw
-        if "title_enc" in attrs:
-            attrs["title_enc_raw"] = b64decode(attrs["title_enc"])
-        return attrs
+    member_user_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+    title = serializers.CharField(required=False, allow_blank=True, default="", max_length=200)
 
 
 class PostMessageSerializer(serializers.Serializer):
-    kind = serializers.ChoiceField(choices=["application", "commit", "welcome", "proposal"])
-    mls_payload = serializers.CharField()  # base64 binary
+    text = serializers.CharField(max_length=20_000, trim_whitespace=False)
     client_msg_id = serializers.UUIDField()
-    epoch = serializers.IntegerField()
-    sender_device_id = serializers.UUIDField(required=False)
-    recipient_device_id = serializers.UUIDField(required=False)
-    # One welcome for many devices (stored once; see models.WelcomeRecipient).
-    recipient_device_ids = serializers.ListField(
-        child=serializers.UUIDField(), required=False, allow_empty=False, max_length=5000
-    )
     reply_to_seq = serializers.IntegerField(required=False)
-    membership = serializers.DictField(required=False)
-
-    def validate(self, attrs):
-        from ..services import b64decode
-
-        attrs["mls_payload_raw"] = b64decode(attrs["mls_payload"])
-        return attrs
 
 
 class MemberIdsSerializer(serializers.Serializer):
     user_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+
+
+class ReadSerializer(serializers.Serializer):
+    seq = serializers.IntegerField(min_value=0)

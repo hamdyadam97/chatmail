@@ -1,6 +1,6 @@
 """External mail: addresses, inbound ingestion (from the local Postfix) and
-outbound sending (through Brevo). See models.py for the storage contract:
-content is sealed to the owner's devices immediately; nothing readable is
+outbound sending (through Brevo). Content and attachments are sealed with the
+server key (apps.vault) as soon as they are parsed; nothing readable is
 written to the database, the blob store or the logs.
 """
 import json
@@ -19,13 +19,14 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 
-from apps.accounts.models import TrustedDevice, User
+from apps import vault
+from apps.accounts.models import User
 from apps.audit.services import log
 from apps.correspondence.services import store_blob
 from apps.notifications.services import notify
+from apps.textsearch import matches
 
-from . import crypto
-from .models import ExternalAttachment, ExternalMailbox, ExternalMessage, ExternalMessageCopy
+from .models import ExternalAttachment, ExternalMailbox, ExternalMessage
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class UnknownRecipient(Exception):
 
 
 class TemporaryFailure(Exception):
-    """Retry later (EX_TEMPFAIL): e.g. the recipient has no device to seal to yet."""
+    """Retry later (EX_TEMPFAIL)."""
 
 
 class SendFailed(APIException):
@@ -132,38 +133,28 @@ def recipients_map_lines() -> list[str]:
 
 # --- sealing --------------------------------------------------------------------------------
 
-def _owner_devices(user) -> list[TrustedDevice]:
-    return list(
-        TrustedDevice.objects.filter(
-            user=user, status="active", identity_sign_pub__isnull=False, kem_pub__isnull=False
-        )
-    )
+def _seal_content(message: ExternalMessage, content: dict) -> None:
+    message.content_enc = vault.seal_json(content, purpose="external-mail", owner=message.id)
+    message.save(update_fields=["content_enc"])
 
 
-def _seal_for_devices(message: ExternalMessage, devices, content: dict) -> None:
-    plaintext = json.dumps(content, ensure_ascii=False).encode()
-    ExternalMessageCopy.objects.bulk_create(
-        [
-            ExternalMessageCopy(
-                message=message,
-                device=d,
-                **dict(zip(("ephemeral_pub", "iv", "ciphertext"),
-                           crypto.seal(bytes(d.kem_pub), plaintext, crypto.copy_aad(message.id, d.id)))),
-            )
-            for d in devices
-        ]
-    )
+def message_content(message: ExternalMessage) -> dict | None:
+    if not message.content_enc:
+        return None
+    try:
+        return vault.open_json(message.content_enc, purpose="external-mail", owner=message.id)
+    except vault.VaultError:
+        return None
 
 
 def _store_attachments(owner, message: ExternalMessage, files: list[dict]) -> list[dict]:
-    keys = []
+    out = []
     for f in files:
-        blob, key, sha = crypto.encrypt_attachment(f["data"])
-        stored = store_blob(owner, blob)
+        stored = store_blob(owner, f["data"], name=f["name"], mime=f["mime"])
         ExternalAttachment.objects.create(message=message, stored_file=stored)
-        keys.append({"id": str(stored.id), "name": f["name"][:255], "mime": f["mime"][:255],
-                     "size": len(f["data"]), "key": key, "sha256": sha})
-    return keys
+        out.append({"id": str(stored.id), "name": f["name"][:255], "mime": f["mime"][:255],
+                    "size": len(f["data"])})
+    return out
 
 
 # --- inbound --------------------------------------------------------------------------------
@@ -288,9 +279,6 @@ def ingest(raw: bytes, *, recipient: str, sender: str = "") -> ExternalMessage:
     if len(raw) > settings.EXTERNAL_MAIL_MAX_BYTES:
         raise ValidationError("message too large")
     user = resolve(recipient)
-    devices = _owner_devices(user)
-    if not devices:
-        raise TemporaryFailure("recipient has no active device yet")
     p = parse(raw)
     from_domain = p["from"]["address"].rpartition("@")[2]
     auth = _authenticate(raw, p["msg"], from_domain)
@@ -298,7 +286,7 @@ def ingest(raw: bytes, *, recipient: str, sender: str = "") -> ExternalMessage:
     for f in p["files"]:
         verdict = _virus_scan(f["data"])
         (dropped if verdict == "infected" else scanned).append({**f, "scan": verdict})
-    # The original message, as an encrypted attachment (full fidelity for records).
+    # The original message, as a (sealed) attachment — full fidelity for records.
     scanned.append({"name": "original.eml", "mime": "message/rfc822", "data": raw, "scan": "n/a"})
 
     parent = None
@@ -334,7 +322,7 @@ def ingest(raw: bytes, *, recipient: str, sender: str = "") -> ExternalMessage:
             "removed_infected": [f["name"] for f in dropped],
             "virus_scan": "on" if settings.CLAMD_SOCKET else "off",
         }
-        _seal_for_devices(message, devices, content)
+        _seal_content(message, content)
         notify([user.id], "external_mail", ref_type="external_message", ref_id=message.id)
     log(actor=None, action="external_mail_received", target_type="external_message", target_id=message.id,
         metadata={"size": len(raw), "attachments": len(scanned) - 1, "auth": auth, "infected": len(dropped)})
@@ -350,7 +338,7 @@ def _clean_recipients(values, field) -> list[str]:
         if not EMAIL_RE.match(v):
             raise ValidationError({field: f"عنوان غير صالح: {v}"})
         if v.lower().endswith("@" + domain()):
-            raise ValidationError({field: "للزملاء داخل النظام استخدم المراسلات الداخلية المشفّرة."})
+            raise ValidationError({field: "للزملاء داخل النظام استخدم المراسلات الداخلية."})
         out.append(v)
     return out
 
@@ -377,7 +365,6 @@ def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_i
     files = list(attachments)
     if sum(len(f["data"]) for f in files) > settings.EXTERNAL_MAIL_MAX_SEND_BYTES:
         raise ValidationError({"attachments": "المرفقات أكبر من المسموح."})
-    devices = _owner_devices(user)
 
     parent = None
     headers = {}
@@ -422,7 +409,7 @@ def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_i
             read_at=timezone.now(),
         )
         attachments = _store_attachments(user, message, files)
-        _seal_for_devices(message, devices, {
+        _seal_content(message, {
             "v": 1, "kind": "external", "direction": "out",
             "from": {"name": user.full_name or user.username, "address": address},
             "to": [{"name": "", "address": a} for a in to_list],
@@ -436,9 +423,14 @@ def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_i
     return message
 
 
-def summary(m: ExternalMessage) -> dict:
+def summary(m: ExternalMessage, content: dict | None = None) -> dict:
+    content = content if content is not None else message_content(m) or {}
+    body = " ".join((content.get("body") or "").split())
     return {
         "id": str(m.id),
+        "subject": content.get("subject", ""),
+        "preview": body[:160],
+        "from_name": (content.get("from") or {}).get("name", ""),
         "direction": m.direction,
         "from": m.mail_from,
         "recipients": m.recipients,
@@ -458,9 +450,16 @@ def own_message(user, message_id) -> ExternalMessage:
     return m
 
 
-def copy_for_device(user, message, device_id) -> ExternalMessageCopy | None:
-    return ExternalMessageCopy.objects.filter(message=message, device__user=user, device_id=device_id).first()
+SEARCH_SCAN_LIMIT = 2000
 
 
-def search_q(q: str):
-    return Q(mail_from__icontains=q) | Q(recipients__icontains=q)
+def search(qs, q: str):
+    """Match over opened content (sealed at rest), most recent first."""
+    hits = []
+    for m in qs[:SEARCH_SCAN_LIMIT]:
+        c = message_content(m) or {}
+        people = " ".join(f"{a.get('name', '')} {a.get('address', '')}" for a in
+                          [c.get("from") or {}, *(c.get("to") or []), *(c.get("cc") or [])])
+        if matches(q, m.mail_from, " ".join(m.recipients), people, c.get("subject", ""), c.get("body", "")):
+            hits.append(m.id)
+    return qs.filter(id__in=hits)

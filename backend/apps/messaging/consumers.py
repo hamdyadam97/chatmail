@@ -1,9 +1,8 @@
 """Chat WebSocket consumer — ticket-authenticated, forward-only.
 
-The server is a dumb pipe (docs/phase1/02-protocol-comparison.md §2.4):
-incoming client frames are ignored in this slice except ping/pong; all
-server→client traffic is forwarded channel-layer events (chat.event frames,
-membership revocation, device revocation).
+Incoming client frames are ignored except ping/pong; all server→client
+traffic is forwarded channel-layer events (chat.event frames and membership
+revocation).
 
 Auth: one-time ?ticket= JWT (see services.issue_ws_ticket), validated and
 consumed on connect, plus an active membership check. Reconnect handling is
@@ -17,7 +16,6 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from apps.accounts.models import User
 
 from .services import (
-    WS_CLOSE_DEVICE_REVOKED,
     WS_CLOSE_MEMBERSHIP_REVOKED,
     consume_ws_ticket,
     get_active_membership,
@@ -68,7 +66,3 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=WS_CLOSE_MEMBERSHIP_REVOKED)
             return
         await self.send_json(event)
-
-    async def device_revoked(self, event):
-        """Server-side signal on user.{id}: this user's device was revoked."""
-        await self.close(code=WS_CLOSE_DEVICE_REVOKED)

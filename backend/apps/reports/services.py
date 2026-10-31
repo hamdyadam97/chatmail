@@ -172,7 +172,6 @@ def usage_metrics(unit, start, end) -> dict:
         "active_last_30_days": members.filter(user__last_login_at__gte=since).values("user_id").distinct().count(),
         "active_devices": TrustedDevice.objects.filter(user_id__in=user_ids, status="active").count(),
         "chat_messages": Message.objects.filter(
-            kind="application",
             sender_id__in=user_ids,
             conversation__type__in=["dm", "group"],
             created_at__range=(start, end),
@@ -292,15 +291,12 @@ def _blob_storage():
         raise RuntimeError("blob storage not writable")
 
 
-def _transparency():
-    from apps.crypto_keys.models import KeyTransparencyEvent
-    from apps.crypto_keys.transparency import verify_all_chains
+def _content_key():
+    from apps import vault
 
-    events = list(KeyTransparencyEvent.objects.order_by("id"))
-    problems = verify_all_chains(events)
-    if problems:
-        raise RuntimeError("transparency chain broken")
-    return {"events": len(events)}
+    probe = vault.seal(b"health", purpose="health", owner="probe")
+    if vault.open_(probe, purpose="health", owner="probe") != b"health":
+        raise RuntimeError("content key round trip failed")
 
 
 def health() -> dict:
@@ -309,7 +305,7 @@ def health() -> dict:
         "cache": _check(_cache),
         "realtime": _check(_channel_layer),
         "blob_storage": _check(_blob_storage),
-        "key_transparency": _check(_transparency),
+        "content_key": _check(_content_key),
     }
     return {"status": "ok" if all(c["ok"] for c in checks.values()) else "degraded", "checks": checks,
             "checked_at": timezone.now().isoformat()}

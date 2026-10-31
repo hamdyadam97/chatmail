@@ -1,26 +1,14 @@
 """WebSocket delivery: ticket auth (single use), chat.event forwarding,
-device-revocation close (4001), membership-revocation self-close."""
-import base64
-
+membership-revocation self-close."""
 import pytest
 import pytest_asyncio
 from asgiref.sync import sync_to_async
-from channels.layers import get_channel_layer
 from channels.testing import WebsocketCommunicator
 
 from apps.messaging.models import Conversation
 
 from .conftest import DEFAULT_PASSWORD
-from .messaging_utils import (
-    CONV_URL,
-    auth,
-    b64,
-    commit,
-    create_conversation,
-    make_device,
-    mls_payload,
-    post_message,
-)
+from .messaging_utils import CONV_URL, create_conversation, post_message
 from config.asgi import application
 
 pytestmark = [pytest.mark.django_db(transaction=True)]
@@ -67,10 +55,9 @@ async def group(api_client, user_factory):
     h_b = await _headers(api_client, "ws_b")
     r = await sync_to_async(create_conversation)(api_client, h_a, "group", [b.id])
     conv_id = r.json()["id"]
-    dev_a = await sync_to_async(make_device)(a)
     return {
         "a": a, "b": b, "h_a": h_a, "h_b": h_b,
-        "conv_id": conv_id, "dev_a": dev_a,
+        "conv_id": conv_id,
         "api_client": api_client,
     }
 
@@ -79,22 +66,15 @@ async def group(api_client, user_factory):
 async def test_ws_forwards_chat_event(group):
     communicator, h_b = await _connect(group["api_client"], group["conv_id"], "ws_b")
     try:
-        r = await sync_to_async(commit)(
-            group["api_client"], group["h_a"], group["conv_id"],
-            group["dev_a"].id, epoch=1,
-        )
+        r = await sync_to_async(post_message)(group["api_client"], group["h_a"], group["conv_id"], "مرحبا")
         assert r.status_code == 201
         frame = await communicator.receive_json_from()
         assert frame["type"] == "chat.event"
         assert frame["event"] == "message"
         assert frame["conversation_id"] == group["conv_id"]
-        assert frame["kind"] == "commit"
         assert frame["seq"] == 1
-        assert frame["epoch"] == 1
         assert frame["sender_user_id"] == str(group["a"].id)
-        assert frame["sender_device_id"] == str(group["dev_a"].id)
-        assert frame["mls_payload"]
-        base64.b64decode(frame["mls_payload"])  # round-trips as binary
+        assert frame["content"] == {"text": "مرحبا"}
         assert frame["reply_to_seq"] is None
         assert frame["created_at"]
     finally:
@@ -139,21 +119,6 @@ async def test_ws_bad_ticket_rejected(group):
     connected, _ = await communicator.connect()
     assert connected is False
     await communicator.disconnect()
-
-
-@pytest.mark.asyncio
-async def test_ws_device_revoked_message_closes_with_4001(group):
-    communicator, _ = await _connect(group["api_client"], group["conv_id"], "ws_a")
-    try:
-        channel_layer = get_channel_layer()
-        await channel_layer.group_send(
-            f"user.{group['a'].id}", {"type": "device_revoked"}
-        )
-        close = await communicator.receive_output()
-        assert close["type"] == "websocket.close"
-        assert close["code"] == 4001
-    finally:
-        await communicator.disconnect()
 
 
 @pytest.mark.asyncio

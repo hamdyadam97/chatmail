@@ -1,15 +1,13 @@
 """Announcements (التعاميم) — prompt §10.
 
-Each announcement is one MLS group (``messaging.Conversation`` of type
-``announcement``) holding the publisher and every resolved recipient; the
-content is a single MLS application message. The audience is resolved by the
+Each announcement is a ``messaging.Conversation`` of type ``announcement``
+holding the publisher and every resolved recipient; the content {title, body}
+is one message sealed with the server key. The audience is resolved by the
 server from the org structure, snapshotted in ``AnnouncementRecipient`` and
-disclosed to every recipient, whose client checks that the MLS roster holds
-no undeclared member — there is no hidden reader with a decryption key.
+disclosed to every recipient.
 
-Acknowledgements are signed by the recipient's device (Ed25519) over a
-canonical payload bound to the SHA-256 of the announcement ciphertext:
-integrity evidence of "who confirmed which version", not a legal signature.
+An acknowledgement records when, and which content version (SHA-256 of the
+content) the recipient confirmed — evidence, not a legal signature.
 """
 import uuid
 
@@ -114,11 +112,7 @@ class AnnouncementRecipient(models.Model):
     delivered_at = models.DateTimeField(null=True, blank=True)
     read_at = models.DateTimeField(null=True, blank=True)
     acknowledged_at = models.DateTimeField(null=True, blank=True)
-    ack_device = models.ForeignKey(
-        "accounts.TrustedDevice", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
-    )
-    ack_payload = models.BinaryField(null=True, blank=True)
-    ack_signature = models.BinaryField(max_length=64, null=True, blank=True)
+    ack_content_hash = models.BinaryField(max_length=32, null=True, blank=True)
     reminder_count = models.IntegerField(default=0)
     last_reminded_at = models.DateTimeField(null=True, blank=True)
 
@@ -126,11 +120,6 @@ class AnnouncementRecipient(models.Model):
         db_table = "announcement_recipients"
         constraints = [
             models.UniqueConstraint(fields=["announcement", "user"], name="uq_announcement_recipient"),
-            models.CheckConstraint(
-                condition=Q(acknowledged_at__isnull=True)
-                | Q(ack_device__isnull=False, ack_payload__isnull=False, ack_signature__isnull=False),
-                name="ck_ack_is_signed",
-            ),
         ]
         indexes = [
             models.Index(fields=["user", "acknowledged_at"], name="idx_ann_recipient_user_ack"),

@@ -1,12 +1,13 @@
-"""Announcement services: audience resolution, publish, receipts, signed
+"""Announcement services: audience resolution, publish, receipts,
 acknowledgements, compliance and reminders (prompt §10).
+
+Content {title, body} is sealed at rest with the server key (apps.vault).
 
 Invariants:
   * The audience is resolved server-side from active org memberships at
-    prepare time and snapshotted; nobody outside it is a thread member, so
-    nobody outside it can receive the key (no hidden recipients). Every
-    recipient can list the declared audience and its client compares it with
-    the MLS roster.
+    publish time and snapshotted; only the publisher and that audience can
+    open the content. Every recipient can list the declared audience.
+  * Withdrawing hides the content from recipients at once.
   * announcements.publish is checked in the target unit (central for "all";
     for named users, a unit holding each user's membership).
   * Compliance (who received/read/acknowledged) is metadata, visible to the
@@ -15,10 +16,8 @@ Invariants:
 """
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Q
@@ -26,21 +25,19 @@ from django.utils import timezone
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 from rest_framework.status import HTTP_409_CONFLICT
 
-from apps.accounts.models import TrustedDevice, User
-from apps.approvals.services import canonical_bytes
+from apps.accounts.models import User
 from apps.audit.services import log
 from apps.authorization.services import has_permission
 from apps.correspondence.services import resolve_sender_membership
 from apps.messaging.models import Conversation, ConversationMember
-from apps.messaging.services import get_active_membership, store_message
+from apps.messaging.services import message_content, store_message
 from apps.notifications.services import notify
 from apps.org.models import Branch, Department, EmployeeMembership, Institute
 
 from .models import Announcement, AnnouncementRecipient, AnnouncementSequence
 
-ACK_CONTEXT = b"announcement-ack-v1\n"
-ACK_FIELDS = ("acknowledged_at", "announcement_id", "content_hash", "device_id", "user_id")
-MAX_CLOCK_SKEW = timedelta(minutes=10)
+MAX_TITLE = 300
+MAX_BODY = 50_000
 REMIND_COOLDOWN = timedelta(hours=1)
 AUTO_REMIND_WINDOW = timedelta(hours=24)
 
@@ -151,6 +148,15 @@ def can_track(user, announcement) -> bool:
     return has_permission(user, "announcements.track_ack", unit=_tracking_unit(announcement))
 
 
+def announcement_content(announcement, viewer) -> dict | None:
+    """{title, body} for the publisher, or for recipients while not withdrawn."""
+    if not announcement.content_message_id:
+        return None
+    if announcement.status == "withdrawn" and announcement.publisher_id != viewer.id:
+        return None
+    return message_content(announcement.content_message)
+
+
 def get_viewable(user, announcement_id) -> Announcement:
     a = Announcement.objects.select_related("publisher", "thread", "content_message").filter(id=announcement_id).first()
     if a is None or not can_view(user, a):
@@ -167,30 +173,38 @@ def get_trackable(user, announcement_id) -> Announcement:
     return a
 
 
-# --- prepare / publish ---------------------------------------------------------------------
+# --- publish ------------------------------------------------------------------------------
 
-def prepare(*, publisher, target_type, target_id, user_ids, priority, requires_ack, ack_due_at,
-            membership_id, mls_group_id: bytes, client_ref) -> tuple[Announcement, bool]:
+def publish(*, publisher, target_type, target_id, user_ids, priority, requires_ack, ack_due_at,
+            membership_id, client_ref, title, body) -> tuple[Announcement, bool]:
+    """Resolve the audience, seal {title, body}, issue the number, notify."""
     existing = Announcement.objects.filter(publisher=publisher, client_ref=client_ref).first()
     if existing is not None:
         return existing, False
-    if not (16 <= len(mls_group_id) <= 32):
-        raise ValidationError({"mls_group_id": "mls_group_id must be 16-32 bytes."})
+    title = (title or "").strip()
+    if not title:
+        raise ValidationError({"title": "العنوان مطلوب."})
+    if len(title) > MAX_TITLE or len(body or "") > MAX_BODY:
+        raise ValidationError({"body": "التعميم طويل جدًا."})
     if ack_due_at is not None and (not requires_ack or ack_due_at <= timezone.now()):
         raise ValidationError({"ack_due_at": "الموعد النهائي يتطلب طلب إقرار ويجب أن يكون في المستقبل."})
     membership = resolve_sender_membership(publisher, membership_id)
     unit = resolve_target(target_type, target_id)
     audience = resolve_audience(publisher=publisher, target_type=target_type, unit=unit, user_ids=user_ids)
     require_publish_permission(publisher, target_type, unit, audience)
-    if Conversation.objects.filter(mls_group_id=mls_group_id).exists():
-        raise ValidationError({"mls_group_id": "mls_group_id already in use."})
+    content = {"title": title, "body": body or ""}
 
     with transaction.atomic():
-        thread = Conversation.objects.create(type="announcement", mls_group_id=mls_group_id, created_by=publisher)
+        thread = Conversation.objects.create(type="announcement", created_by=publisher)
         ConversationMember.objects.create(conversation=thread, user=publisher, member_role="admin", added_by=publisher)
         ConversationMember.objects.bulk_create(
             [ConversationMember(conversation=thread, user_id=u, member_role="member", added_by=publisher) for u in audience]
         )
+        result = store_message(
+            conversation=thread, requester=publisher, content=content,
+            client_msg_id=client_ref, via_correspondence=True,
+        )
+        now = timezone.now()
         a = Announcement.objects.create(
             publisher=publisher,
             publisher_membership=membership,
@@ -199,20 +213,28 @@ def prepare(*, publisher, target_type, target_id, user_ids, priority, requires_a
             target_branch=unit if isinstance(unit, Branch) else getattr(unit, "branch", None),
             target_department=unit if isinstance(unit, Department) else None,
             thread=thread,
+            content_message=result.message,
+            # Which version a recipient acknowledged (integrity evidence).
+            content_hash=hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True).encode()).digest(),
             priority=priority,
             requires_ack=requires_ack,
             ack_due_at=ack_due_at,
             client_ref=client_ref,
+            reference_number=allocate_reference(membership, now),
+            status="published",
+            published_at=now,
         )
         AnnouncementRecipient.objects.bulk_create(
             [AnnouncementRecipient(announcement=a, user_id=u) for u in audience]
         )
+        notify(audience, "announcement", ref_type="announcement", ref_id=a.id, actor=publisher)
     log(
         actor=publisher,
-        action="announcement_prepared",
+        action="announcement_published",
         target_type="announcement",
         target_id=a.id,
-        metadata={"target_type": target_type, "recipient_count": len(audience)},
+        metadata={"reference_number": a.reference_number, "target_type": target_type,
+                  "recipient_count": len(audience)},
     )
     return a, True
 
@@ -234,67 +256,8 @@ def allocate_reference(membership, when) -> str:
     raise Conflict("تعذر إصدار رقم التعميم؛ أعد المحاولة.")
 
 
-def publish(*, publisher, announcement, mls_payload: bytes, client_msg_id, epoch, sender_device_id) -> Announcement:
-    if announcement.publisher_id != publisher.id:
-        raise PermissionDenied("Only the publisher can publish this announcement.")
-    if announcement.is_published:
-        if str(announcement.content_message.client_msg_id) == str(client_msg_id):
-            return announcement
-        raise Conflict("التعميم منشور ولا يُعدّل.")
-    membership = get_active_membership(announcement.thread_id, publisher)
-    with transaction.atomic():
-        locked = Announcement.objects.select_for_update().select_related("publisher_membership__institute").get(
-            pk=announcement.pk
-        )
-        if locked.is_published:
-            raise Conflict("التعميم منشور ولا يُعدّل.")
-        result = store_message(
-            conversation=locked.thread,
-            requester=publisher,
-            membership=membership,
-            kind="application",
-            mls_payload=mls_payload,
-            client_msg_id=client_msg_id,
-            epoch=epoch,
-            sender_device_id=sender_device_id,
-            via_correspondence=True,
-        )
-        if not result.created:
-            raise Conflict("client_msg_id already used.")
-        now = timezone.now()
-        locked.reference_number = allocate_reference(locked.publisher_membership, now)
-        locked.content_message = result.message
-        locked.content_hash = hashlib.sha256(mls_payload).digest()
-        locked.status = "published"
-        locked.published_at = now
-        locked.save(update_fields=["reference_number", "content_message", "content_hash", "status", "published_at"])
-        recipients = list(locked.recipients.values_list("user_id", flat=True))
-        notify(recipients, "announcement", ref_type="announcement", ref_id=locked.id, actor=publisher)
-    log(
-        actor=publisher,
-        action="announcement_published",
-        target_type="announcement",
-        target_id=locked.id,
-        metadata={"reference_number": locked.reference_number, "recipient_count": len(recipients)},
-    )
-    return locked
-
-
-def discard_draft(user, announcement_id) -> None:
-    a = Announcement.objects.filter(id=announcement_id).first()
-    if a is None or a.publisher_id != user.id:
-        raise PermissionDenied("Not your announcement.")
-    if a.is_published:
-        raise Conflict("A published announcement cannot be deleted; withdraw it instead.")
-    thread = a.thread
-    with transaction.atomic():
-        a.delete()
-        thread.delete()
-
-
 def withdraw(user, announcement) -> Announcement:
-    """Marks the announcement withdrawn (metadata). Copies already decrypted on
-    recipients devices cannot be recalled — declared to the user in the UI."""
+    """Withdraw: recipients can no longer open the content (the publisher still can)."""
     if announcement.publisher_id != user.id:
         raise PermissionDenied("Only the publisher can withdraw.")
     if announcement.status != "published":
@@ -331,19 +294,8 @@ def mark_read(user, announcement) -> None:
         row.save(update_fields=fields)
 
 
-def expected_ack_payload(*, announcement, user, device_id, acknowledged_at) -> dict:
-    import base64
-
-    return {
-        "acknowledged_at": acknowledged_at,
-        "announcement_id": str(announcement.id),
-        "content_hash": base64.b64encode(bytes(announcement.content_hash)).decode(),
-        "device_id": str(device_id),
-        "user_id": str(user.id),
-    }
-
-
-def acknowledge(*, user, announcement, payload: bytes, signature: bytes, device_id) -> AnnouncementRecipient:
+def acknowledge(*, user, announcement) -> AnnouncementRecipient:
+    """Server-recorded acknowledgement of the current content version."""
     row = recipient_row(user, announcement)
     if row is None:
         raise PermissionDenied("You are not a recipient of this announcement.")
@@ -353,40 +305,13 @@ def acknowledge(*, user, announcement, payload: bytes, signature: bytes, device_
         raise ValidationError({"detail": "هذا التعميم لا يتطلب إقرارًا."})
     if row.acknowledged_at is not None:
         return row  # idempotent
-    device = TrustedDevice.objects.filter(id=device_id, user=user, status="active").first()
-    if device is None or not device.identity_sign_pub:
-        raise PermissionDenied("Acknowledgements must be signed by one of your active devices.")
-    try:
-        parsed = json.loads(payload.decode("ascii"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise ValidationError({"payload": "حمولة غير صالحة."})
-    if not isinstance(parsed, dict) or tuple(sorted(parsed)) != ACK_FIELDS or canonical_bytes(parsed) != payload:
-        raise ValidationError({"payload": "الحمولة ليست بالصيغة القانونية."})
-    try:
-        Ed25519PublicKey.from_public_bytes(bytes(device.identity_sign_pub)).verify(signature, ACK_CONTEXT + payload)
-    except (InvalidSignature, ValueError):
-        raise ValidationError({"signature": "توقيع الإقرار غير صالح."})
-    try:
-        when = datetime.fromisoformat(str(parsed["acknowledged_at"]).replace("Z", "+00:00"))
-    except ValueError:
-        raise ValidationError({"payload": "acknowledged_at غير صالح."})
-    if when.tzinfo is None or abs(timezone.now() - when) > MAX_CLOCK_SKEW:
-        raise ValidationError({"payload": "وقت الإقرار بعيد عن وقت الخادم."})
-    expected = expected_ack_payload(
-        announcement=announcement, user=user, device_id=device.id, acknowledged_at=parsed["acknowledged_at"]
-    )
-    if parsed != expected:
-        raise ValidationError({"payload": "الحمولة لا تطابق هذا التعميم أو نسخته."})
     now = timezone.now()
     row.acknowledged_at = now
     row.read_at = row.read_at or now
     row.delivered_at = row.delivered_at or now
-    row.ack_device = device
-    row.ack_payload = payload
-    row.ack_signature = signature
-    row.save(update_fields=["acknowledged_at", "read_at", "delivered_at", "ack_device", "ack_payload", "ack_signature"])
-    log(actor=user, actor_device=device, action="announcement_acknowledged", target_type="announcement",
-        target_id=announcement.id)
+    row.ack_content_hash = announcement.content_hash
+    row.save(update_fields=["acknowledged_at", "read_at", "delivered_at", "ack_content_hash"])
+    log(actor=user, action="announcement_acknowledged", target_type="announcement", target_id=announcement.id)
     return row
 
 

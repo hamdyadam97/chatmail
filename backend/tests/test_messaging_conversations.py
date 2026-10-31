@@ -19,18 +19,15 @@ def test_create_group_201_admin_and_fields(api_client, pair, user_factory):
     a, b = pair
     c = user_factory("conv_c")
     h = auth(api_client, "conv_a")
-    r = create_conversation(api_client, h, "group", [b.id, c.id])
+    r = create_conversation(api_client, h, "group", [b.id, c.id], title="فريق الموازنة")
     assert r.status_code == 201, r.json()
     body = r.json()
     conv = Conversation.objects.get(id=body["id"])
     assert body["type"] == "group"
-    assert body["current_epoch"] == 0
     assert body["my_role"] == "admin"
     assert body["member_count"] == 3
-    assert body["title_enc"] is not None
-    assert body["mls_group_id"] == __import__("base64").b64encode(
-        bytes(conv.mls_group_id)
-    ).decode()
+    assert body["title"] == "فريق الموازنة"
+    assert "فريق".encode() not in bytes(conv.title_enc)  # sealed at rest
     assert body["joined_at"] and body["created_at"]
     assert ConversationMember.objects.get(conversation=conv, user=b).member_role == "member"
 
@@ -81,20 +78,6 @@ def test_dm_requires_exactly_one_member(api_client, pair, user_factory):
     assert create_conversation(api_client, h, "dm", [b.id, c.id]).status_code == 400
     assert create_conversation(api_client, h, "dm", []).status_code == 400
     assert create_conversation(api_client, h, "dm", [a.id]).status_code == 400
-
-
-def test_mls_group_id_length_validated(api_client, pair):
-    a, b = pair
-    h = auth(api_client, "conv_a")
-    import base64
-
-    body = {
-        "type": "group",
-        "member_user_ids": [str(b.id)],
-        "mls_group_id": base64.b64encode(b"short").decode(),
-    }
-    r = api_client.post(CONV_URL, body, format="json", **h)
-    assert r.status_code == 400
 
 
 def test_members_add_forbidden_on_dm(api_client, pair, user_factory):

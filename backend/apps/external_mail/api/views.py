@@ -17,7 +17,6 @@ from apps.audit.services import log, request_context
 from apps.authorization.services import has_permission
 
 from .. import services
-from ..crypto import b64
 from ..models import ExternalMessage
 
 
@@ -65,25 +64,22 @@ class MessageListView(APIView):
             qs = qs.filter(direction=box)
         q = (request.query_params.get("q") or "").strip()
         if q:
-            qs = qs.filter(services.search_q(q))
+            qs = services.search(qs, q)
         paginator = _Pagination()
         page = paginator.paginate_queryset(qs, request, view=self)
         return paginator.get_paginated_response([services.summary(m) for m in page])
 
 
 class MessageDetailView(APIView):
-    """Metadata + the content sealed to the caller's device (opened in the browser)."""
+    """Metadata + content (owner only)."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request, message_id):
         message = services.own_message(request.user, message_id)
-        copy = services.copy_for_device(request.user, message, request.query_params.get("device_id"))
-        data = services.summary(message)
-        data["sealed"] = (
-            {"ephemeral_pub": b64(copy.ephemeral_pub), "iv": b64(copy.iv), "ciphertext": b64(copy.ciphertext)}
-            if copy else None
-        )
+        content = services.message_content(message)
+        data = services.summary(message, content or {})
+        data["content"] = content
         return Response(data)
 
 
@@ -113,8 +109,7 @@ def _decode_attachments(items) -> list[dict]:
 
 
 class SendView(APIView):
-    """NOT end-to-end encrypted by nature: the text is handed to Brevo for
-    delivery outside the system. The client warns the user before calling it."""
+    """The text leaves the system through Brevo (plain Internet mail)."""
 
     permission_classes = [IsAuthenticated]
     throttle_classes = [SendThrottle]

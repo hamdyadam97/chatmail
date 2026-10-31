@@ -1,9 +1,7 @@
 """Chat API views under /api/v1/conversations/ (JWT-authenticated).
 
-The server is a pure MLS Delivery Service: it gates membership/epoch/device
-and stores/forwards opaque MLS wire payloads; it never sees plaintext
-(docs/phase1/02-protocol-comparison.md §2.4, docs/phase1/08-mls-spike-results.md
-§8.3).
+Every endpoint gates active membership first; content is sealed at rest and
+opened only in responses to members (see apps.messaging.services).
 """
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -18,13 +16,14 @@ from ..services import (
     issue_ws_ticket,
     remove_members,
     require_active_member,
+    chat_content,
     store_message,
-    user_may_see_message,
 )
 from .serializers import (
     CreateConversationSerializer,
     MemberIdsSerializer,
     PostMessageSerializer,
+    ReadSerializer,
     conversation_to_dict,
     message_to_dict,
 )
@@ -55,8 +54,7 @@ class ConversationListCreateView(APIView):
             requester=request.user,
             type=serializer.validated_data["type"],
             member_user_ids=serializer.validated_data["member_user_ids"],
-            title_enc=serializer.validated_data.get("title_enc_raw"),
-            mls_group_id=serializer.validated_data["mls_group_id_raw"],
+            title=serializer.validated_data["title"],
         )
         membership = get_active_membership(result.conversation.id, request.user)
         code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
@@ -89,43 +87,32 @@ class MessageListCreateView(_ConversationMixin, APIView):
         except ValueError:
             limit = DEFAULT_MESSAGE_PAGE
 
-        # Welcome payloads are device-addressed: only the recipient device's
-        # user may fetch them over the API (server-side half of SEC-07).
         qs = Message.objects.filter(conversation=conversation)
         if after_seq is not None:
             qs = qs.filter(seq__gt=after_seq)
-        messages = list(
-            qs.select_related("sender", "sender_device", "recipient_device", "reply_to")
-            .prefetch_related("welcome_recipients__device")
-            .order_by("seq")[:limit]
-        )
-        visible = [m for m in messages if user_may_see_message(m, request.user)]
-        return Response(
-            {
-                "current_epoch": conversation.current_epoch,
-                "messages": [message_to_dict(m) for m in visible],
-            }
-        )
+        before_seq = request.query_params.get("before_seq")
+        if before_seq and before_seq.isdigit():
+            qs = qs.filter(seq__lt=int(before_seq))
+        if request.query_params.get("latest") == "1" or before_seq:
+            # The newest page (chat opens at the bottom, older pages load
+            # upwards), returned oldest-first.
+            messages = list(qs.select_related("reply_to").order_by("-seq")[:limit])[::-1]
+        else:
+            messages = list(qs.select_related("reply_to").order_by("seq")[:limit])
+        return Response({"messages": [message_to_dict(m) for m in messages]})
 
     def post(self, request, conversation_id):
         conversation = self._conversation(conversation_id)
-        membership = require_active_member(conversation, request.user)
+        require_active_member(conversation, request.user)
         serializer = PostMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         result = store_message(
             conversation=conversation,
             requester=request.user,
-            membership=membership,
-            kind=data["kind"],
-            mls_payload=data["mls_payload_raw"],
+            content=chat_content(data["text"]),
             client_msg_id=data["client_msg_id"],
-            epoch=data["epoch"],
-            sender_device_id=data.get("sender_device_id"),
-            recipient_device_id=data.get("recipient_device_id"),
-            recipient_device_ids=data.get("recipient_device_ids"),
             reply_to_seq=data.get("reply_to_seq"),
-            membership_meta=data.get("membership"),
         )
         code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
         return Response(message_to_dict(result.message), status=code)
@@ -150,14 +137,7 @@ class ConversationMembersView(_ConversationMixin, APIView):
 
 
 class ConversationMembersRemoveView(_ConversationMixin, APIView):
-    """Admin-only immediate removal (ACL enforcement).
-
-    TRUST NOTE: this updates the server's access-control bookkeeping only.
-    Epoch rotation that actually excludes the removed member's keys is the
-    clients' job (a Remove proposal + Commit, see docs/phase1/08 §8.3 S3);
-    until clients rotate, the server-side ACL here is what blocks access.
-    dm → 403.
-    """
+    """Admin-only removal: the member loses API and WS access at once. dm → 403."""
 
     def post(self, request, conversation_id):
         conversation = self._conversation(conversation_id)
@@ -179,3 +159,18 @@ class WsTicketView(_ConversationMixin, APIView):
         conversation = self._conversation(conversation_id)
         require_active_member(conversation, request.user)
         return Response({"ticket": issue_ws_ticket(request.user, conversation)})
+
+
+class ReadMarkView(_ConversationMixin, APIView):
+    """POST {seq}: my read position (never moves backwards)."""
+
+    def post(self, request, conversation_id):
+        conversation = self._conversation(conversation_id)
+        membership = require_active_member(conversation, request.user)
+        serializer = ReadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        seq = serializer.validated_data["seq"]
+        if seq > membership.last_read_seq:
+            membership.last_read_seq = seq
+            membership.save(update_fields=["last_read_seq"])
+        return Response({"last_read_seq": membership.last_read_seq})

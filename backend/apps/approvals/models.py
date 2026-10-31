@@ -5,13 +5,11 @@ a request snapshots them into ``ApprovalRequestStep`` + ``ApprovalStepApprover``
 at creation time so later template edits never change a running request.
 
 Every approver must already be a participant of the correspondence: they read
-the content through the thread's MLS group like any recipient. The engine adds
-no read path of its own (docs/phase1/05 §5.3).
+it like any recipient. The engine adds no read path of its own
+(docs/phase1/05 §5.3).
 
-``ApprovalDecision.decision_payload`` is a canonical JSON document signed by the
-approver's device key (Ed25519). It is an integrity signature binding the
-decision to the exact ciphertext reviewed — NOT a legally recognized
-electronic signature.
+``ApprovalDecision.content_hash`` records which content version was decided on
+(SHA-256 of the content) — evidence, NOT a legally recognized signature.
 """
 import uuid
 
@@ -163,13 +161,8 @@ class ApprovalDecision(models.Model):
     delegation = models.ForeignKey(
         "ApprovalDelegation", on_delete=models.PROTECT, null=True, blank=True, related_name="decisions"
     )
-    approver_device = models.ForeignKey(
-        "accounts.TrustedDevice", on_delete=models.PROTECT, related_name="approval_decisions"
-    )
     decision = models.CharField(max_length=16, choices=DECISIONS)
     content_hash = models.BinaryField(max_length=32)
-    decision_payload = models.BinaryField()  # canonical JSON, exactly as signed
-    signature = models.BinaryField(max_length=64)
     decided_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -7,7 +7,6 @@ urlpatterns = [
     path("", views.AnnouncementListCreateView.as_view(), name="announcement-list"),
     path("<uuid:announcement_id>/", views.AnnouncementDetailView.as_view(), name="announcement-detail"),
     path("<uuid:announcement_id>/audience/", views.AudienceView.as_view(), name="announcement-audience"),
-    path("<uuid:announcement_id>/publish/", views.PublishView.as_view(), name="announcement-publish"),
     path("<uuid:announcement_id>/read/", views.ReadView.as_view(), name="announcement-read"),
     path("<uuid:announcement_id>/ack/", views.AckView.as_view(), name="announcement-ack"),
     path("<uuid:announcement_id>/compliance/", views.ComplianceView.as_view(), name="announcement-compliance"),

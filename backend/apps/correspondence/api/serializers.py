@@ -1,14 +1,15 @@
-"""Correspondence API shapes — metadata + base64 ciphertext only.
+"""Correspondence API shapes.
 
-There is no field anywhere in this module that can carry a plaintext
-subject/body: content arrives as one opaque MLS application message
-(``mls_payload``) and is validated as binary by messaging.store_message.
+Content (subject, body, attachment names) is opened from its sealed blob only
+in responses to participants — every view gates with services.get_readable
+(or a sender check) before anything here runs.
 """
 from rest_framework import serializers
 
-from apps.messaging.services import b64decode, b64encode
-
 from ..models import Correspondence
+from ..services import correspondence_content, file_meta
+
+PREVIEW_CHARS = 160
 
 
 def _user_ref(user) -> dict:
@@ -24,11 +25,16 @@ def participant_to_dict(p) -> dict:
     }
 
 
-def correspondence_summary(c: Correspondence, my_row, participants) -> dict:
+def correspondence_summary(c: Correspondence, my_row, participants, content: dict | None = None) -> dict:
+    content = content if content is not None else correspondence_content(c) or {}
+    body = " ".join((content.get("body") or "").split())
     return {
         "id": str(c.id),
         "reference_number": c.reference_number,
         "sender": _user_ref(c.sender),
+        "subject": content.get("subject", ""),
+        "preview": body[:PREVIEW_CHARS],
+        "has_attachments": bool(content.get("attachments")),
         "priority": c.priority,
         "classification": c.classification,
         "status": c.status,
@@ -47,35 +53,22 @@ def correspondence_summary(c: Correspondence, my_row, participants) -> dict:
     }
 
 
-def correspondence_detail(c: Correspondence, my_row, participants, attachments, thread_items) -> dict:
-    data = correspondence_summary(c, my_row, participants)
-    thread = c.thread
-    data["thread"] = {
-        "id": str(thread.id),
-        "mls_group_id": b64encode(bytes(thread.mls_group_id)),
-        "current_epoch": thread.current_epoch,
+def content_to_dict(content: dict | None, files: dict) -> dict | None:
+    """{subject, body, attachments: [{id, name, mime, size}], forwarded}."""
+    if content is None:
+        return None
+    return {
+        "subject": content.get("subject", ""),
+        "body": content.get("body", ""),
+        "attachments": [files[i] for i in content.get("attachments", []) if i in files],
+        "forwarded": content.get("forwarded"),
     }
-    message = c.content_message
-    data["content"] = (
-        {
-            "seq": message.seq,
-            "epoch": message.epoch,
-            "sender_device_id": str(message.sender_device_id) if message.sender_device_id else None,
-            "client_msg_id": str(message.client_msg_id),
-            "mls_payload": b64encode(bytes(message.mls_payload)),
-        }
-        if message is not None
-        else None
-    )
-    data["attachments"] = [
-        {
-            "id": str(a.stored_file_id),
-            "ciphertext_size": a.stored_file.ciphertext_size,
-            "ciphertext_sha256": b64encode(bytes(a.stored_file.ciphertext_sha256)),
-            "algorithm": a.algorithm,
-        }
-        for a in attachments
-    ]
+
+
+def correspondence_detail(c: Correspondence, my_row, participants, files: dict, thread_items) -> dict:
+    content = correspondence_content(c)
+    data = correspondence_summary(c, my_row, participants, content or {})
+    data["content"] = content_to_dict(content, files)
     forwarding = getattr(c, "forwarded_from", None)
     data["forwarded_from_reference"] = forwarding.source.reference_number if forwarding else None
     data["thread_items"] = thread_items
@@ -91,14 +84,19 @@ def event_to_dict(e) -> dict:
     }
 
 
-class _Base64Field(serializers.CharField):
-    def __init__(self, **kwargs):
-        kwargs.setdefault("max_length", 400_000)
-        super().__init__(**kwargs)
+def files_by_id(stored_files) -> dict:
+    return {str(f.id): file_meta(f) for f in stored_files}
 
 
-class PrepareSerializer(serializers.Serializer):
-    to_user_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+class _ContentFields(serializers.Serializer):
+    subject = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+    body = serializers.CharField(max_length=100_000, required=False, allow_blank=True, default="",
+                                 trim_whitespace=False)
+    attachment_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+
+
+class ComposeSerializer(_ContentFields):
+    to_user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
     cc_user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
     bcc_user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
     priority = serializers.ChoiceField(choices=[c for c, _ in Correspondence.PRIORITIES], default="normal")
@@ -107,36 +105,26 @@ class PrepareSerializer(serializers.Serializer):
     )
     due_date = serializers.DateField(required=False, allow_null=True, default=None)
     sender_membership_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    mls_group_id = _Base64Field()
     client_ref = serializers.UUIDField()
-
-    def validate(self, attrs):
-        attrs["mls_group_id_raw"] = b64decode(attrs["mls_group_id"])
-        return attrs
+    # true = send now; false = save as a draft.
+    send = serializers.BooleanField(default=True)
 
 
-class ReplySerializer(serializers.Serializer):
+class DraftUpdateSerializer(_ContentFields):
+    to_user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+    cc_user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+    priority = serializers.ChoiceField(choices=[c for c, _ in Correspondence.PRIORITIES], default="normal")
+    classification = serializers.ChoiceField(
+        choices=[c for c, _ in Correspondence.CLASSIFICATIONS], default="normal"
+    )
+    due_date = serializers.DateField(required=False, allow_null=True, default=None)
+
+
+class ReplySerializer(_ContentFields):
     priority = serializers.ChoiceField(choices=[c for c, _ in Correspondence.PRIORITIES], default="normal")
     due_date = serializers.DateField(required=False, allow_null=True, default=None)
     sender_membership_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     client_ref = serializers.UUIDField()
-
-
-class SendSerializer(serializers.Serializer):
-    mls_payload = _Base64Field()
-    client_msg_id = serializers.UUIDField()
-    epoch = serializers.IntegerField(min_value=1)
-    sender_device_id = serializers.UUIDField()
-    attachment_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
-    # Encrypted copy for the central archive (institutional_archive_eligible only).
-    archive_copy = serializers.JSONField(required=False, allow_null=True, default=None)
-
-    def validate(self, attrs):
-        from apps.archive.services import parse_copy
-
-        attrs["mls_payload_raw"] = b64decode(attrs["mls_payload"])
-        attrs["archive_copy"] = parse_copy(attrs.get("archive_copy"))
-        return attrs
 
 
 class FlagsSerializer(serializers.Serializer):

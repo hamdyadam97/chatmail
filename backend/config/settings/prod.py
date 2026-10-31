@@ -33,7 +33,7 @@ _REQUIRED_SECRETS = (
     "DJANGO_SECRET_KEY",
     "AUTH_JWT_SECRET",       # access-token signing
     "AUTH_FERNET_KEY",       # wraps TOTP secrets (login only, never E2EE)
-    "CRYPTO_LOG_SIGN_SEED",  # key-transparency log signing key (ed25519 seed)
+    "CONTENT_ENCRYPTION_KEY",  # mail/chat content at rest (losing it loses all mail)
     "REDIS_URL",             # channel layer + shared cache
     "ENCRYPTED_BLOB_ROOT",   # encrypted attachment storage
 )

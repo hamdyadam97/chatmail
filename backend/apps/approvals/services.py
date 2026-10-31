@@ -3,37 +3,33 @@
 Rules enforced here:
   * Only the sender of a SENT correspondence opens a request on it; at most
     one pending request per correspondence.
-  * Every approver must be a live to/cc participant (they decrypt through the
-    thread's MLS group) and cannot be the requester. The engine never widens
+  * Every approver must be a live to/cc participant (they already read the
+    correspondence) and cannot be the requester. The engine never widens
     who can read anything.
   * Steps run in order; a step of type ``all`` needs every slot approved, an
     ``any`` step needs one. Reject/return ends the request.
-  * A decision is accepted only with a valid Ed25519 signature by one of the
-    approver's own active devices over SIGNING_CONTEXT ‖ canonical payload,
-    where the payload binds request, step, correspondence, the SHA-256 of the
-    ciphertext reviewed, the decision, the acting user, the slot and the
-    device. Duplicate decisions are impossible (UNIQUE(step, slot_user)).
+  * A decision is recorded server-side with the SHA-256 of the content the
+    request was opened on (which version was approved). Duplicate decisions
+    are impossible (UNIQUE(step, slot_user)).
   * Delegation is temporary and transfers decision authority only — the
     delegate must be a participant in their own right.
 """
 import base64
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 from rest_framework.status import HTTP_409_CONFLICT
 
-from apps.accounts.models import TrustedDevice, User
+from apps.accounts.models import User
 from apps.audit.services import log
 from apps.authorization.models import UserRoleAssignment
 from apps.correspondence.models import CorrespondenceParticipant
-from apps.correspondence.services import can_read
+from apps.correspondence.services import can_read, correspondence_content
 from apps.notifications.services import notify
 
 from .models import (
@@ -45,23 +41,9 @@ from .models import (
     ApprovalWorkflow,
 )
 
-SIGNING_CONTEXT = b"corr-approval-decision-v1\n"
-MAX_CLOCK_SKEW = timedelta(minutes=10)
 MAX_STEPS = 10
 MAX_APPROVERS_PER_STEP = 20
 MAX_DELEGATION = timedelta(days=90)
-PAYLOAD_FIELDS = (
-    "approver_id",
-    "content_hash",
-    "correspondence_id",
-    "decided_at",
-    "decision",
-    "device_id",
-    "on_behalf_of",
-    "request_id",
-    "step_order",
-)
-
 
 class Conflict(APIException):
     status_code = HTTP_409_CONFLICT
@@ -73,12 +55,9 @@ def b64(raw: bytes) -> str:
     return base64.b64encode(bytes(raw)).decode("ascii")
 
 
-def canonical_bytes(payload: dict) -> bytes:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
-
-
 def content_hash_of(correspondence) -> bytes:
-    return hashlib.sha256(bytes(correspondence.content_message.mls_payload)).digest()
+    content = correspondence_content(correspondence) or {}
+    return hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode()).digest()
 
 
 # --- visibility -----------------------------------------------------------------
@@ -300,59 +279,13 @@ def available_slot(user, req, step=None):
     return None
 
 
-def expected_payload(*, req, step, user, slot_user_id, delegation, device_id, decision, decided_at) -> dict:
-    return {
-        "approver_id": str(user.id),
-        "content_hash": b64(req.content_hash),
-        "correspondence_id": str(req.correspondence_id),
-        "decided_at": decided_at,
-        "decision": decision,
-        "device_id": str(device_id),
-        "on_behalf_of": slot_user_id if delegation else None,
-        "request_id": str(req.id),
-        "step_order": step.step_order,
-    }
+DECISIONS = ("approved", "rejected", "returned")
 
 
-def _parse_payload(raw: bytes) -> dict:
-    try:
-        parsed = json.loads(raw.decode("ascii"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise ValidationError({"payload": "حمولة القرار ليست JSON ASCII صالحًا."})
-    if not isinstance(parsed, dict) or tuple(sorted(parsed)) != PAYLOAD_FIELDS:
-        raise ValidationError({"payload": "حقول حمولة القرار غير مطابقة."})
-    if canonical_bytes(parsed) != raw:
-        raise ValidationError({"payload": "الحمولة ليست بالصيغة القانونية (canonical JSON)."})
-    return parsed
-
-
-def _parse_time(value) -> datetime:
-    try:
-        when = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        raise ValidationError({"payload": "decided_at غير صالح."})
-    if when.tzinfo is None:
-        raise ValidationError({"payload": "decided_at بلا منطقة زمنية."})
-    return when
-
-
-def decide(*, user, request_id, payload: bytes, signature: bytes, device_id) -> ApprovalDecision:
+def decide(*, user, request_id, decision: str) -> ApprovalDecision:
     req = get_viewable(user, request_id)
-    parsed = _parse_payload(payload)
-    device = TrustedDevice.objects.filter(id=device_id, user=user, status="active").first()
-    if device is None or not device.identity_sign_pub:
-        raise PermissionDenied("Decisions must be signed by one of your active devices.")
-    try:
-        Ed25519PublicKey.from_public_bytes(bytes(device.identity_sign_pub)).verify(
-            signature, SIGNING_CONTEXT + payload
-        )
-    except (InvalidSignature, ValueError):
-        raise ValidationError({"signature": "توقيع القرار غير صالح."})
-    if abs(timezone.now() - _parse_time(parsed["decided_at"])) > MAX_CLOCK_SKEW:
-        raise ValidationError({"payload": "وقت القرار بعيد عن وقت الخادم."})
-    if parsed["decision"] not in ("approved", "rejected", "returned"):
-        raise ValidationError({"payload": "قرار غير معروف."})
-
+    if decision not in DECISIONS:
+        raise ValidationError({"decision": "قرار غير معروف."})
     with transaction.atomic():
         req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
         if req.status != "pending":
@@ -362,44 +295,33 @@ def decide(*, user, request_id, payload: bytes, signature: bytes, device_id) -> 
         if slot is None:
             raise PermissionDenied("You are not an approver of the current step (or already decided).")
         slot_user_id, delegation = slot
-        expected = expected_payload(
-            req=req, step=step, user=user, slot_user_id=slot_user_id, delegation=delegation,
-            device_id=device.id, decision=parsed["decision"], decided_at=parsed["decided_at"],
-        )
-        if parsed != expected:
-            mismatched = sorted(k for k in PAYLOAD_FIELDS if parsed.get(k) != expected.get(k))
-            raise ValidationError({"payload": f"الحمولة لا تطابق الطلب: {', '.join(mismatched)}"})
         try:
             with transaction.atomic():
-                decision = ApprovalDecision.objects.create(
+                row = ApprovalDecision.objects.create(
                     request=req,
                     step=step,
                     slot_user_id=slot_user_id,
                     approver=user,
                     delegation=delegation,
-                    approver_device=device,
-                    decision=parsed["decision"],
+                    decision=decision,
                     content_hash=req.content_hash,
-                    decision_payload=payload,
-                    signature=signature,
                 )
         except IntegrityError:
             raise Conflict("سبق اتخاذ قرار في هذه الخانة.")
-        _advance(req, step, decision)
+        _advance(req, step, row)
 
     log(
         actor=user,
-        actor_device=device,
         action="approval_decided",
         target_type="approval_request",
         target_id=req.id,
         metadata={
-            "decision": decision.decision,
+            "decision": row.decision,
             "step_order": step.step_order,
             "delegated": delegation is not None,
         },
     )
-    return decision
+    return row
 
 
 def _advance(req, step, decision) -> None:

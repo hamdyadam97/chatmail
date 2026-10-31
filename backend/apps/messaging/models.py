@@ -1,9 +1,8 @@
 """Chat delivery models per docs/phase1/04-erd.md §4.2 (هـ + و).
 
-The server is a pure MLS Delivery Service (docs/phase1/02-protocol-comparison.md
-§2.4): it stores opaque MLS wire payloads only — never plaintext, never key
-material. ``mls_payload`` / ``title_enc`` are bytea ciphertext blobs whose
-contents the server cannot and must not interpret.
+Content is encrypted at rest with the server key (apps.vault, user decision
+2026-10-31: Outlook-style mail). ``content_enc`` / ``title_enc`` are sealed
+blobs bound to their conversation; the API opens them for active members only.
 
 This slice implements ``dm`` and ``group`` conversations; the channel types
 and org-unit FKs are deferred, but the ``type`` choices stay ERD-complete.
@@ -30,12 +29,10 @@ class Conversation(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     type = models.CharField(max_length=20, choices=TYPES)
-    # Opaque ciphertext (group/dm titles) — server cannot read it.
+    # Sealed group title (apps.vault).
     title_enc = models.BinaryField(null=True, blank=True)
     # Plain titles are reserved for official channels (organizational data).
     title_plain = models.CharField(max_length=255, null=True, blank=True)
-    mls_group_id = models.BinaryField(max_length=32, unique=True)
-    current_epoch = models.IntegerField(default=0)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -93,18 +90,10 @@ class ConversationMember(models.Model):
 
 
 class Message(models.Model):
-    KINDS = [
-        ("application", "Application"),
-        ("commit", "Commit"),
-        ("welcome", "Welcome"),
-        ("proposal", "Proposal"),
-    ]
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     conversation = models.ForeignKey(
         Conversation, on_delete=models.CASCADE, related_name="messages"
     )
-    # NULL for welcome messages (they are addressed to a device, not "from" a user).
     sender = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -112,24 +101,9 @@ class Message(models.Model):
         blank=True,
         related_name="chat_messages",
     )
-    sender_device = models.ForeignKey(
-        "accounts.TrustedDevice",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="chat_messages",
-    )
     seq = models.BigIntegerField()
-    epoch = models.IntegerField()
-    kind = models.CharField(max_length=16, choices=KINDS)
-    mls_payload = models.BinaryField()
-    recipient_device = models.ForeignKey(
-        "accounts.TrustedDevice",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="welcome_messages",
-    )
+    # Sealed JSON content (apps.vault, purpose "message", owner = conversation).
+    content_enc = models.BinaryField()
     reply_to = models.ForeignKey(
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="replies"
     )
@@ -149,61 +123,4 @@ class Message(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.conversation_id}:{self.seq}:{self.kind}"
-
-
-class WelcomeRecipient(models.Model):
-    """One stored Welcome addressed to many devices.
-
-    A Welcome created for N new members is a single MLS message (each member
-    finds its own encrypted group secrets inside it). Storing it once with N
-    recipient rows instead of N copies keeps large groups (announcements,
-    many-recipient threads) at O(size) storage. API visibility stays per
-    device owner (SEC-07 server side).
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="welcome_recipients")
-    device = models.ForeignKey(
-        "accounts.TrustedDevice", on_delete=models.CASCADE, related_name="welcome_deliveries"
-    )
-
-    class Meta:
-        db_table = "welcome_recipients"
-        constraints = [
-            models.UniqueConstraint(fields=["message", "device"], name="uq_welcome_recipient"),
-        ]
-
-
-class GroupCryptoEpoch(models.Model):
-    """Server-side bookkeeping of MLS epochs (docs/phase1/04-erd.md §4.2 و).
-
-    Records WHICH device committed WHICH epoch with HOW MANY active members
-    — metadata only, never secrets. Clients enforce the cryptography; this
-    table lets the server gate commit ordering and lets clients audit history.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    conversation = models.ForeignKey(
-        Conversation, on_delete=models.CASCADE, related_name="crypto_epochs"
-    )
-    epoch = models.IntegerField()
-    commit_hash = models.BinaryField(null=True, blank=True)
-    committed_by_device = models.ForeignKey(
-        "accounts.TrustedDevice",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="committed_epochs",
-    )
-    member_count = models.IntegerField()
-    started_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "group_crypto_epochs"
-        constraints = [
-            models.UniqueConstraint(fields=["conversation", "epoch"], name="unq_epoch_conv_epoch"),
-        ]
-
-    def __str__(self):
-        return f"{self.conversation_id}:epoch{self.epoch}"
+        return f"{self.conversation_id}:{self.seq}"

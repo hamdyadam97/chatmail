@@ -4,9 +4,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path("key/", views.ArchiveKeyView.as_view(), name="archive-key"),
-    path("key/shares/", views.ArchiveKeyShareView.as_view(), name="archive-key-shares"),
-    path("key/shares/mine/", views.MyArchiveKeyShareView.as_view(), name="archive-key-share-mine"),
-    path("copies/", views.ArchiveCopyListView.as_view(), name="archive-copies"),
-    path("copies/<uuid:correspondence_id>/", views.ArchiveCopyDetailView.as_view(), name="archive-copy"),
+    path("", views.ArchiveStatusView.as_view(), name="archive-status"),
+    path("items/", views.ArchiveItemListView.as_view(), name="archive-items"),
+    path("items/<uuid:correspondence_id>/", views.ArchiveItemDetailView.as_view(), name="archive-item"),
 ]

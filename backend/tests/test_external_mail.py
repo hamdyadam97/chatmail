@@ -1,7 +1,6 @@
-"""External mail: addressing, inbound ingestion (sealed to devices, nothing
-readable stored), Postfix exit codes, outbound via Brevo (mocked), and the
-per-employee mailbox settings gate."""
-import base64
+"""External mail: addressing, inbound ingestion (sealed with the server key,
+nothing readable stored), Postfix exit codes, outbound via Brevo (mocked),
+and the per-employee mailbox settings gate."""
 import io
 import json
 import os
@@ -9,17 +8,13 @@ import sys
 from email.message import EmailMessage
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from django.core.management import call_command
 
-from apps.accounts.models import TrustedDevice
 from apps.audit.models import AuditLog
 from apps.correspondence.models import StoredFile
-from apps.correspondence.services import blob_storage
-from apps.external_mail import crypto, services
-from apps.external_mail.models import ExternalMailbox, ExternalMessage, ExternalMessageCopy
+from apps.correspondence.services import read_blob
+from apps.external_mail import services
+from apps.external_mail.models import ExternalMailbox, ExternalMessage
 from apps.notifications.models import Notification
 
 from .conftest import assign_role, auth_headers, login_and_get_access
@@ -39,20 +34,8 @@ def _mail_settings(settings):
     settings.CLAMD_SOCKET = ""
 
 
-def keyed_device(user, label="laptop"):
-    priv = X25519PrivateKey.generate()
-    pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-    device = TrustedDevice.objects.create(
-        user=user, device_label=label, platform="test", identity_sign_pub=os.urandom(32), kem_pub=pub, status="active"
-    )
-    return device, priv
-
-
-def open_copy(message, device, priv) -> dict:
-    copy = ExternalMessageCopy.objects.get(message=message, device=device)
-    plain = crypto.unseal(priv, bytes(copy.ephemeral_pub), bytes(copy.iv), bytes(copy.ciphertext),
-                          crypto.copy_aad(message.id, device.id))
-    return json.loads(plain)
+def open_copy(message) -> dict:
+    return services.message_content(ExternalMessage.objects.get(id=message.id))
 
 
 def mail(to="ahmed@" + DOMAIN, subject="عرض أسعار", body=CANARY, html=None, attachment=None, **headers) -> bytes:
@@ -74,9 +57,7 @@ def mail(to="ahmed@" + DOMAIN, subject="عرض أسعار", body=CANARY, html=No
 
 @pytest.fixture
 def ahmed(user_factory):
-    user = user_factory("ahmed")
-    device, priv = keyed_device(user)
-    return {"user": user, "device": device, "priv": priv}
+    return {"user": user_factory("ahmed")}
 
 
 # --- addresses ------------------------------------------------------------------------------
@@ -109,27 +90,22 @@ def test_disabled_or_inactive_mailbox_is_unknown(ahmed):
 
 # --- inbound ---------------------------------------------------------------------------------
 
-def test_ingest_seals_to_each_device_and_stores_nothing_readable(ahmed, settings):
-    phone, phone_priv = keyed_device(ahmed["user"], "phone")
+def test_ingest_seals_content_and_stores_nothing_readable(ahmed, settings):
     pdf = b"%PDF-1.7 " + CANARY.encode() + os.urandom(64)
     m = services.ingest(mail(attachment=pdf), recipient=f"ahmed@{DOMAIN}")
     assert m.direction == "in" and m.mail_from == "sales@example.com" and m.attachment_count == 1
 
-    for device, priv in ((ahmed["device"], ahmed["priv"]), (phone, phone_priv)):
-        content = open_copy(m, device, priv)
-        assert content["subject"] == "عرض أسعار" and CANARY in content["body"]
-        assert content["from"]["address"] == "sales@example.com"
+    content = open_copy(m)
+    assert content["subject"] == "عرض أسعار" and CANARY in content["body"]
+    assert content["from"]["address"] == "sales@example.com"
     att = {a["name"]: a for a in content["attachments"]}
     assert set(att) == {"offer.pdf", "original.eml"}
-    stored = StoredFile.objects.get(id=att["offer.pdf"]["id"])
-    with blob_storage().open(stored.storage_key, "rb") as fh:
-        blob = fh.read()
-    key = base64.b64decode(att["offer.pdf"]["key"])
-    assert AESGCM(key).decrypt(blob[:12], blob[12:], crypto.ATTACHMENT_AAD) == pdf
+    assert read_blob(StoredFile.objects.get(id=att["offer.pdf"]["id"])) == pdf
 
-    # nothing readable at rest: rows, sealed copies, blobs
-    rows = repr(list(ExternalMessage.objects.values())) + repr(list(ExternalMessageCopy.objects.values_list("ciphertext", flat=True)))
+    # nothing readable at rest: rows and blobs
+    rows = repr(list(ExternalMessage.objects.values()))
     assert CANARY not in rows and "عرض أسعار" not in rows
+    assert "عرض".encode() not in bytes(ExternalMessage.objects.get(id=m.id).content_enc)
     root = settings.ENCRYPTED_BLOB_ROOT
     for dirpath, _, files in os.walk(root):
         for f in files:
@@ -143,17 +119,16 @@ def test_ingest_seals_to_each_device_and_stores_nothing_readable(ahmed, settings
 def test_html_only_mail_becomes_plain_text(ahmed):
     html = "<html><head><style>p{}</style><script>alert(1)</script></head><body><p>مرحبا</p><a href='https://x.example/a'>link</a></body></html>"
     m = services.ingest(mail(html=html), recipient=f"ahmed@{DOMAIN}")
-    content = open_copy(m, ahmed["device"], ahmed["priv"])
+    content = open_copy(m)
     assert "مرحبا" in content["body"] and "https://x.example/a" in content["body"]
     assert "<script>" not in content["body"] and "alert(1)" not in content["body"] and content["html_converted"]
 
 
-def test_unknown_no_device_and_too_large(ahmed, user_factory, settings):
+def test_unknown_and_too_large(ahmed, user_factory, settings):
     with pytest.raises(services.UnknownRecipient):
         services.ingest(mail(), recipient=f"nobody@{DOMAIN}")
-    user_factory("sara")
-    with pytest.raises(services.TemporaryFailure):  # can't seal for nobody yet -> Postfix retries
-        services.ingest(mail(), recipient=f"sara@{DOMAIN}")
+    user_factory("sara")  # a user who never signed in still receives mail
+    assert services.ingest(mail(), recipient=f"sara@{DOMAIN}").owner.username == "sara"
     settings.EXTERNAL_MAIL_MAX_BYTES = 100
     with pytest.raises(Exception):
         services.ingest(mail(), recipient=f"ahmed@{DOMAIN}")
@@ -175,9 +150,6 @@ def test_postfix_command_exit_codes(ahmed, monkeypatch):
 
     assert run(mail(), f"ahmed@{DOMAIN}") == 0
     assert run(mail(), f"ghost@{DOMAIN}") == 67
-    ahmed["device"].status = "revoked"
-    ahmed["device"].save()
-    assert run(mail(), f"ahmed@{DOMAIN}") == 75
 
 
 def test_recipient_map(ahmed, user_factory, tmp_path):
@@ -216,7 +188,7 @@ def test_send_requires_permission_then_goes_out_as_the_employee(ahmed, monkeypat
 
     sent = ExternalMessage.objects.get(id=r.json()["id"])
     assert sent.direction == "out" and sent.in_reply_to_id == inbound.id
-    assert CANARY in open_copy(sent, ahmed["device"], ahmed["priv"])["body"]
+    assert CANARY in open_copy(sent)["body"]
     assert CANARY not in repr(list(ExternalMessage.objects.values()))
 
 
@@ -232,15 +204,17 @@ def test_send_rejects_internal_and_failures_leave_no_row(ahmed, monkeypatch, api
 
 # --- API -----------------------------------------------------------------------------------------
 
-def test_messages_are_private_and_sealed_per_device(ahmed, user_factory, api_client):
+def test_messages_are_private_to_their_owner(ahmed, user_factory, api_client):
     m = services.ingest(mail(), recipient=f"ahmed@{DOMAIN}")
     user_factory("mallory")
     login_and_get_access(api_client, "mallory")
     assert api_client.get(f"{API}messages/").json()["count"] == 0
     assert api_client.get(f"{API}messages/{m.id}/").status_code == 403
     login_and_get_access(api_client, "ahmed")
-    detail = api_client.get(f"{API}messages/{m.id}/?device_id={ahmed['device'].id}").json()
-    assert detail["sealed"]["ciphertext"] and "subject" not in detail
+    detail = api_client.get(f"{API}messages/{m.id}/").json()
+    assert detail["content"]["subject"] == "عرض أسعار" and detail["subject"] == "عرض أسعار"
+    listing = api_client.get(f"{API}messages/?q=اسعار").json()
+    assert [x["id"] for x in listing["results"]] == [str(m.id)]
     me = api_client.get(f"{API}me/").json()
     assert me["address"] == f"ahmed@{DOMAIN}" and me["unread"] == 1 and me["sending_enabled"] is False
     api_client.post(f"{API}messages/{m.id}/read/")

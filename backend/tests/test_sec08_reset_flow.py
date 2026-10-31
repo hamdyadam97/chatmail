@@ -1,13 +1,10 @@
-"""SEC-08: password reset is login-only and structurally isolated from
-any crypto store.
+"""Password reset (admin-issued temporary password).
 
 Full flow asserted:
   - temp password (16 chars) returned exactly once
   - login with temp password works; must_change_password flag set
   - all pre-existing sessions revoked
-  - CANARY: trusted_devices rows of the user are unchanged
-  - CANARY: user_crypto_identities (now that crypto_keys is built) is
-    untouched by the reset — rows before == rows after
+  - signed-in browsers (trusted_devices rows) are not changed by the reset
   - audit row written without the temp password value
 """
 import uuid as uuidlib
@@ -18,7 +15,6 @@ from rest_framework.test import APIClient
 from apps.accounts.models import TrustedDevice, UserSession
 from apps.audit.models import AuditLog
 from apps.authorization.models import Role, UserRoleAssignment
-from apps.crypto_keys.models import UserCryptoIdentity
 
 from .conftest import auth_headers, login
 
@@ -31,7 +27,7 @@ def _access(client, username):
     return login(client, username).json()["access"]
 
 
-def test_full_reset_flow_with_crypto_canary(api_client, user_factory, role_factory,
+def test_full_reset_flow(api_client, user_factory, role_factory,
                                             institute_a, branch_a):
     admin = user_factory("sec08_admin")
     role_factory(admin, "sys_admin")
@@ -43,12 +39,8 @@ def test_full_reset_flow_with_crypto_canary(api_client, user_factory, role_facto
     login(second_client, "sec08_target")
     assert UserSession.objects.filter(user=target, revoked_at__isnull=True).count() == 2
 
-    # --- canary snapshot of the crypto-adjacent stores ---
     devices_before = list(
         TrustedDevice.objects.filter(user=target).order_by("id").values()
-    )
-    identities_before = list(
-        UserCryptoIdentity.objects.filter(user=target).order_by("user_id").values()
     )
     assert len(devices_before) >= 1
 
@@ -64,17 +56,10 @@ def test_full_reset_flow_with_crypto_canary(api_client, user_factory, role_facto
     assert target.must_change_password is True
     assert UserSession.objects.filter(user=target, revoked_at__isnull=True).count() == 0
 
-    # --- canary: zero writes to any crypto-related store ---
     devices_after = list(
         TrustedDevice.objects.filter(user=target).order_by("id").values()
     )
     assert devices_before == devices_after
-    # the crypto identity table may exist now (crypto_keys phase) but the
-    # reset must not touch it — SEC-08 isolation holds as "no change".
-    identities_after = list(
-        UserCryptoIdentity.objects.filter(user=target).order_by("user_id").values()
-    )
-    assert identities_before == identities_after
 
     # --- audit: event written, secret value absent ---
     row = AuditLog.objects.get(action="password_reset")

@@ -1,20 +1,20 @@
-"""Official correspondence services — metadata + ciphertext only.
+"""Official correspondence services.
 
-Docs: docs/phase1/03-key-management.md §3.4 (one MLS group per thread),
-docs/phase1/05-permissions-design.md §5.3 (read derivation),
+Docs: docs/phase1/05-permissions-design.md §5.3 (read derivation),
 docs/phase1/04-erd.md §4.2 د/ز.
 
-Flow (all content encrypted on the client):
-  1. prepare  — POST /correspondences/: creates the thread Conversation
-     (type=correspondence, members = sender + recipients) and a draft row.
-  2. MLS setup — the client posts Welcome(s) + Commit through the existing
-     /conversations/{thread}/messages/ endpoint (pure delivery service).
-  3. send — POST /correspondences/{id}/send/: stores the encrypted content
-     (one MLS application message), binds attachments, allocates the
-     reference number and freezes the row (immutable afterwards).
-Replies live in the same thread (same MLS group). Forwards open a NEW thread
-whose content the forwarder re-encrypted, so new recipients never see the
-source thread.
+Content is sealed at rest with the server key (apps.vault — user decision
+2026-10-31, Outlook-style mail): any login of a participant reads it, from
+any browser, with no device keys.
+
+  * A correspondence thread is a ``messaging.Conversation(type=correspondence)``
+    whose members are the sender and recipients; each sent item's
+    {subject, body, attachment ids, forwarded quote} is one sealed message.
+  * Drafts live on the server (sealed ``draft_enc``) so they follow the user.
+  * Sending freezes the row and issues the reference number.
+  * Replies stay in the thread; a forward opens a NEW thread whose content the
+    server copies from the source, so new recipients never see the source
+    thread itself.
 
 Invariants:
   * can_read derives ONLY from participant rows (sender + to/cc). No role,
@@ -35,11 +35,12 @@ from django.utils import timezone
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 from rest_framework.status import HTTP_409_CONFLICT
 
+from apps import vault
 from apps.accounts.models import User
 from apps.audit.services import log
 from apps.authorization.services import has_permission
 from apps.messaging.models import Conversation, ConversationMember
-from apps.messaging.services import get_active_membership, store_message
+from apps.messaging.services import get_active_membership, message_content, store_message
 from apps.notifications.services import notify
 from apps.org.models import EmployeeMembership
 
@@ -182,19 +183,48 @@ def allocate_reference_number(membership, when) -> str:
     raise Conflict("Could not allocate a reference number; retry.")
 
 
-# --- prepare (root / reply / forward) -----------------------------------------
+# --- content -----------------------------------------------------------------
 
-def _load_recipients(requester, to_ids, cc_ids, bcc_ids) -> dict[str, list[User]]:
+MAX_SUBJECT = 500
+MAX_BODY = 100_000
+
+
+def build_content(*, subject: str, body: str, attachment_ids, forwarded: dict | None = None) -> dict:
+    subject = (subject or "").strip()
+    if len(subject) > MAX_SUBJECT:
+        raise ValidationError({"subject": f"الحد الأقصى {MAX_SUBJECT} حرف."})
+    if len(body or "") > MAX_BODY:
+        raise ValidationError({"body": "النص طويل جدًا."})
+    content = {"subject": subject, "body": body or "", "attachments": [str(i) for i in attachment_ids]}
+    if forwarded:
+        content["forwarded"] = forwarded
+    return content
+
+
+def correspondence_content(correspondence) -> dict | None:
+    """Opened content of a sent item, or of a draft (None if neither opens)."""
+    if correspondence.content_message_id:
+        return message_content(correspondence.content_message)
+    if correspondence.draft_enc:
+        try:
+            return vault.open_json(correspondence.draft_enc, purpose="draft", owner=correspondence.id)
+        except vault.VaultError:
+            return None
+    return None
+
+
+# --- create / edit drafts, send ------------------------------------------------
+
+def _load_recipients(requester, to_ids, cc_ids, bcc_ids, *, require_to: bool) -> dict[str, list[User]]:
     if bcc_ids and not settings.CORRESPONDENCE_BCC_ENABLED:
         raise ValidationError({"bcc_user_ids": "النسخة المخفية (BCC) معطّلة بسياسة النظام."})
     if bcc_ids:
-        # MLS rosters are visible to every group member, so a BCC recipient
-        # cannot share the thread's group; it needs its own per-recipient
-        # thread, which is not built yet. Refuse rather than leak.
+        # Thread members see each other; a hidden recipient would need its own
+        # per-recipient thread, which is not built. Refuse rather than leak.
         raise ValidationError({"bcc_user_ids": "BCC requires per-recipient threads (not built yet)."})
     to_ids = [str(i) for i in to_ids]
     cc_ids = [str(i) for i in cc_ids]
-    if not to_ids:
+    if require_to and not to_ids:
         raise ValidationError({"to_user_ids": "مستلم واحد على الأقل في «إلى»."})
     all_ids = to_ids + cc_ids
     if len(all_ids) != len(set(all_ids)):
@@ -209,11 +239,6 @@ def _load_recipients(requester, to_ids, cc_ids, bcc_ids) -> dict[str, list[User]
     return {"to": [users[i] for i in to_ids], "cc": [users[i] for i in cc_ids]}
 
 
-def _validate_group_id(mls_group_id: bytes) -> None:
-    if not (16 <= len(mls_group_id) <= 32):
-        raise ValidationError({"mls_group_id": "mls_group_id must be 16-32 bytes."})
-
-
 @dataclass
 class PrepareResult:
     correspondence: Correspondence
@@ -224,32 +249,33 @@ def _existing_by_client_ref(requester, client_ref):
     return Correspondence.objects.filter(sender=requester, client_ref=client_ref).first()
 
 
-def _create_thread(requester, recipients: dict[str, list[User]], mls_group_id: bytes) -> Conversation:
-    thread = Conversation.objects.create(
-        type="correspondence", mls_group_id=mls_group_id, created_by=requester
-    )
-    ConversationMember.objects.create(
-        conversation=thread, user=requester, member_role="admin", added_by=requester
-    )
-    for user in recipients["to"] + recipients["cc"]:
+def _set_audience(correspondence, requester, recipients, added_via) -> None:
+    """(Re)write the participant rows and thread members of an unsent item."""
+    thread = correspondence.thread
+    correspondence.participants.all().delete()
+    thread.members.exclude(user=requester).delete()
+    if not thread.members.filter(user=requester).exists():
         ConversationMember.objects.create(
-            conversation=thread, user=user, member_role="member", added_by=requester
+            conversation=thread, user=requester, member_role="admin", added_by=requester
         )
-    return thread
-
-
-def _add_participants(correspondence, requester, recipients, added_via) -> None:
     CorrespondenceParticipant.objects.create(
         correspondence=correspondence, user=requester, kind="from", added_via=added_via
     )
     for kind in ("to", "cc"):
         for user in recipients[kind]:
+            ConversationMember.objects.create(
+                conversation=thread, user=user, member_role="member", added_by=requester
+            )
             CorrespondenceParticipant.objects.create(
                 correspondence=correspondence, user=user, kind=kind, added_via=added_via
             )
 
 
-def prepare_correspondence(
+def _seal_draft(correspondence, content: dict) -> None:
+    correspondence.draft_enc = vault.seal_json(content, purpose="draft", owner=correspondence.id)
+
+
+def create_correspondence(
     *,
     requester,
     to_ids,
@@ -259,28 +285,48 @@ def prepare_correspondence(
     classification,
     due_date,
     membership_id,
-    mls_group_id: bytes,
     client_ref,
+    subject,
+    body,
+    attachment_ids,
+    send: bool,
     forward_source: Correspondence | None = None,
 ) -> PrepareResult:
+    """New correspondence (or forward): saved as a draft, then sent when
+    ``send`` — one call from the compose window."""
     existing = _existing_by_client_ref(requester, client_ref)
     if existing is not None:
+        if send and not existing.is_sent:
+            send_correspondence(requester=requester, correspondence=existing)
+            existing.refresh_from_db()
         return PrepareResult(existing, created=False)
     membership = resolve_sender_membership(requester, membership_id)
     require_send_permission(requester, membership)
-    recipients = _load_recipients(requester, to_ids, cc_ids, bcc_ids)
-    _validate_group_id(mls_group_id)
-    if Conversation.objects.filter(mls_group_id=mls_group_id).exists():
-        raise ValidationError({"mls_group_id": "mls_group_id already in use."})
-    if forward_source is not None and not (
-        forward_source.is_sent and can_read(requester, forward_source)
-    ):
-        raise PermissionDenied("You are not a participant of the source correspondence.")
+    recipients = _load_recipients(requester, to_ids, cc_ids, bcc_ids, require_to=send)
+    files = _resolve_attachments(requester, attachment_ids)
+    forwarded = None
+    if forward_source is not None:
+        if not (forward_source.is_sent and can_read(requester, forward_source)):
+            raise PermissionDenied("You are not a participant of the source correspondence.")
+        source = correspondence_content(forward_source) or {}
+        forwarded = {
+            "reference_number": forward_source.reference_number,
+            "sender_name": forward_source.sender.full_name,
+            "sent_at": forward_source.sent_at.isoformat() if forward_source.sent_at else None,
+            "subject": source.get("subject", ""),
+            "body": source.get("body", ""),
+        }
+        # The forward carries the source's attachments too (download rights
+        # follow the new binding).
+        source_files = [str(i) for i in source.get("attachments", [])]
+        attachment_ids = source_files + [str(f.id) for f in files if str(f.id) not in source_files]
+    content = build_content(subject=subject, body=body, attachment_ids=[str(i) for i in attachment_ids],
+                            forwarded=forwarded)
 
     added_via = "forward" if forward_source is not None else "original"
     with transaction.atomic():
-        thread = _create_thread(requester, recipients, mls_group_id)
-        correspondence = Correspondence.objects.create(
+        thread = Conversation.objects.create(type="correspondence", created_by=requester)
+        correspondence = Correspondence(
             sender=requester,
             sender_membership=membership,
             thread=thread,
@@ -289,7 +335,9 @@ def prepare_correspondence(
             due_date=due_date,
             client_ref=client_ref,
         )
-        _add_participants(correspondence, requester, recipients, added_via)
+        _seal_draft(correspondence, content)
+        correspondence.save(force_insert=True)
+        _set_audience(correspondence, requester, recipients, added_via)
         if forward_source is not None:
             CorrespondenceForwarding.objects.create(
                 source=forward_source, forwarded_by=requester, new_correspondence=correspondence
@@ -310,10 +358,35 @@ def prepare_correspondence(
             "source_id": str(forward_source.id) if forward_source else None,
         },
     )
+    if send:
+        correspondence = send_correspondence(requester=requester, correspondence=correspondence)
     return PrepareResult(correspondence, created=True)
 
 
-def prepare_reply(*, requester, parent, priority, due_date, membership_id, client_ref) -> PrepareResult:
+def update_draft(*, requester, correspondence, to_ids, cc_ids, priority, classification, due_date,
+                 subject, body, attachment_ids) -> Correspondence:
+    if correspondence.sender_id != requester.id:
+        raise PermissionDenied("Only the sender can edit this draft.")
+    if correspondence.is_sent:
+        raise Conflict("A sent correspondence is immutable.")
+    recipients = _load_recipients(requester, to_ids, cc_ids, [], require_to=False)
+    _resolve_attachments(requester, attachment_ids)
+    previous = correspondence_content(correspondence) or {}
+    content = build_content(subject=subject, body=body, attachment_ids=attachment_ids,
+                            forwarded=previous.get("forwarded"))
+    added_via = "forward" if hasattr(correspondence, "forwarded_from") else "original"
+    with transaction.atomic():
+        correspondence.priority = priority
+        correspondence.classification = classification
+        correspondence.due_date = due_date
+        _seal_draft(correspondence, content)
+        correspondence.save(update_fields=["priority", "classification", "due_date", "draft_enc"])
+        _set_audience(correspondence, requester, recipients, added_via)
+    return correspondence
+
+
+def prepare_reply(*, requester, parent, priority, due_date, membership_id, client_ref,
+                  subject, body, attachment_ids) -> PrepareResult:
     """A reply stays in the parent's thread: its audience is the thread's
     live members (reply-all). To answer a subset, start a new correspondence."""
     existing = _existing_by_client_ref(requester, client_ref)
@@ -329,6 +402,8 @@ def prepare_reply(*, requester, parent, priority, due_date, membership_id, clien
         raise PermissionDenied("You are not a member of this correspondence thread.")
     membership = resolve_sender_membership(requester, membership_id)
     require_send_permission(requester, membership)
+    _resolve_attachments(requester, attachment_ids)
+    content = build_content(subject=subject, body=body, attachment_ids=attachment_ids)
 
     audience = [
         p
@@ -347,7 +422,7 @@ def prepare_reply(*, requester, parent, priority, due_date, membership_id, clien
 
     root = parent.thread_root or parent
     with transaction.atomic():
-        correspondence = Correspondence.objects.create(
+        correspondence = Correspondence(
             sender=requester,
             sender_membership=membership,
             thread=parent.thread,
@@ -358,7 +433,16 @@ def prepare_reply(*, requester, parent, priority, due_date, membership_id, clien
             due_date=due_date,
             client_ref=client_ref,
         )
-        _add_participants(correspondence, requester, recipients, "reply")
+        _seal_draft(correspondence, content)
+        correspondence.save(force_insert=True)
+        CorrespondenceParticipant.objects.create(
+            correspondence=correspondence, user=requester, kind="from", added_via="reply"
+        )
+        for kind in ("to", "cc"):
+            for user in recipients[kind]:
+                CorrespondenceParticipant.objects.create(
+                    correspondence=correspondence, user=user, kind=kind, added_via="reply"
+                )
         CorrespondenceEvent.objects.create(
             correspondence=correspondence, actor=requester, event_type="created",
             metadata={"reply_to": str(parent.id)},
@@ -383,57 +467,44 @@ def _resolve_attachments(requester, attachment_ids) -> list[StoredFile]:
     return files
 
 
-def send_correspondence(
-    *,
-    requester,
-    correspondence,
-    mls_payload: bytes,
-    client_msg_id,
-    epoch: int,
-    sender_device_id,
-    attachment_ids,
-    archive_copy=None,
-) -> Correspondence:
-    from apps.archive import services as archive
-
+def send_correspondence(*, requester, correspondence) -> Correspondence:
+    """Freeze a draft: its sealed content becomes the thread message, the
+    reference number is issued and recipients are notified."""
     if correspondence.sender_id != requester.id:
         raise PermissionDenied("Only the sender can send this correspondence.")
     if correspondence.is_sent:
-        if str(correspondence.content_message.client_msg_id) == str(client_msg_id):
-            return correspondence  # idempotent retry
-        raise Conflict("Correspondence already sent; it is immutable.")
-    thread_membership = get_active_membership(correspondence.thread_id, requester)
-    if thread_membership is None:
+        return correspondence  # idempotent retry
+    if get_active_membership(correspondence.thread_id, requester) is None:
         raise PermissionDenied("You are not a member of this correspondence thread.")
-    files = _resolve_attachments(requester, attachment_ids)
-    archive.check_copy(correspondence, archive_copy)  # before anything is broadcast
+    content = correspondence_content(correspondence)
+    if content is None:
+        raise ValidationError({"detail": "Draft content is missing."})
+    if not content["subject"] and not content["body"].strip():
+        raise ValidationError({"subject": "اكتب عنوانًا أو نصًا."})
+    if not correspondence.participants.filter(kind="to", removed_at__isnull=True).exists():
+        raise ValidationError({"to_user_ids": "مستلم واحد على الأقل في «إلى»."})
+    files = _resolve_attachments(requester, content["attachments"])
 
     with transaction.atomic():
         locked = Correspondence.objects.select_for_update().get(pk=correspondence.pk)
         if locked.is_sent:
-            raise Conflict("Correspondence already sent; it is immutable.")
+            return locked
         result = store_message(
             conversation=locked.thread,
             requester=requester,
-            membership=thread_membership,
-            kind="application",
-            mls_payload=mls_payload,
-            client_msg_id=client_msg_id,
-            epoch=epoch,
-            sender_device_id=sender_device_id,
+            content=content,
+            client_msg_id=uuid.uuid4(),
             via_correspondence=True,
         )
-        if not result.created:
-            raise Conflict("client_msg_id already used in this thread.")
         now = timezone.now()
         locked.reference_number = allocate_reference_number(locked.sender_membership, now)
         locked.content_message = result.message
+        locked.draft_enc = None
         locked.status = "sent"
         locked.sent_at = now
-        locked.save(update_fields=["reference_number", "content_message", "status", "sent_at"])
+        locked.save(update_fields=["reference_number", "content_message", "draft_enc", "status", "sent_at"])
         for stored in files:
-            EncryptedAttachment.objects.create(stored_file=stored, correspondence=locked)
-        archive.attach_copy(locked, archive_copy)
+            EncryptedAttachment.objects.get_or_create(stored_file=stored, correspondence=locked)
         CorrespondenceEvent.objects.create(
             correspondence=locked, actor=requester, event_type="sent",
             metadata={"attachment_count": len(files), "seq": result.message.seq},
@@ -621,62 +692,51 @@ def send_due_reminders(today=None) -> dict:
     return counts
 
 
-# --- encrypted blobs -----------------------------------------------------------
-
-# Magic numbers of common plaintext formats. Our client format is
-# IV(12) || AES-GCM ciphertext+tag, so a blob opening with one of these is
-# almost certainly an unencrypted file (defense-in-depth; AGENTS rule 4).
-_PLAINTEXT_MAGIC = (
-    b"%PDF", b"\x89PNG", b"\xff\xd8\xff", b"GIF8", b"PK\x03\x04", b"\xd0\xcf\x11\xe0",
-    b"{\\rtf", b"<?xml", b"<!DOC", b"<html", b"ID3", b"RIFF", b"\x1f\x8b",
-)
-MIN_BLOB_BYTES = 12 + 16 + 1  # IV + tag + one byte
-
+# --- attachments (sealed at rest) -----------------------------------------------
 
 def blob_storage() -> FileSystemStorage:
     return FileSystemStorage(location=settings.ENCRYPTED_BLOB_ROOT)
 
 
-def blob_looks_plaintext(data: bytes) -> bool:
-    if data.startswith(_PLAINTEXT_MAGIC):
-        return True
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
-
-
-def store_blob(user, data: bytes) -> StoredFile:
-    if len(data) < MIN_BLOB_BYTES:
-        raise ValidationError({"file": "encrypted blob too small."})
+def store_blob(user, data: bytes, *, name: str, mime: str) -> StoredFile:
+    """Seal an uploaded file with the server key; name and type are sealed too."""
+    if not data:
+        raise ValidationError({"file": "الملف فارغ."})
     if len(data) > settings.ENCRYPTED_ATTACHMENT_MAX_BYTES:
-        raise ValidationError({"file": "encrypted blob too large."})
-    if blob_looks_plaintext(data):
-        raise ValidationError({"file": "blob must be client-side encrypted, not plaintext."})
+        raise ValidationError({"file": "الملف أكبر من الحد المسموح."})
+    stored = StoredFile(uploader=user)
+    sealed = vault.seal(data, purpose="file", owner=stored.id)
     key_hex = uuid.uuid4().hex
     storage_key = f"{key_hex[:2]}/{key_hex[2:4]}/{key_hex}"
-    saved_key = blob_storage().save(storage_key, ContentFile(data))
-    stored = StoredFile.objects.create(
-        storage_key=saved_key,
-        ciphertext_size=len(data),
-        ciphertext_sha256=hashlib.sha256(data).digest(),
-        uploader=user,
+    stored.storage_key = blob_storage().save(storage_key, ContentFile(sealed))
+    stored.ciphertext_size = len(sealed)
+    stored.ciphertext_sha256 = hashlib.sha256(sealed).digest()
+    stored.meta_enc = vault.seal_json(
+        {"name": (name or "attachment")[:255], "mime": (mime or "application/octet-stream")[:255], "size": len(data)},
+        purpose="file-meta", owner=stored.id,
     )
+    stored.save(force_insert=True)
     log(
         actor=user,
         action="attachment_uploaded",
         target_type="stored_file",
         target_id=stored.id,
-        metadata={"ciphertext_size": len(data)},
+        metadata={"size": len(data)},
     )
     return stored
 
 
+def file_meta(stored_file) -> dict:
+    try:
+        meta = vault.open_json(stored_file.meta_enc, purpose="file-meta", owner=stored_file.id)
+    except (vault.VaultError, TypeError):
+        meta = {"name": "attachment", "mime": "application/octet-stream", "size": stored_file.ciphertext_size}
+    return {"id": str(stored_file.id), **meta}
+
+
 def can_download(user, stored_file) -> bool:
     """Uploader before binding, a reader of any correspondence it is bound
-    to, or an archive officer for archived correspondence. Holding the blob is
-    useless without the key carried in MLS content / the archive copy."""
+    to, or an archive officer for archived correspondence."""
     from apps.archive.services import officer_may_download
 
     bindings = list(
@@ -698,5 +758,5 @@ def get_downloadable(user, stored_file_id) -> StoredFile:
 
 def read_blob(stored_file) -> bytes:
     with blob_storage().open(stored_file.storage_key, "rb") as fh:
-        return fh.read()
+        return vault.open_(fh.read(), purpose="file", owner=stored_file.id)
 

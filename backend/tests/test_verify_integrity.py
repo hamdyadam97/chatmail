@@ -11,7 +11,6 @@ from apps.messaging.models import Conversation, Message
 
 from .correspondence_utils import (  # noqa: F401  (fixtures)
     _blob_root,
-    encrypted_blob,
     office,
     prepare_and_send,
     upload,
@@ -22,8 +21,8 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def healthy(api_client, office):
-    blob_id = upload(api_client, office["h_s"], encrypted_blob(2048)).json()["id"]
-    prepare_and_send(api_client, office["h_s"], office["d_s"], [office["r1"]], attachment_ids=[blob_id])
+    blob_id = upload(api_client, office["h_s"], b"%PDF-1.7 " + bytes(range(256)) * 8).json()["id"]
+    prepare_and_send(api_client, office["h_s"], [office["r1"]], attachment_ids=[blob_id])
     return StoredFile.objects.get(id=blob_id)
 
 
@@ -40,7 +39,22 @@ def test_passes_on_healthy_data(healthy, capsys):
     code, out = run(capsys)
     assert code == 0, out
     assert "[OK] blobs: 1 blob(s)" in out
+    assert "[OK] content_key" in out
     assert "all integrity checks passed" in out
+
+
+def test_detects_a_different_content_key(healthy, capsys, settings):
+    import base64
+
+    from apps import vault
+
+    settings.CONTENT_ENCRYPTION_KEY = base64.b64encode(b"k" * 32).decode()
+    vault._cipher.cache_clear()
+    try:
+        code, out = run(capsys)
+    finally:
+        vault._cipher.cache_clear()
+    assert code == 1 and "[FAIL] content_key" in out
 
 
 def test_detects_tampered_blob(healthy, capsys):
@@ -66,8 +80,7 @@ def test_detects_missing_blob(healthy, capsys):
 def test_detects_plaintext_written_around_the_api(healthy, capsys):
     conv = Conversation.objects.filter(type="correspondence").first()
     Message.objects.create(
-        conversation=conv, seq=999, epoch=1, kind="application",
-        mls_payload=b'{"subject": "plain"}', client_msg_id=uuid.uuid4(),
+        conversation=conv, seq=999, content_enc=b'{"subject": "plain"}', client_msg_id=uuid.uuid4(),
     )
     code, out = run(capsys)
     assert code == 1 and "[FAIL] ciphertext" in out

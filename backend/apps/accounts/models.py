@@ -89,15 +89,9 @@ class User(AbstractBaseUser):
 
 
 class TrustedDevice(models.Model):
-    """Per-user device registry row.
-
-    identity_sign_pub (Ed25519, 32B) and kem_pub (X25519/HPKE, 32B) are the
-    device's public keys per docs/phase1/04-erd.md §4.2 (ب). They are NULL for
-    legacy placeholder rows created by the login flow before the crypto phase;
-    every device registered through apps.crypto_keys carries both. The
-    identity_sign_pub column is globally unique so one key identity can never
-    be registered as two devices. No private key material is ever stored here.
-    """
+    """A browser/app the user signed in from (one row per user + browser +
+    platform). Login sessions hang off it. It holds no keys: mail content is
+    encrypted at rest on the server (apps.vault)."""
 
     STATUS = [
         ("pending", "Pending"),
@@ -112,13 +106,7 @@ class TrustedDevice(models.Model):
     device_label = models.CharField(max_length=255)
     platform = models.CharField(max_length=64, blank=True, default="")
     app_version = models.CharField(max_length=64, blank=True, default="")
-    identity_sign_pub = models.BinaryField(null=True, blank=True, unique=True)
-    kem_pub = models.BinaryField(null=True, blank=True)
     status = models.CharField(max_length=16, choices=STATUS, default="pending")
-    approved_by_device = models.ForeignKey(
-        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="approved_devices"
-    )
-    approved_at = models.DateTimeField(null=True, blank=True)
     last_seen_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
