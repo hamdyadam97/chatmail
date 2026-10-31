@@ -1,29 +1,44 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { FileText, Lock, Megaphone, MessageCircle, RefreshCw, Search as SearchIcon, Globe } from 'lucide-react';
+import { FileText, Globe, Megaphone, MessageCircle, Search as SearchIcon } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Spinner } from '../../shared/ui';
-import { cn } from '../../shared/lib/cn';
-import { CryptoGate } from '../correspondence/components';
-import { decryptEverything, getLocalIndex, invalidateLocalIndex, type IndexProgress } from './localSearch';
-import { highlightParts, type SearchDoc, type SearchHit } from './searchIndex';
+import { apiFetch, toUserMessage } from '../../shared/api';
 
-const KIND_META: Record<SearchDoc['kind'], { label: string; icon: typeof FileText }> = {
+type Kind = 'correspondence' | 'announcement' | 'external' | 'chat';
+
+interface SearchHit {
+  kind: Kind;
+  id: string;
+  title: string;
+  snippet: string;
+  meta: string;
+  date: string | null;
+  link: string;
+}
+
+const KIND_META: Record<Kind, { label: string; icon: typeof FileText }> = {
   correspondence: { label: 'مراسلة', icon: FileText },
   announcement: { label: 'تعميم', icon: Megaphone },
   external: { label: 'بريد خارجي', icon: Globe },
   chat: { label: 'محادثة', icon: MessageCircle },
 };
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** إبراز كلمات البحث كما كُتبت (الخادم يطابق مع توحيد الحروف العربية). */
 function Highlight({ text, query }: { text: string; query: string }) {
+  const words = query.split(/\s+/).filter((w) => w.length > 1).map(escapeRe);
+  if (words.length === 0) return <>{text}</>;
+  const parts = text.split(new RegExp(`(${words.join('|')})`, 'gi'));
   return (
     <>
-      {highlightParts(text, query).map((part, i) =>
-        part.match ? (
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
           <mark key={i} className="rounded bg-amber-100 px-0.5 text-gray-900">
-            {part.text}
+            {part}
           </mark>
         ) : (
-          <span key={i}>{part.text}</span>
+          <span key={i}>{part}</span>
         ),
       )}
     </>
@@ -35,49 +50,47 @@ function formatDate(iso?: string | null): string {
   return new Intl.DateTimeFormat('ar', { dateStyle: 'medium' }).format(new Date(iso));
 }
 
-function SearchView() {
+export function SearchPage() {
   const location = useLocation();
   const initial = (location.state as { q?: string } | null)?.q ?? '';
   const [q, setQ] = useState(initial);
-  const [kind, setKind] = useState<SearchDoc['kind'] | ''>('');
+  const [searched, setSearched] = useState('');
+  const [kind, setKind] = useState<Kind | ''>('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
-  const [indexSize, setIndexSize] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<IndexProgress | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const run = async (query: string, force = false) => {
+  const run = async (query: string) => {
+    const text = query.trim();
+    if (text.length < 2) {
+      setHits(null);
+      return;
+    }
     setBusy(true);
+    setError(null);
     try {
-      const index = await getLocalIndex(force);
-      setIndexSize(index.size);
-      setHits(query.trim() ? index.search(query, 100, kind || undefined) : null);
+      const params = new URLSearchParams({ q: text });
+      if (kind) params.set('kind', kind);
+      const data = await apiFetch<{ results: SearchHit[] }>(`/search/?${params}`);
+      setHits(data.results);
+      setSearched(text);
+    } catch (err) {
+      setError(toUserMessage(err, 'تعذر البحث'));
     } finally {
       setBusy(false);
     }
   };
 
   useEffect(() => {
-    void run(initial);
+    void run(q);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
-
-  const indexAll = async () => {
-    setProgress({ done: 0, total: 0, failed: 0 });
-    const final = await decryptEverything(setProgress);
-    setProgress(final);
-    invalidateLocalIndex();
-    await run(q, true);
-  };
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-gray-900">البحث في المحتوى</h2>
-        <p className="mt-1 flex items-start gap-1.5 text-xs text-gray-500">
-          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
-          البحث يجري على جهازك فقط في المحتوى الذي فُك عليه؛ لا يُرسل أي مصطلح بحث إلى الخادم، والفهرس في الذاكرة ويُمحى بإغلاق
-          الصفحة. للبحث بالرقم المرجعي على الخادم استخدم بحث صناديق المراسلات.
-        </p>
+        <p className="mt-1 text-xs text-gray-500">يبحث في بريدك ومحادثاتك وتعاميمك فقط — ما يحق لك قراءته.</p>
       </div>
 
       <form
@@ -92,7 +105,7 @@ function SearchView() {
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="ابحث في العناوين والنصوص وأسماء المرفقات والمحادثات…"
+            placeholder="ابحث في العناوين والنصوص والأرقام المرجعية والمحادثات…"
             className="ps-9"
             autoFocus
             aria-label="نص البحث"
@@ -101,7 +114,7 @@ function SearchView() {
         </div>
         <select
           value={kind}
-          onChange={(e) => setKind(e.target.value as SearchDoc['kind'] | '')}
+          onChange={(e) => setKind(e.target.value as Kind | '')}
           className="h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm"
           aria-label="النوع"
         >
@@ -116,47 +129,32 @@ function SearchView() {
         </Button>
       </form>
 
-      <Card className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm">
-        <span className="text-gray-600">
-          {indexSize === null ? '…' : `${indexSize} عنصرًا مفهرسًا على هذا الجهاز.`}{' '}
-          {progress && progress.total > 0 && (
-            <span className="text-gray-500">
-              فُك {progress.done}/{progress.total}
-              {progress.failed > 0 && ` (تعذر ${progress.failed} — غالبًا سابقة لإضافة هذا الجهاز)`}
-            </span>
-          )}
-        </span>
-        <Button variant="outline" size="sm" onClick={() => void indexAll()} disabled={Boolean(progress && progress.done < progress.total)}>
-          <RefreshCw className={cn('h-4 w-4', progress && progress.done < progress.total && 'animate-spin')} />
-          فك وفهرسة كل مراسلاتي وتعاميمي
-        </Button>
-      </Card>
-
+      {error && <p className="text-sm text-red-600">{error}</p>}
       {busy && hits === null ? (
         <div className="flex justify-center py-10">
           <Spinner />
         </div>
       ) : hits === null ? null : hits.length === 0 ? (
-        <EmptyState icon={SearchIcon} title="لا نتائج" description="جرّب كلمات أخرى، أو فك وفهرسة كل المراسلات أولًا." />
+        <EmptyState icon={SearchIcon} title="لا نتائج" description="جرّب كلمات أخرى." />
       ) : (
         <Card className="overflow-hidden">
-          {hits.map(({ doc, snippet }) => {
-            const Kind = KIND_META[doc.kind];
+          {hits.map((hit) => {
+            const meta = KIND_META[hit.kind];
             return (
-              <Link key={doc.id} to={doc.link} className="block border-b border-gray-100 px-4 py-3 last:border-0 hover:bg-gray-50">
+              <Link key={`${hit.kind}:${hit.id}`} to={hit.link} className="block border-b border-gray-100 px-4 py-3 last:border-0 hover:bg-gray-50">
                 <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <Kind.icon className="h-3.5 w-3.5" />
-                  <span>{Kind.label}</span>
-                  {doc.meta && <span>· {doc.meta}</span>}
-                  {doc.date && <span className="ms-auto">{formatDate(doc.date)}</span>}
+                  <meta.icon className="h-3.5 w-3.5" />
+                  <span>{meta.label}</span>
+                  {hit.meta && <span>· {hit.meta}</span>}
+                  {hit.date && <span className="ms-auto">{formatDate(hit.date)}</span>}
                 </div>
-                {doc.title && (
+                {hit.title && (
                   <p className="mt-1 font-medium text-gray-900">
-                    <Highlight text={doc.title} query={q} />
+                    <Highlight text={hit.title} query={searched} />
                   </p>
                 )}
                 <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-words text-sm text-gray-600">
-                  <Highlight text={snippet} query={q} />
+                  <Highlight text={hit.snippet} query={searched} />
                 </p>
               </Link>
             );
@@ -164,13 +162,5 @@ function SearchView() {
         </Card>
       )}
     </div>
-  );
-}
-
-export function SearchPage() {
-  return (
-    <CryptoGate>
-      <SearchView />
-    </CryptoGate>
   );
 }

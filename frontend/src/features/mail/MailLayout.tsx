@@ -6,8 +6,8 @@
  *   /mail/compose[?draft|?forward]   رسالة جديدة في لوحة القراءة
  *   /correspondence/:id      (روابط قديمة/إشعارات) = الوارد + الرسالة
  *
- * كل فك التشفير على الجهاز (CryptoGate + خدمات المراسلات)؛ القائمة تعرض
- * العناوين والمقتطفات من الكاش المحلي المغلّف فقط.
+ * الخادم يعيد العنوان وأول سطر مع كل صف، والمحتوى كاملًا في لوحة القراءة
+ * (مخزّن مشفّرًا عنده ويُفتح للمشاركين فقط).
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -34,11 +34,8 @@ import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
 import { correspondenceApi, FOLDER_LABELS, type CorrespondenceSummary, type Folder } from '../correspondence/api';
 import { ComposeForm } from '../correspondence/ComposePage';
-import { CryptoGate } from '../correspondence/components';
 import { ExternalMail, useMailbox } from '../external/ExternalMail';
 import { Details } from '../correspondence/DetailsPage';
-import { DraftsPage } from '../correspondence/DraftsPage';
-import { getStoredContent, openCorrespondence } from '../correspondence/service';
 
 const FOLDERS: Array<{ key: Folder; slug: string; icon: typeof Inbox }> = [
   { key: 'inbox', slug: 'inbox', icon: Inbox },
@@ -137,7 +134,7 @@ function FolderPane({ folder }: { folder: Folder | 'external' }) {
       </nav>
       <p className="flex items-start gap-1.5 p-3 text-[11px] leading-5 text-gray-500">
         <Lock className="mt-0.5 h-3 w-3 shrink-0 text-emerald-600" />
-        كل الرسائل مشفّرة طرفًا لطرف وتُفك على هذا الجهاز فقط.
+        الرسائل محفوظة مشفّرة على الخادم ولا تُعرض إلا لأطرافها.
       </p>
     </aside>
   );
@@ -148,49 +145,6 @@ function FolderPane({ folder }: { folder: Folder | 'external' }) {
 // ---------------------------------------------------------------------------
 
 const NO_ITEMS: CorrespondenceSummary[] = [];
-
-interface Preview {
-  subject: string;
-  snippet: string;
-  attachments: number;
-}
-
-/** العناوين والمقتطفات من الكاش المحلي، ويُفك غير المفكوك في الخلفية بالتتابع. */
-function usePreviews(items: CorrespondenceSummary[]): Map<string, Preview> {
-  const [previews, setPreviews] = useState<Map<string, Preview>>(new Map());
-  useEffect(() => {
-    let cancelled = false;
-    const toPreview = (c: { subject: string; body: string; attachments: unknown[] }): Preview => ({
-      subject: c.subject,
-      snippet: c.body.replace(/\s+/g, ' ').slice(0, 120),
-      attachments: c.attachments.length,
-    });
-    (async () => {
-      const found = new Map<string, Preview>();
-      for (const item of items) {
-        const stored = await getStoredContent(item.id);
-        if (stored) found.set(item.id, toPreview(stored.content));
-      }
-      if (!cancelled) setPreviews((prev) => (prev.size === found.size && [...found.keys()].every((k) => prev.has(k)) ? prev : new Map(found)));
-      for (const item of items) {
-        if (cancelled || found.has(item.id) || item.status === 'draft') continue;
-        try {
-          const opened = await openCorrespondence(await correspondenceApi.get(item.id));
-          if (opened.state === 'ok' && !cancelled) {
-            found.set(item.id, toPreview(opened.stored.content));
-            setPreviews(new Map(found));
-          }
-        } catch {
-          // يبقى «مشفّرة» — لوحة القراءة تعرض السبب.
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [items]);
-  return previews;
-}
 
 function timeLabel(iso: string | null): string {
   if (!iso) return '';
@@ -231,7 +185,6 @@ function groupByConversation(items: CorrespondenceSummary[], folder: Folder): Co
 function MessageRow({
   item,
   folder,
-  preview,
   selected,
   count,
   unread,
@@ -239,7 +192,6 @@ function MessageRow({
 }: {
   item: CorrespondenceSummary;
   folder: Folder;
-  preview?: Preview;
   selected: boolean;
   count: number;
   unread: boolean;
@@ -279,22 +231,18 @@ function MessageRow({
           {item.reply_to_id && <Reply className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
           {item.is_forward && <Forward className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
           <span className={cn('truncate text-sm', unread ? 'font-semibold text-primary-800' : 'text-gray-700')}>
-            {preview ? preview.subject || '(بلا عنوان)' : item.status === 'draft' ? 'لم يكتمل إرسالها' : (
-              <span className="inline-flex items-center gap-1 text-gray-400">
-                <Lock className="h-3 w-3" />
-                مشفّرة…
-              </span>
-            )}
+            {item.status === 'draft' && <span className="me-1 text-red-600">[مسودة]</span>}
+            {item.subject || '(بلا عنوان)'}
           </span>
           <span className="ms-auto flex shrink-0 items-center gap-1">
-            {preview && preview.attachments > 0 && <span className="text-xs text-gray-400" title="مرفقات">📎</span>}
+            {item.has_attachments && <span className="text-xs text-gray-400" title="مرفقات">📎</span>}
             {item.priority === 'urgent' && <span className="text-xs font-bold text-red-600" title="عاجلة">!</span>}
             {item.priority === 'high' && <span className="text-xs font-bold text-amber-600" title="عالية">!</span>}
             {item.is_important && <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />}
           </span>
         </div>
         <p className="truncate text-xs text-gray-500">
-          {preview?.snippet ?? ''}
+          {item.preview}
           {overdue && <span className="ms-1 text-red-600">· متأخرة</span>}
         </p>
       </div>
@@ -317,7 +265,6 @@ function MessageList({ folder, selectedId, mobileHidden }: { folder: Folder; sel
     refetchInterval: 30_000,
   });
   const items = data?.results ?? NO_ITEMS;
-  const previews = usePreviews(items);
   const groups = useMemo(() => groupByConversation(items, folder), [items, folder]);
 
   return (
@@ -368,8 +315,8 @@ function MessageList({ folder, selectedId, mobileHidden }: { folder: Folder; sel
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="بحث بالرقم المرجعي…"
-            aria-label="بحث بالرقم المرجعي"
+            placeholder="بحث في العنوان والنص والرقم…"
+            aria-label="بحث في المجلد"
             className="h-8 w-full rounded-md border border-gray-200 bg-gray-50 ps-8 text-sm focus:border-primary-500 focus:bg-white focus:outline-none"
           />
         </form>
@@ -392,7 +339,6 @@ function MessageList({ folder, selectedId, mobileHidden }: { folder: Folder; sel
               key={latest.id}
               item={latest}
               folder={folder}
-              preview={previews.get(latest.id)}
               selected={selectedId !== undefined && ids.includes(selectedId)}
               count={Math.max(ids.length, latest.thread_count ?? 1)}
               unread={unread}
@@ -444,47 +390,26 @@ export function MailLayout({ mode }: { mode?: 'compose' | 'legacy' }) {
 
   if (params.folder === 'external') {
     return (
-      <CryptoGate>
-        <div className="flex h-full">
-          <FolderPane folder="external" />
-          <ExternalMail id={params.id} composing={composing} folderSelect={<FolderSelect value="external" />} />
-        </div>
-      </CryptoGate>
+      <div className="flex h-full">
+        <FolderPane folder="external" />
+        <ExternalMail id={params.id} composing={composing} folderSelect={<FolderSelect value="external" />} />
+      </div>
     );
   }
 
-  // المسودات محلية على الجهاز: قائمتها هي صفحة المسودات نفسها.
-  const list =
-    folder === 'drafts' ? (
-      <section
-        className={cn(
-          'min-w-0 overflow-y-auto border-e border-gray-200 bg-white p-4',
-          composing ? 'hidden w-[380px] shrink-0 md:block' : 'flex-1',
-        )}
-      >
-        <DraftsPage />
-      </section>
-    ) : (
-      <MessageList folder={folder} selectedId={selectedId} mobileHidden={Boolean(selectedId) || composing} />
-    );
-
   return (
-    <CryptoGate>
-      <div className="flex h-full">
-        <FolderPane folder={folder} />
-        {list}
-        {(folder !== 'drafts' || composing) && (
-          <section className={cn('min-w-0 flex-1 overflow-y-auto bg-gray-50', !selectedId && !composing && 'hidden md:block')}>
-            {composing ? (
-              <ComposeForm key={composeKey} embedded onCancel={() => navigate(`/mail/${folderToSlug(folder)}`)} />
-            ) : selectedId ? (
-              <Details key={selectedId} id={selectedId} embedded />
-            ) : (
-              <ReadingPlaceholder />
-            )}
-          </section>
+    <div className="flex h-full">
+      <FolderPane folder={folder} />
+      <MessageList folder={folder} selectedId={selectedId} mobileHidden={Boolean(selectedId) || composing} />
+      <section className={cn('min-w-0 flex-1 overflow-y-auto bg-gray-50', !selectedId && !composing && 'hidden md:block')}>
+        {composing ? (
+          <ComposeForm key={composeKey} embedded onCancel={() => navigate(`/mail/${folderToSlug(folder)}`)} />
+        ) : selectedId ? (
+          <Details key={selectedId} id={selectedId} embedded />
+        ) : (
+          <ReadingPlaceholder />
         )}
-      </div>
-    </CryptoGate>
+      </section>
+    </div>
   );
 }

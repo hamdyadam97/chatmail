@@ -1,0 +1,22 @@
+{
+  "name": "نظام المراسلات الداخلية المشفرة",
+  "short_name": "المراسلات",
+  "description": "مراسلات ومحادثات مشفّرة طرفًا لطرف لمجموعة المعاهد",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/mail/inbox",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f9fafb",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "رسالة جديدة", "url": "/mail/inbox/compose", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "المحادثات", "url": "/chat", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

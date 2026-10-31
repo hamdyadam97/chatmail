@@ -10,9 +10,9 @@ import { useAuth } from './AuthContext';
 type Step = 'password' | 'otp';
 
 const POINTS = [
-  { icon: Lock, title: 'تشفير طرفًا لطرف', text: 'المراسلات تُشفّر على جهازك؛ لا يقرؤها إلا أطرافها — ولا الخادم ولا الإدارة.' },
-  { icon: ShieldCheck, title: 'أجهزة موثّقة وتحقق ثنائي', text: 'كل جهاز جديد يُعتمد من جهاز موثّق، وكل اطلاع إداري يُسجَّل.' },
-  { icon: MonitorSmartphone, title: 'على الكمبيوتر والموبايل', text: 'نفس الحماية في المتصفح وفي التطبيق المثبّت على هاتفك.' },
+  { icon: Lock, title: 'محفوظة مشفّرة', text: 'المراسلات والمرفقات تُحفظ مشفّرة، ولا يطلع عليها إلا أطرافها.' },
+  { icon: ShieldCheck, title: 'تحقق ثنائي وسجل تدقيق', text: 'احمِ حسابك بالتحقق بخطوتين؛ وكل اطلاع إداري يُسجَّل.' },
+  { icon: MonitorSmartphone, title: 'من أي جهاز', text: 'ادخل من الكمبيوتر أو الموبايل وتجد بريدك كاملًا.' },
 ];
 
 /** شعارات معاهد المجموعة على بطاقة بيضاء (ألوان الشعارات لا تظهر على الأزرق). */
@@ -135,7 +135,7 @@ export default function LoginPage() {
         </div>
 
         <div className="relative hidden lg:block">
-          <h1 className="max-w-md text-3xl font-bold leading-snug">مراسلاتكم الرسمية ومحادثاتكم، مشفّرة من البداية للنهاية.</h1>
+          <h1 className="max-w-md text-3xl font-bold leading-snug">مراسلاتكم الرسمية ومحادثاتكم، في مكان واحد آمن.</h1>
           <ul className="mt-10 space-y-6">
             {POINTS.map(({ icon: Icon, title, text }) => (
               <li key={title} className="flex gap-4">

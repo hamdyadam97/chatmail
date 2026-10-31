@@ -1,32 +1,22 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserMinus, UserPlus } from 'lucide-react';
-import { Button, Label, Spinner } from '../../shared/ui';
+import { Button, Label } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
 import { useAuth } from '../auth/AuthContext';
-import { addMembers, removeMembers, rosterUserIds } from '../../crypto/mls';
 import { chatApi, type Conversation } from './api';
 
 interface MemberManagerProps {
   conversation: Conversation;
 }
 
-/**
- * إدارة الأعضاء (للمسؤول في المحادثات الجماعية). قائمة الأعضاء الحاليين
- * تُشتق من roster المجموعة محليًا (`userId|deviceId`) لأن العقد لا يوفّر
- * GET للأعضاء — افتراض موثق لتنسيقه مع الـbackend.
- */
+/** إدارة الأعضاء (للمسؤول في المحادثات الجماعية). */
 export function MemberManager({ conversation }: MemberManagerProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<number | string | null>(null);
-
-  const { data: roster, isLoading } = useQuery({
-    queryKey: ['roster', String(conversation.id)],
-    queryFn: () => rosterUserIds(conversation),
-  });
 
   const { data: directory } = useQuery({
     queryKey: ['directory-users'],
@@ -35,18 +25,15 @@ export function MemberManager({ conversation }: MemberManagerProps) {
   });
 
   const me = String(user!.id);
-  const others = (roster ?? []).filter((id) => String(id) !== me);
+  const others = (conversation.members ?? []).map((m) => m.id).filter((id) => String(id) !== me);
   const candidates = (directory ?? []).filter(
     (u) => String(u.id) !== me && !others.map(String).includes(String(u.id)),
   );
 
-  const invalidate = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['roster', String(conversation.id)] });
-    await queryClient.invalidateQueries({ queryKey: ['conversations'] });
-  };
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['conversations'] });
 
   const addMutation = useMutation({
-    mutationFn: (userIds: Array<number | string>) => addMembers(conversation, userIds),
+    mutationFn: (userIds: Array<number | string>) => chatApi.addMembers(conversation.id, userIds),
     onSuccess: () => {
       setPicking(false);
       setError(null);
@@ -56,7 +43,7 @@ export function MemberManager({ conversation }: MemberManagerProps) {
   });
 
   const removeMutation = useMutation({
-    mutationFn: (userIds: Array<number | string>) => removeMembers(conversation, userIds),
+    mutationFn: (userIds: Array<number | string>) => chatApi.removeMembers(conversation.id, userIds),
     onSuccess: () => {
       setConfirmRemove(null);
       setError(null);
@@ -75,13 +62,7 @@ export function MemberManager({ conversation }: MemberManagerProps) {
         </Button>
       </div>
 
-      {isLoading && (
-        <div className="flex justify-center py-3">
-          <Spinner />
-        </div>
-      )}
-
-      {!isLoading && (
+      {(
         <ul className="space-y-1">
           {others.map((id) => {
             const known = directory?.find((u) => String(u.id) === String(id));
@@ -90,7 +71,7 @@ export function MemberManager({ conversation }: MemberManagerProps) {
                 <span>{known?.full_name ?? known?.username ?? `مستخدم ${id}`}</span>
                 {confirmRemove === id ? (
                   <span className="flex items-center gap-2">
-                    <span className="text-xs text-red-600">تأكيد الإبطال من المحادثة؟</span>
+                    <span className="text-xs text-red-600">تأكيد الإزالة من المحادثة؟</span>
                     <Button
                       variant="danger"
                       size="sm"
@@ -126,7 +107,7 @@ export function MemberManager({ conversation }: MemberManagerProps) {
                 key={String(candidate.id)}
                 type="button"
                 className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                onClick={() => addMutation.mutate([/^\d+$/.test(String(candidate.id)) ? Number(candidate.id) : candidate.id])}
+                onClick={() => addMutation.mutate([candidate.id])}
               >
                 <span>{candidate.full_name ?? candidate.username ?? `مستخدم ${candidate.id}`}</span>
                 <UserPlus className="h-4 w-4 text-primary-600" />

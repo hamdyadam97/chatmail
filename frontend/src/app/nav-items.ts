@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, MonitorSmartphone, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu } from 'lucide-react';
+import { BarChart3, Building2, CheckCheck, Contact, FolderTree, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu } from 'lucide-react';
 
 export interface RailItem {
   to: string;
@@ -40,9 +40,9 @@ export const MOBILE_TABS: RailItem[] = [
 ];
 
 export const MORE_ITEMS: HubItem[] = [
-  { to: '/search', label: 'البحث', description: 'في بريدك ومحادثاتك — على جهازك فقط', icon: Search },
+  { to: '/search', label: 'البحث', description: 'في بريدك ومحادثاتك وتعاميمك', icon: Search },
   { to: '/admin', label: 'الإدارة', description: 'الموظفون والهيكل والتقارير والأرشيف', icon: Building2 },
-  { to: '/settings', label: 'الإعدادات', description: 'أجهزتي والأمان والاستعادة والإشعارات', icon: Settings },
+  { to: '/settings', label: 'الإعدادات', description: 'الأمان والإشعارات', icon: Settings },
 ];
 
 export interface HubItem {
@@ -60,12 +60,10 @@ export const ADMIN_ITEMS: HubItem[] = [
   { to: '/roles', label: 'الأدوار والصلاحيات', description: 'ما يمنحه كل دور والإسنادات', icon: Lock },
   { to: '/reports', label: 'التقارير', description: 'أعداد وأزمنة مجمّعة وحالة الخدمات', icon: BarChart3 },
   { to: '/audit-logs', label: 'سجل التدقيق', description: 'لمراقب الأمن المعلن', icon: ScrollText },
-  { to: '/archive', label: 'الأرشيف المركزي', description: 'نسخ المراسلات المؤرشفة — لضباط الأرشيف', icon: Archive },
+  { to: '/archive', label: 'الأرشيف المركزي', description: 'المراسلات المصنّفة للأرشفة — لضباط الأرشيف', icon: Archive },
 ];
 
 export const SETTINGS_ITEMS: HubItem[] = [
-  { to: '/devices', label: 'أجهزتي', description: 'الأجهزة الموثّقة واعتماد جهاز جديد', icon: MonitorSmartphone },
-  { to: '/security', label: 'الأمان', description: 'سلسلة الشفافية ونشاط حسابي', icon: ShieldCheck },
-  { to: '/recovery', label: 'الاستعادة', description: 'مفتاح الاستعادة والنسخ المشفرة', icon: KeyRound },
+  { to: '/security', label: 'الأمان', description: 'نشاط حسابي والأجهزة التي دخلت منها', icon: ShieldCheck },
   { to: '/notifications', label: 'الإشعارات', description: 'كل الإشعارات', icon: Bell },
 ];

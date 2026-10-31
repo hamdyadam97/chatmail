@@ -9,8 +9,6 @@ import { ChevronDown, Hash, Lock, MessageSquarePlus, Plus, X } from 'lucide-reac
 import { Avatar, Spinner } from '../../shared/ui';
 import { useIsDesktop } from '../../shared/lib/useMedia';
 import { cn } from '../../shared/lib/cn';
-import { CryptoGate } from '../correspondence/components';
-import { useCryptoBootstrap } from '../../crypto/useCryptoBootstrap';
 import { chatApi, type Conversation } from './api';
 import { useConversationTitle, useUnread } from './hooks';
 import { MemberManager } from './MemberManager';
@@ -21,7 +19,7 @@ const SIDEBAR_BG = 'bg-[#3f0e40]';
 
 function SidebarItem({ conversation, selected, onSelect }: { conversation: Conversation; selected: boolean; onSelect: () => void }) {
   const title = useConversationTitle(conversation);
-  const unread = useUnread(conversation.id) && !selected;
+  const unread = useUnread(conversation) && !selected;
   return (
     <button
       type="button"
@@ -90,15 +88,14 @@ function MembersPanel({ conversation, onClose }: { conversation: Conversation; o
         </ul>
         {conversation.my_role === 'admin' && <MemberManager conversation={conversation} />}
         <p className="text-xs text-gray-500">
-          إزالة عضو تمنعه تشفيريًا من قراءة الرسائل التالية؛ ما قرأه سابقًا لا يمكن سحبه. العضو الجديد لا يرى ما قبل انضمامه.
+          العضو المُزال يفقد الوصول للمحادثة كلها فورًا. العضو الجديد يرى سجل المحادثة كاملًا.
         </p>
       </div>
     </aside>
   );
 }
 
-function Workspace() {
-  const bootstrap = useCryptoBootstrap();
+export function ChatWorkspace() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { conversationId } = useParams<{ conversationId?: string }>();
@@ -124,8 +121,6 @@ function Workspace() {
     if (legacy) navigate(`/chat/${legacy}`, { replace: true });
     else if (desktop && !conversationId && all.length > 0) navigate(`/chat/${all[0].id}`, { replace: true });
   }, [params, conversationId, all, navigate, desktop]);
-
-  if (bootstrap.status !== 'ready') return null; // CryptoGate يعرض الحالة
 
   return (
     <div className="flex h-full">
@@ -166,7 +161,7 @@ function Workspace() {
         </div>
         <p className="flex items-center gap-1.5 border-t border-white/10 px-4 py-2 text-[11px] text-white/50">
           <Lock className="h-3 w-3" />
-          مشفّرة طرفًا لطرف (MLS)
+          محفوظة مشفّرة على الخادم
         </p>
       </aside>
 
@@ -175,7 +170,6 @@ function Workspace() {
           <ThreadView
             key={String(selected.id)}
             conversation={selected}
-            currentDeviceId={bootstrap.deviceId}
             membersOpen={membersOpen}
             onToggleMembers={() => setMembersOpen((v) => !v)}
           />
@@ -200,13 +194,5 @@ function Workspace() {
         />
       )}
     </div>
-  );
-}
-
-export function ChatWorkspace() {
-  return (
-    <CryptoGate>
-      <Workspace />
-    </CryptoGate>
   );
 }

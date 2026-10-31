@@ -4,7 +4,6 @@ import { X } from 'lucide-react';
 import { Button, Input, Label, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
 import { useAuth } from '../auth/AuthContext';
-import { createConversation } from '../../crypto/mls';
 import { chatApi, type Conversation } from './api';
 
 interface NewConversationDialogProps {
@@ -40,12 +39,10 @@ export function NewConversationDialog({ type, onClose, onCreated }: NewConversat
       if (type === 'group' && selected.size < 1) {
         return Promise.reject(new Error('اختر عضوًا واحدًا على الأقل'));
       }
-      const memberIds = [...selected] as Array<number | string>;
-      const numeric = memberIds.map((id) => (/^\d+$/.test(String(id)) ? Number(id) : id));
-      return createConversation({
+      return chatApi.createConversation({
         type,
-        memberUserIds: numeric,
-        title: type === 'group' ? title.trim() || undefined : undefined,
+        member_user_ids: [...selected],
+        title: type === 'group' ? title.trim() : undefined,
       });
     },
     onSuccess: async (conversation) => {
@@ -82,7 +79,7 @@ export function NewConversationDialog({ type, onClose, onCreated }: NewConversat
 
         {type === 'group' && (
           <div className="mb-3">
-            <Label htmlFor="group-title">عنوان المحادثة (يُخزن مشفّرًا)</Label>
+            <Label htmlFor="group-title">عنوان المحادثة</Label>
             <Input
               id="group-title"
               value={title}

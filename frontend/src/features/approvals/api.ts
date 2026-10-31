@@ -15,10 +15,7 @@ export interface DecisionRecord {
   slot_user_id: string;
   approver: UserRef;
   delegated: boolean;
-  device_id: string;
   decided_at: string;
-  payload: string;
-  signature: string;
 }
 
 export interface RequestStep {
@@ -41,7 +38,6 @@ export interface ApprovalRequest {
   completed_at: string | null;
   steps: RequestStep[];
   my_slot: { slot_user_id: string; delegated: boolean } | null;
-  signing_context: string;
 }
 
 export interface Delegation {
@@ -72,8 +68,8 @@ export const approvalsApi = {
   get: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/`),
   create: (body: { correspondence_id: string; steps?: StepSpec[]; workflow_id?: string }) =>
     apiFetch<ApprovalRequest>('/approvals/', { method: 'POST', body }),
-  decide: (id: string, body: { payload: string; signature: string; device_id: string }) =>
-    apiFetch<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body }),
+  decide: (id: string, decision: Decision) =>
+    apiFetch<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body: { decision } }),
   cancel: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/cancel/`, { method: 'POST' }),
   complete: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/complete/`, { method: 'POST' }),
   delegations: () => apiFetch<{ given: Delegation[]; received: Delegation[] }>('/approvals/delegations/'),

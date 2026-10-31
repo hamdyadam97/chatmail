@@ -9,7 +9,7 @@ import base64, os, secrets
 print(f"DJANGO_SECRET_KEY={secrets.token_urlsafe(50)}")
 print(f"AUTH_JWT_SECRET={secrets.token_urlsafe(48)}")
 print(f"AUTH_FERNET_KEY={base64.urlsafe_b64encode(os.urandom(32)).decode()}")
-print(f"CRYPTO_LOG_SIGN_SEED={base64.b64encode(os.urandom(32)).decode()}")
+print(f"CONTENT_ENCRYPTION_KEY={base64.b64encode(os.urandom(32)).decode()}")
 try:  # Web Push (VAPID) signing key — P-256, PKCS#8 DER, base64url
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec

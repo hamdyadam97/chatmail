@@ -17,7 +17,7 @@
 | `systemd/correspondence-web.service` | Daphne خلف nginx، بتقييد systemd (ProtectSystem=strict…) |
 | `systemd/correspondence-reminders.{service,timer}` | `send_announcement_reminders` كل ساعة |
 | `systemd/correspondence-backup.{service,timer}` | نسخ احتياطي ليلي |
-| `nginx/correspondence.conf` | TLS، CSP صارمة (تسمح بـWASM فقط)، تمرير ‎/api و‎/ws، سجلات بلا query string |
+| `nginx/correspondence.conf` | TLS، CSP صارمة (بلا سكربتات خارجية أو مضمّنة)، تمرير ‎/api و‎/ws، سجلات بلا query string |
 | `scripts/gen-secrets.sh` | يولّد الأسرار (تُطبع ولا تُكتب على القرص) |
 | `scripts/install.sh` | التثبيت الأول |
 | `scripts/deploy.sh` | البناء والترحيل وإعادة التشغيل والفحوص — لكل تحديث |
@@ -72,7 +72,7 @@ echo 'MIGRATE_DATABASE_URL=postgresql://corr_owner:<CORR_OWNER_PASSWORD>@localho
   | sudo tee /etc/correspondence/migrate.env >/dev/null && sudo chmod 600 /etc/correspondence/migrate.env
 ```
 
-**احفظ نسخة غير متصلة من `CRYPTO_LOG_SIGN_SEED` و`AUTH_FERNET_KEY`**: ضياع الأول يكسر التحقق من سلسلة الشفافية القائمة، وضياع الثاني يُبطل أسرار MFA (يعيد المستخدمون تفعيلها). لا علاقة لأي منهما بفك الرسائل — مفاتيح المحتوى على أجهزة المستخدمين فقط.
+**احفظ نسخة غير متصلة من `/etc/correspondence` كاملًا، وأهم ما فيه `CONTENT_ENCRYPTION_KEY`**: كل الرسائل والمرفقات مشفّرة به على الخادم، فضياعه = ضياع البريد كله ولو سلمت قاعدة البيانات، وتسرّبه مع نسخة القاعدة = كشف البريد. لا تغيّره على نظام قائم. (`deploy.sh` ينشئه مرة واحدة إن لم يوجد.) وضياع `AUTH_FERNET_KEY` يُبطل أسرار MFA فقط (يعيد المستخدمون تفعيلها).
 
 ## 3. التثبيت
 
@@ -113,7 +113,7 @@ sudo bash -c 'set -a; . /etc/correspondence/correspondence.env; set +a; cd /opt/
   sudo bash /opt/correspondence/deploy/scripts/restore-test.sh
   ```
 
-  يتحقق من SHA256، يسترجع في قاعدة `correspondence_restore_test` ومجلد مؤقت، ثم يشغّل `verify_integrity`: الترحيلات، سلسلة الشفافية، كل مرفق بحجمه وبصمته، أن كل رسائل MLS ثنائية (لا نص صريح)، وأن عدّادات الأرقام المرجعية متقدمة على كل رقم صادر.
+  يتحقق من SHA256، يسترجع في قاعدة `correspondence_restore_test` ومجلد مؤقت، ثم يشغّل `verify_integrity`: الترحيلات، أن `CONTENT_ENCRYPTION_KEY` يفتح أحدث الرسائل والملفات (استعادة بمفتاح خاطئ تُكتشف هنا)، كل مرفق بحجمه وبصمته، أن كل الرسائل مختومة (لا نص صريح)، وأن عدّادات الأرقام المرجعية متقدمة على كل رقم صادر.
 
 ما يحويه النسخ الاحتياطي: ciphertext وبيانات وصفية فقط — لا يمكن منه قراءة أي مراسلة (SEC-18).
 
@@ -131,7 +131,6 @@ sudo bash -c 'set -a; . /etc/correspondence/correspondence.env; set +a; cd /opt/
 - الخصوصية: الحمولة مشفرة لمفتاح المتصفح (RFC 8291) وتحوي عنوانًا عامًا + اسم المرسِل + رابطًا داخليًا فقط — لا موضوع ولا نص (SEC-11). خدمة الدفع (Google/Mozilla/Microsoft/Apple) ترى توقيت الإشعارات فقط. من لا يريد ذلك يتركها مطفأة.
 - تغيير المفتاح يُبطل كل الاشتراكات؛ يكفي أن يضغط المستخدمون «تفعيل» مرة أخرى.
 
-- **نسخ مفاتيح المستخدمين** (`encrypted_key_backups`) داخل قاعدة البيانات، فتدخل نسخ `backup.sh` تلقائيًا. هي مشفّرة بمفتاح استعادة لا يعرفه الخادم، لكن حجمها ينمو مع بريد المستخدمين (حتى 3 نسخ × 25MB لكل جهاز)، فراقب حجم القاعدة.
 
 ## 9. ملاحظات أمنية
 

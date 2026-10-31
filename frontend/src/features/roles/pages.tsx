@@ -175,8 +175,8 @@ export function Roles() {
         <h2 className="text-lg font-semibold text-gray-900">الأدوار والصلاحيات</h2>
         <p className="mt-1 flex items-start gap-1.5 text-xs text-gray-600">
           <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
-          لا يوجد في هذا النظام أي دور أو صلاحية تمنح قراءة مراسلات الآخرين أو فك تشفيرها — ولا يمكن إنشاؤها. قراءة المحتوى مشتقة فقط
-          من كونك طرفًا فيه.
+          لا يوجد في هذا النظام أي دور أو صلاحية تمنح قراءة مراسلات الآخرين — ولا يمكن إنشاؤها. قراءة المحتوى مشتقة فقط من كونك
+          طرفًا فيه (والأرشيف المركزي يرى المصنّف للأرشفة فقط، مع تسجيل كل اطلاع).
         </p>
       </div>
       <section className="space-y-3">

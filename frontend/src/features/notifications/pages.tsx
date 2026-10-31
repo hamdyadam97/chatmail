@@ -54,7 +54,7 @@ export function Notifications() {
         </div>
       </div>
       <p className="text-xs text-gray-500">
-        الإشعارات لا تحمل أي محتوى (لا عناوين ولا نصوص) — تُفتح المراسلة نفسها لفك محتواها على جهازك.
+        الإشعارات لا تحمل أي محتوى (لا عناوين ولا نصوص) — افتح المراسلة نفسها لقراءتها.
       </p>
       <PushSettingsCard />
       {isLoading ? (

@@ -1,14 +1,9 @@
 /**
- * البريد الخارجي (الإنترنت) — ليس مشفّرًا طرفًا لطرف من مصدره: الخادم يراه لحظة
- * وصوله أو خروجه، ثم يختمه فورًا لأجهزة صاحبه. هنا نفك الختم بمفتاح KEM الجهاز،
- * ونحفظ المحتوى مغلّفًا محليًا (`mail` بمفتاح `ext:<id>`) فيدخل النسخ الاحتياطي والبحث.
+ * البريد الخارجي (الإنترنت): يصل عبر Postfix ويخرج عبر Brevo، ويُحفظ على
+ * الخادم مشفّرًا بمفتاحه ويُعاد لصاحبه فقط.
  */
 import { apiFetch } from '../../shared/api';
-import { EXTERNAL_SEAL_INFO, unseal, type Sealed } from '../../crypto/archive';
-import { deviceFromSeeds, loadCurrentDevice } from '../../crypto/identity';
-import { getRecord, putRecord } from '../../crypto/keystore';
-import { useAuthUser } from '../../crypto/authBridge';
-import type { AttachmentKey } from '../correspondence/content';
+import type { AttachmentMeta } from '../correspondence/api';
 
 export interface MailboxInfo {
   address: string | null;
@@ -22,6 +17,9 @@ export interface MailboxInfo {
 
 export interface ExternalSummary {
   id: string;
+  subject: string;
+  preview: string;
+  from_name: string;
   direction: 'in' | 'out';
   from: string;
   recipients: string[];
@@ -50,7 +48,7 @@ export interface ExternalContent {
   body: string;
   html_converted: boolean;
   auth: 'pass' | 'fail' | 'none';
-  attachments: AttachmentKey[];
+  attachments: AttachmentMeta[];
   removed_infected: string[];
   virus_scan: 'on' | 'off';
 }
@@ -71,10 +69,7 @@ export const externalApi = {
   me: () => apiFetch<MailboxInfo>('/external-mail/me/'),
   list: (page: number, box: 'all' | 'in' | 'out') =>
     apiFetch<Page<ExternalSummary>>(`/external-mail/messages/?page=${page}${box === 'all' ? '' : `&box=${box}`}`),
-  detail: (id: string, deviceId: string) =>
-    apiFetch<ExternalSummary & { sealed: Sealed | null }>(
-      `/external-mail/messages/${id}/?device_id=${encodeURIComponent(deviceId)}`,
-    ),
+  detail: (id: string) => apiFetch<ExternalSummary & { content: ExternalContent | null }>(`/external-mail/messages/${id}/`),
   markRead: (id: string) => apiFetch<null>(`/external-mail/messages/${id}/read/`, { method: 'POST' }),
   send: (body: {
     to: string[];
@@ -89,41 +84,15 @@ export const externalApi = {
     apiFetch<MailboxInfo>(`/external-mail/mailboxes/${userId}/`, { method: 'PATCH', body }),
 };
 
-const cacheKey = (id: string) => `ext:${id}`;
-
-export async function getCachedExternal(id: string): Promise<StoredExternal | undefined> {
-  return getRecord<StoredExternal>('mail', cacheKey(id));
-}
-
 export type ExternalOpen = { state: 'ok'; stored: StoredExternal } | { state: 'unavailable'; reason: string };
 
-/** يفك نسخة الرسالة المختومة لهذا الجهاز (مرة واحدة ثم من الكاش المحلي المغلّف). */
 export async function openExternal(id: string): Promise<ExternalOpen> {
-  const cached = await getCachedExternal(id);
-  if (cached) return { state: 'ok', stored: cached };
-  const device = await loadCurrentDevice(useAuthUser().id);
-  if (!device) return { state: 'unavailable', reason: 'لا مفاتيح جهاز على هذا المتصفح' };
-  const detail = await externalApi.detail(id, String(device.deviceId));
-  if (!detail.sealed) {
-    return {
-      state: 'unavailable',
-      reason: 'هذه الرسالة وصلت قبل اعتماد هذا الجهاز، فلم تُختم له. افتحها من جهازك الذي كان معتمدًا وقتها.',
-    };
-  }
-  const kem = (await deviceFromSeeds(device.signSeed, device.kemSeed)).kem;
-  const plain = await unseal(
-    { privateKey: kem.privateKey, pub: kem.pub },
-    detail.sealed,
-    `corr-external-v1|${id}|${device.deviceId}`,
-    EXTERNAL_SEAL_INFO,
-  );
-  const content = JSON.parse(new TextDecoder().decode(plain)) as ExternalContent;
-  const stored: StoredExternal = {
-    content,
-    meta: { from: detail.from, created_at: detail.created_at, direction: detail.direction },
+  const detail = await externalApi.detail(id);
+  if (!detail.content) return { state: 'unavailable', reason: 'تعذر عرض محتوى هذه الرسالة.' };
+  return {
+    state: 'ok',
+    stored: { content: detail.content, meta: { from: detail.from, created_at: detail.created_at, direction: detail.direction } },
   };
-  await putRecord('mail', cacheKey(id), stored);
-  return { state: 'ok', stored };
 }
 
 export async function fileToBase64(file: File): Promise<string> {

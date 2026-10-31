@@ -4,20 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRight, Hash, Lock, Reply, RotateCcw, Send, ShieldAlert, Users } from 'lucide-react';
 import { cn } from '../../shared/lib/cn';
 import { Avatar, Button, Spinner } from '../../shared/ui';
-import { ApiError } from '../../shared/api';
 import { useAuth } from '../auth/AuthContext';
-import {
-  attachSeqToSent,
-  encryptMessage,
-  feedMessages,
-  getSentMessage,
-  saveSentMessage,
-  setLastReadSeq,
-  syncConversation,
-} from '../../crypto/mls';
-import { uuid4 } from '../../crypto/encoding';
-import { getRecord, putRecord } from '../../crypto/keystore';
-import type { ChatLogRecord } from './chatlog';
 import { chatApi, conversationWsUrl, type Conversation, type Message } from './api';
 import { ChatSocket, type ChatEvent } from './ws';
 import { useConversationTitle } from './hooks';
@@ -25,12 +12,10 @@ import { useConversationTitle } from './hooks';
 interface ViewMessage {
   key: string;
   seq: number | null;
-  kind: string;
-  /** مرسلة من حسابي (أي جهاز من أجهزتي). */
+  /** مرسلة من حسابي (أي جهاز). */
   mine: boolean;
-  /** من جهازي الحالي تحديدًا (لدينا نصها محليًا). */
-  fromThisDevice: boolean;
   plaintext?: string;
+  /** تعذر فتح المحتوى على الخادم. */
   failed: boolean;
   state: 'sending' | 'sent' | 'failed';
   replyToSeq?: number | null;
@@ -41,10 +26,11 @@ interface ViewMessage {
 
 interface ThreadViewProps {
   conversation: Conversation;
-  currentDeviceId: number | string;
   membersOpen?: boolean;
   onToggleMembers?: () => void;
 }
+
+const PAGE = 200;
 
 function dayLabel(iso: string): string {
   const d = new Date(iso);
@@ -55,80 +41,33 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString('ar', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
-function isEpochConflict(err: unknown): boolean {
-  return err instanceof ApiError && err.status === 409;
+function toView(message: Message, meId: number | string): ViewMessage {
+  return {
+    key: message.client_msg_id ? `msg:${message.client_msg_id}` : `seq:${message.seq}`,
+    seq: message.seq,
+    mine: String(message.sender_user_id) === String(meId),
+    plaintext: message.content?.text,
+    failed: message.content === null,
+    state: 'sent',
+    replyToSeq: message.reply_to_seq ?? null,
+    createdAt: message.created_at,
+    clientMsgId: message.client_msg_id,
+    senderUserId: message.sender_user_id ?? '',
+  };
 }
 
-/**
- * يبني صفوف العرض. فك MLS لمرة واحدة: ما فُك الآن يُحفظ مغلّفًا في `chatlog`
- * ويُقرأ منه لاحقًا (إعادة التحميل، البحث المحلي). رسائل أجهزتي الأخرى تُفك
- * كأي رسالة واردة؛ رسائل هذا الجهاز من مخزن `sent`.
- */
-async function viewFromMessages(
-  conversation: Pick<Conversation, 'id' | 'type'>,
-  messages: Message[],
-  feedDecrypted: Map<number, { plaintext?: string; failed: boolean }>,
-  meId: number | string,
-  deviceId: number | string,
-): Promise<ViewMessage[]> {
-  const out: ViewMessage[] = [];
-  for (const message of messages) {
-    if (message.kind !== 'application') continue; // welcome/commit/proposal صفوف داخلية
-    const mine = String(message.sender_user_id) === String(meId);
-    const fromThisDevice = String(message.sender_device_id) === String(deviceId);
-    const logKey = `${conversation.id}:${message.seq}`;
-    const fresh = feedDecrypted.get(message.seq);
-    let plaintext: string | undefined;
-    if (fromThisDevice && message.client_msg_id) {
-      plaintext = (await getSentMessage(message.client_msg_id))?.plaintext;
-    } else if (fresh?.plaintext !== undefined) {
-      plaintext = fresh.plaintext;
-      await putRecord('chatlog', logKey, {
-        conversation_id: String(conversation.id),
-        conversation_type: conversation.type,
-        seq: message.seq,
-        sender_user_id: String(message.sender_user_id),
-        created_at: message.created_at,
-        plaintext,
-      } satisfies ChatLogRecord);
-    } else {
-      plaintext = (await getRecord<ChatLogRecord>('chatlog', logKey))?.plaintext;
-    }
-    if (!mine) {
-      const decrypted = plaintext === undefined ? fresh : undefined;
-      out.push({
-        key: `seq:${message.seq}`,
-        seq: message.seq,
-        kind: message.kind,
-        mine: false,
-        fromThisDevice: false,
-        plaintext,
-        failed: plaintext === undefined && (decrypted?.failed ?? false),
-        state: 'sent',
-        replyToSeq: message.reply_to_seq ?? null,
-        createdAt: message.created_at,
-        senderUserId: message.sender_user_id,
-      });
-    } else {
-      out.push({
-        key: message.client_msg_id ? `own:${message.client_msg_id}` : `seq:${message.seq}`,
-        seq: message.seq,
-        kind: message.kind,
-        mine: true,
-        fromThisDevice,
-        plaintext,
-        failed: false,
-        state: 'sent',
-        replyToSeq: message.reply_to_seq ?? null,
-        createdAt: message.created_at,
-        senderUserId: message.sender_user_id,
-      });
-    }
-  }
-  return out;
+/** يدمج رسائل الخادم مع المعروض: لا تكرار، والمرسلة/الفاشلة محليًا تبقى حتى يعرفها الخادم. */
+function merge(prev: ViewMessage[], incoming: ViewMessage[]): ViewMessage[] {
+  const byKey = new Map(prev.map((m) => [m.key, m]));
+  for (const m of incoming) byKey.set(m.key, m);
+  return [...byKey.values()].sort((x, y) => {
+    if (x.seq === null) return 1;
+    if (y.seq === null) return -1;
+    return x.seq - y.seq;
+  });
 }
 
-export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggleMembers }: ThreadViewProps) {
+export function ThreadView({ conversation, membersOpen, onToggleMembers }: ThreadViewProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -138,114 +77,69 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState('');
   const [replyTo, setReplyTo] = useState<ViewMessage | null>(null);
-  const [revoked, setRevoked] = useState(false);
+  const [removed, setRemoved] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const socketRef = useRef<ChatSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const names = new Map((conversation.members ?? []).map((m) => [String(m.id), m.full_name || m.username]));
   const nameOf = (userId: number | string) =>
     String(userId) === String(user?.id) ? user?.full_name || 'أنا' : names.get(String(userId)) ?? 'عضو';
-  const conversationRef = useRef(conversation);
-  conversationRef.current = conversation;
+  const conversationId = conversation.id;
+
+  const markRead = useCallback(
+    (seq: number) => {
+      if (seq <= 0) return;
+      void chatApi.markRead(conversationId, seq).catch(() => undefined);
+      window.dispatchEvent(new CustomEvent('chat-read', { detail: { id: String(conversationId), seq } }));
+    },
+    [conversationId],
+  );
 
   const loadInitial = useCallback(async () => {
-    const current = conversationRef.current;
     setLoading(true);
     try {
-      const page = await chatApi.getMessages(current.id, 0, 200);
-      const feed = await feedMessages(current, page.messages, currentDeviceId);
-      const view = await viewFromMessages(current, page.messages, feed.decrypted, user!.id, currentDeviceId);
-      // إعادة المزامنة (مثلًا عند اتصال WS) لا تمحو رسائل ما زالت تُرسل أو فشلت
-      // ولم يعرفها الخادم بعد — وإلا اختفت رسالة المستخدم لحظة إرسالها.
-      setMessages((prev) => {
-        const known = new Set(view.map((m) => m.key));
-        const pending = prev.filter((m) => m.state !== 'sent' && !known.has(m.key));
-        return [...view, ...pending];
-      });
-      const maxSeq = page.messages.reduce((m, msg) => Math.max(m, msg.seq), 0);
-      if (maxSeq > 0) {
-        await setLastReadSeq(current.id, maxSeq);
-        window.dispatchEvent(new CustomEvent('chat-read', { detail: { id: String(current.id) } }));
-      }
+      const page = await chatApi.getMessages(conversationId, { latest: true, limit: PAGE });
+      setMessages((prev) => merge(prev, page.messages.map((m) => toView(m, user!.id))));
+      markRead(page.messages.reduce((m, msg) => Math.max(m, msg.seq), 0));
     } catch (err) {
       setBanner(err instanceof Error ? err.message : 'تعذر تحميل الرسائل');
     } finally {
       setLoading(false);
     }
-  }, [currentDeviceId, user]);
+  }, [conversationId, user, markRead]);
 
   const handleIncoming = useCallback(
-    async (event: Extract<ChatEvent, { event: 'message' }>) => {
-      const current = conversationRef.current;
-      const asMessage: Message = {
-        seq: event.seq,
-        kind: event.kind as Message['kind'],
-        sender_user_id: event.sender_user_id,
-        sender_device_id: event.sender_device_id,
-        epoch: event.epoch,
-        mls_payload: event.mls_payload,
-        reply_to_seq: event.reply_to_seq ?? null,
-        client_msg_id: event.client_msg_id,
-        created_at: event.created_at,
-      };
-      try {
-        const feed = await feedMessages(current, [asMessage], currentDeviceId);
-        const view = await viewFromMessages(current, [asMessage], feed.decrypted, user!.id, currentDeviceId);
-        setMessages((prev) => {
-          const known = new Set(prev.map((m) => m.key));
-          // رسالتنا نحن (تأكيد متفائل): نحدّث الحالة بدل إضافة نسخة مكررة
-          const merged = prev.map((m) => {
-            if (m.state === 'sending' && m.clientMsgId && m.clientMsgId === asMessage.client_msg_id) {
-              void attachSeqToSent(m.clientMsgId, asMessage.seq);
-              return { ...m, seq: asMessage.seq, state: 'sent' as const };
-            }
-            return m;
-          });
-          const echoKeys = new Set(
-            prev.filter((m) => m.clientMsgId).map((m) => `own:${m.clientMsgId}`),
-          );
-          const fresh = view.filter((m) => !known.has(m.key) && !echoKeys.has(m.key));
-          return [...merged, ...fresh];
-        });
-        await setLastReadSeq(current.id, event.seq);
-        window.dispatchEvent(new CustomEvent('chat-read', { detail: { id: String(current.id) } }));
-      } catch {
-        // لا نكسر الخيط على خطأ معالجة — ستُعالج عند إعادة المزامنة.
-      }
+    (event: Extract<ChatEvent, { event: 'message' }>) => {
+      setMessages((prev) => merge(prev, [toView(event, user!.id)]));
+      markRead(event.seq);
     },
-    [currentDeviceId, user],
+    [user, markRead],
   );
 
-  // التحميل الأولي + مقبس WS. يعاد الاتصال فقط عند تغيّر المحادثة المفتوحة
-  // (كائن المحادثة نفسه يتجدد مع كل تحديث للقائمة فلا نريد إعادة اتصال دورية).
+  // التحميل الأولي + مقبس WS. يعاد الاتصال فقط عند تغيّر المحادثة المفتوحة.
   useEffect(() => {
     void loadInitial();
-    const id = conversationRef.current.id;
     const socket = new ChatSocket(
-      id,
-      () => chatApi.wsTicket(id).then((r) => r.ticket),
+      conversationId,
+      () => chatApi.wsTicket(conversationId).then((r) => r.ticket),
       conversationWsUrl,
       {
         onEvent: (event: ChatEvent) => {
           if (event.event === 'message') {
-            void handleIncoming(event);
+            handleIncoming(event);
           } else {
-            setBanner(
-              event.event === 'member_added'
-                ? 'انضم عضو جديد إلى المحادثة — جارٍ تحديث المجموعة'
-                : 'غادر عضو المحادثة — جارٍ تحديث المجموعة',
-            );
+            setBanner(event.event === 'member_added' ? 'انضم عضو جديد إلى المحادثة' : 'غادر عضو المحادثة');
             void queryClient.invalidateQueries({ queryKey: ['conversations'] });
           }
         },
         onResync: () => void loadInitial(),
-        onDeviceRevoked: () => setRevoked(true),
+        onRemoved: () => setRemoved(true),
       },
     );
     socketRef.current = socket;
     socket.connect();
     return () => socket.close();
-  }, [conversation.id, loadInitial, handleIncoming, queryClient]);
+  }, [conversationId, loadInitial, handleIncoming, queryClient]);
 
   // أحدث رسالة في الأسفل ظاهرة دائمًا (كما في Slack).
   useEffect(() => {
@@ -255,75 +149,35 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
 
   const doSend = useCallback(
     async (text: string, clientMsgId: string, replyToSeq: number | null) => {
-      const optimistic: ViewMessage = {
-        key: `own:${clientMsgId}`,
-        seq: null,
-        kind: 'application',
-        mine: true,
-        fromThisDevice: true,
-        plaintext: text,
-        failed: false,
-        state: 'sending',
-        replyToSeq,
-        createdAt: new Date().toISOString(),
-        clientMsgId,
-        senderUserId: user!.id,
-      };
-      setMessages((prev) => [...prev, optimistic]);
-      // النص يُحفظ (مغلّفًا) قبل الإرسال: صدى WS لرسالتنا قد يصل قبل اكتمال
-      // الطلب، ومن دون النص المحفوظ يُعرض «…» بدل رسالتنا.
-      await saveSentMessage({
-        client_msg_id: clientMsgId,
-        conversation_id: conversation.id,
-        seq: null,
-        plaintext: text,
-        reply_to_seq: replyToSeq,
-        created_at: optimistic.createdAt,
-      });
+      const key = `msg:${clientMsgId}`;
+      setMessages((prev) =>
+        merge(prev, [
+          {
+            key,
+            seq: null,
+            mine: true,
+            plaintext: text,
+            failed: false,
+            state: 'sending',
+            replyToSeq,
+            createdAt: new Date().toISOString(),
+            clientMsgId,
+            senderUserId: user!.id,
+          },
+        ]),
+      );
       try {
-        const encrypted = await encryptMessage(conversation, text);
-        await chatApi.postMessage(conversation.id, {
-          kind: 'application',
-          mls_payload: encrypted.mls_payload_b64,
+        const sent = await chatApi.postMessage(conversationId, {
+          text,
           client_msg_id: clientMsgId,
-          epoch: encrypted.epoch,
-          sender_device_id: currentDeviceId,
           reply_to_seq: replyToSeq ?? undefined,
         });
-        // إن سبقتنا أحداث WS فالحالة أُقرت sent هناك؛ وإلا نحدّث الآن.
-        setMessages((prev) =>
-          prev.map((m) => (m.clientMsgId === clientMsgId ? { ...m, state: 'sent' as const } : m)),
-        );
-      } catch (err) {
-        if (isEpochConflict(err)) {
-          // تضارب الجيل: مزامنة ثم إعادة إرسال مرة واحدة.
-          try {
-            await syncConversation(conversation, currentDeviceId, (id, after) =>
-              chatApi.getMessages(id, after, 200),
-            );
-            const encrypted = await encryptMessage(conversation, text);
-            await chatApi.postMessage(conversation.id, {
-              kind: 'application',
-              mls_payload: encrypted.mls_payload_b64,
-              client_msg_id: clientMsgId,
-              epoch: encrypted.epoch,
-              sender_device_id: currentDeviceId,
-              reply_to_seq: replyToSeq ?? undefined,
-            });
-            setMessages((prev) =>
-              prev.map((m) => (m.clientMsgId === clientMsgId ? { ...m, state: 'sent' as const } : m)),
-            );
-            return;
-          } catch {
-            // سقطت المحاولة الثانية — نعلّم الفشل أدناه.
-          }
-        }
-        setMessages((prev) =>
-          prev.map((m) => (m.clientMsgId === clientMsgId ? { ...m, state: 'failed' as const } : m)),
-        );
+        setMessages((prev) => merge(prev, [toView(sent, user!.id)]));
+      } catch {
+        setMessages((prev) => prev.map((m) => (m.key === key ? { ...m, state: 'failed' as const } : m)));
       }
     },
-    [conversation, currentDeviceId, user],
+    [conversationId, user],
   );
 
   const onSubmit = (e: React.FormEvent) => {
@@ -333,12 +187,11 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
     setInput('');
     const target = replyTo;
     setReplyTo(null);
-    void doSend(text, uuid4(), target?.seq ?? null);
+    void doSend(text, crypto.randomUUID(), target?.seq ?? null);
   };
 
   const onRetry = (message: ViewMessage) => {
     if (!message.plaintext || !message.clientMsgId) return;
-    setMessages((prev) => prev.map((m) => (m.key === message.key ? { ...m, state: 'sending' as const } : m)));
     void doSend(message.plaintext, message.clientMsgId, message.replyToSeq ?? null);
   };
 
@@ -346,14 +199,13 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
     setMessages((prev) => prev.filter((m) => m.key !== message.key));
   };
 
-  if (revoked) {
+  if (removed) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-10 text-center">
         <ShieldAlert className="h-10 w-10 text-red-500" />
-        <h3 className="text-lg font-semibold text-gray-900">تم إبطال هذا الجهاز</h3>
-        <p className="text-sm text-gray-500">أُغلقت قناة الاتصال من الخادم. راجع صفحة الأجهزة للتفاصيل.</p>
-        <Button variant="outline" onClick={() => navigate('/devices')}>
-          الانتقال إلى الأجهزة
+        <h3 className="text-lg font-semibold text-gray-900">لم تعد عضوًا في هذه المحادثة</h3>
+        <Button variant="outline" onClick={() => navigate('/chat')}>
+          العودة للمحادثات
         </Button>
       </div>
     );
@@ -377,7 +229,7 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
           </button>
           {isDm && <Avatar name={title} size="sm" square />}
           <h3 className="truncate text-base font-bold text-gray-900">{heading}</h3>
-          <Lock className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-label="مشفّرة طرفًا لطرف" />
+          <Lock className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-label="محفوظة مشفّرة" />
         </div>
         {!isDm && onToggleMembers && (
           <button
@@ -412,8 +264,8 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
             <div className="mb-3">{isDm ? <Avatar name={title} size="lg" square /> : <Hash className="h-10 w-10 text-gray-300" />}</div>
             <h4 className="text-xl font-bold text-gray-900">{isDm ? title : `مرحبًا بك في ${heading}`}</h4>
             <p className="mt-1 text-sm text-gray-500">
-              {isDm ? `هذه بداية محادثتك المباشرة مع ${title}.` : 'هذه بداية القناة.'} كل الرسائل مشفّرة طرفًا لطرف — لا يقرؤها الخادم ولا
-              أي مسؤول.
+              {isDm ? `هذه بداية محادثتك المباشرة مع ${title}.` : 'هذه بداية القناة.'} الرسائل محفوظة مشفّرة ولا تُعرض إلا لأعضاء
+              المحادثة.
             </p>
           </div>
         )}
@@ -471,10 +323,10 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
                     </div>
                   ) : null}
                   {message.failed ? (
-                    <p className="text-sm italic text-gray-400">تعذر فك التشفير على هذا الجهاز</p>
+                    <p className="text-sm italic text-gray-400">تعذر عرض هذه الرسالة</p>
                   ) : (
                     <p className="whitespace-pre-wrap break-words text-[15px] leading-6 text-gray-900">
-                      {message.plaintext ?? (message.mine ? 'رسالة من جهاز آخر' : '…')}
+                      {message.plaintext ?? '…'}
                     </p>
                   )}
                   {message.state === 'failed' && (
@@ -538,7 +390,7 @@ export function ThreadView({ conversation, currentDeviceId, membersOpen, onToggl
           <div className="flex items-center justify-between px-2 pb-1.5">
             <span className="flex items-center gap-1 text-[11px] text-gray-400">
               <Lock className="h-3 w-3 text-emerald-600" />
-              مشفّرة · Enter للإرسال · Shift+Enter لسطر جديد
+              Enter للإرسال · Shift+Enter لسطر جديد
             </span>
             <button
               type="submit"

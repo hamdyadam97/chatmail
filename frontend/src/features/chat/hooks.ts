@@ -1,68 +1,44 @@
-/**
- * خطافات صغيرة لواجهة المحادثة — كلها تفك عبر crypto/mls (لا نصوص صريحة
- * خارج الذاكرة ولا خارج طبقة crypto).
- */
+/** خطافات صغيرة لواجهة المحادثة. */
 import { useEffect, useState } from 'react';
-import { decryptTitle, getChatSeq } from '../../crypto/mls';
 import { useAuth } from '../auth/AuthContext';
 import { chatApi, type Conversation } from './api';
 
 const DM_FALLBACK = 'محادثة مباشرة';
 const GROUP_FALLBACK = 'محادثة جماعية';
 
-/** يفك عنوان المحادثة؛ عند العجز يعود لعنوان احتياطي (مثلًا انضممنا متأخرين). */
+/** المحادثة المباشرة تُسمّى باسم الطرف الآخر (كما في Slack)، والجماعية بعنوانها. */
 export function useConversationTitle(conversation: Conversation | null | undefined): string {
   const { user } = useAuth();
-  const [title, setTitle] = useState<string>(conversation?.title_plain ?? '');
-  useEffect(() => {
-    let cancelled = false;
-    if (!conversation) {
-      setTitle('');
-      return;
-    }
-    if (conversation.title_plain) {
-      setTitle(conversation.title_plain);
-      return;
-    }
-    // المحادثة المباشرة تُسمّى باسم الطرف الآخر (كما في Slack).
-    if (conversation.type === 'dm') {
-      const other = conversation.members?.find((m) => String(m.id) !== String(user?.id));
-      setTitle(other ? other.full_name || other.username : DM_FALLBACK);
-      return;
-    }
-    setTitle(GROUP_FALLBACK);
-    if (!conversation.title_enc) return;
-    decryptTitle(conversation)
-      .then((decrypted) => {
-        if (!cancelled && decrypted) setTitle(decrypted);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [conversation, user?.id]);
-  return title;
+  if (!conversation) return '';
+  if (conversation.type === 'dm') {
+    const other = conversation.members?.find((m) => String(m.id) !== String(user?.id));
+    return other ? other.full_name || other.username : DM_FALLBACK;
+  }
+  return conversation.title || GROUP_FALLBACK;
 }
 
-/** غير المقروء: وجود رسائل بـ seq أكبر من آخر seq قُرئ. */
-export function useUnread(conversationId: number | string | null): boolean {
+/** غير المقروء: وجود رسائل بـ seq أكبر من آخر seq قُرئ (موضع القراءة على الخادم). */
+export function useUnread(conversation: Conversation | null): boolean {
   const [unread, setUnread] = useState(false);
-  const [nonce, setNonce] = useState(0);
+  const [readSeq, setReadSeq] = useState(conversation?.last_read_seq ?? 0);
+  const id = conversation?.id ?? null;
+  useEffect(() => setReadSeq(conversation?.last_read_seq ?? 0), [conversation?.last_read_seq]);
   useEffect(() => {
     const onRead = (e: Event) => {
-      if (String((e as CustomEvent<{ id: string }>).detail?.id) === String(conversationId)) {
+      const detail = (e as CustomEvent<{ id: string; seq: number }>).detail;
+      if (String(detail?.id) === String(id)) {
         setUnread(false);
-        setNonce((n) => n + 1);
+        setReadSeq((s) => Math.max(s, detail.seq ?? s));
       }
     };
     window.addEventListener('chat-read', onRead);
     return () => window.removeEventListener('chat-read', onRead);
-  }, [conversationId]);
+  }, [id]);
   useEffect(() => {
     let cancelled = false;
-    if (conversationId === null) return;
-    getChatSeq(conversationId)
-      .then(({ last_read_seq }) => chatApi.getMessages(conversationId, last_read_seq, 1))
+    if (id === null) return;
+    chatApi
+      .getMessages(id, { afterSeq: readSeq, limit: 1 })
       .then((page) => {
         if (!cancelled) setUnread(page.messages.length > 0);
       })
@@ -70,6 +46,6 @@ export function useUnread(conversationId: number | string | null): boolean {
     return () => {
       cancelled = true;
     };
-  }, [conversationId, nonce]);
+  }, [id, readSeq]);
   return unread;
 }

@@ -128,7 +128,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   return data as T;
 }
 
-/** طلب ببايتات خام (ciphertext) — نفس المصادقة وتجديد الجلسة مثل apiFetch. */
+/** طلب خام (رفع/تنزيل الملفات) — نفس المصادقة وتجديد الجلسة مثل apiFetch. */
 export async function rawFetch(path: string, init: RequestInit): Promise<Response> {
   const go = () =>
     fetch(`${API_BASE_URL}${path}`, {

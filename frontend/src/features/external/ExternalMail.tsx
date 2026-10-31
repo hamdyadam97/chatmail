@@ -7,7 +7,6 @@ import {
   AtSign,
   Copy,
   Globe,
-  Lock,
   Paperclip,
   PenSquare,
   Reply,
@@ -25,11 +24,9 @@ import { formatBytes } from '../correspondence/content';
 import {
   externalApi,
   fileToBase64,
-  getCachedExternal,
   openExternal,
   type ExternalSummary,
   type MailboxInfo,
-  type StoredExternal,
 } from './service';
 
 export const useMailbox = () =>
@@ -48,37 +45,6 @@ function addressLine(a: { name: string; address: string }): string {
 }
 
 // --- القائمة ----------------------------------------------------------------------------------
-
-function usePreviews(items: ExternalSummary[]): Map<string, StoredExternal> {
-  const [map, setMap] = useState<Map<string, StoredExternal>>(new Map());
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const found = new Map<string, StoredExternal>();
-      for (const item of items) {
-        const cached = await getCachedExternal(item.id);
-        if (cached) found.set(item.id, cached);
-      }
-      if (!cancelled) setMap(new Map(found));
-      for (const item of items) {
-        if (cancelled || found.has(item.id)) continue;
-        try {
-          const opened = await openExternal(item.id);
-          if (opened.state === 'ok' && !cancelled) {
-            found.set(item.id, opened.stored);
-            setMap(new Map(found));
-          }
-        } catch {
-          // يبقى «مشفّرة…» والقارئ يعرض السبب
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [items]);
-  return map;
-}
 
 const NO_ITEMS: ExternalSummary[] = [];
 
@@ -103,7 +69,6 @@ function ExternalList({
     refetchInterval: 30_000,
   });
   const items = data?.results ?? NO_ITEMS;
-  const previews = usePreviews(items);
 
   return (
     <section className={cn('w-full shrink-0 flex-col border-e border-gray-200 bg-white md:flex md:w-[380px]', mobileHidden ? 'hidden' : 'flex')}>
@@ -166,9 +131,8 @@ function ExternalList({
           </div>
         ) : (
           items.map((item) => {
-            const p = previews.get(item.id);
             const unread = item.direction === 'in' && !item.read_at;
-            const who = item.direction === 'in' ? p?.content.from.name || item.from : `إلى: ${item.recipients.join('، ')}`;
+            const who = item.direction === 'in' ? item.from_name || item.from : `إلى: ${item.recipients.join('، ')}`;
             return (
               <button
                 key={item.id}
@@ -192,16 +156,11 @@ function ExternalList({
                       <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label="مرسل غير موثّق" />
                     )}
                     <span className={cn('truncate text-sm', unread ? 'font-semibold text-primary-800' : 'text-gray-700')}>
-                      {p ? p.content.subject || '(بلا عنوان)' : (
-                        <span className="inline-flex items-center gap-1 text-gray-400">
-                          <Lock className="h-3 w-3" />
-                          مشفّرة…
-                        </span>
-                      )}
+                      {item.subject || '(بلا عنوان)'}
                     </span>
                     {item.attachment_count > 0 && <Paperclip className="ms-auto h-3.5 w-3.5 shrink-0 text-gray-400" />}
                   </div>
-                  <p className="truncate text-xs text-gray-500">{p?.content.body.replace(/\s+/g, ' ').slice(0, 120) ?? ''}</p>
+                  <p className="truncate text-xs text-gray-500">{item.preview}</p>
                 </div>
               </button>
             );
@@ -246,7 +205,7 @@ function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
     return (
       <div className="flex items-center gap-2 p-6 text-sm text-gray-500">
         <Spinner size="sm" />
-        جارٍ فك الرسالة على جهازك…
+        جارٍ التحميل…
       </div>
     );
   }
@@ -281,8 +240,7 @@ function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
 
       <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-100">
         <Globe className="mt-0.5 h-4 w-4 shrink-0" />
-        بريد خارجي: {incoming ? 'وصل من خارج النظام فلم يكن مشفّرًا من مصدره' : 'خرج إلى خارج النظام غير مشفّر'}، وهو محفوظ الآن مشفّرًا لأجهزتك
-        فقط.
+        بريد خارجي: {incoming ? 'وصل من خارج النظام' : 'خرج إلى خارج النظام'} عبر الإنترنت، وهو محفوظ مشفّرًا على الخادم ولا يظهر إلا لك.
       </div>
       {incoming &&
         (c.auth === 'pass' ? (
@@ -440,7 +398,7 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
       </div>
       <div className="m-4 flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800 ring-1 ring-red-100">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        هذه الرسالة ستخرج إلى خارج النظام <strong>غير مشفّرة طرفًا لطرف</strong>. لا ترسل معلومات سرية؛ وللزملاء استخدم المراسلات الداخلية.
+        هذه الرسالة ستخرج إلى خارج النظام عبر الإنترنت. لا ترسل معلومات سرية؛ وللزملاء استخدم المراسلات الداخلية.
       </div>
       <div className="space-y-1 px-4">
         <p className="text-xs text-gray-500">

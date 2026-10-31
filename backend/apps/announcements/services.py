@@ -175,6 +175,14 @@ def get_trackable(user, announcement_id) -> Announcement:
 
 # --- publish ------------------------------------------------------------------------------
 
+def preview_audience(*, publisher, target_type, target_id, user_ids) -> list[User]:
+    """Who would receive it (the publisher confirms before publishing)."""
+    unit = resolve_target(target_type, target_id)
+    audience = resolve_audience(publisher=publisher, target_type=target_type, unit=unit, user_ids=user_ids)
+    require_publish_permission(publisher, target_type, unit, audience)
+    return list(User.objects.filter(id__in=audience).order_by("full_name", "username"))
+
+
 def publish(*, publisher, target_type, target_id, user_ids, priority, requires_ack, ack_due_at,
             membership_id, client_ref, title, body) -> tuple[Announcement, bool]:
     """Resolve the audience, seal {title, body}, issue the number, notify."""

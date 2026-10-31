@@ -170,8 +170,8 @@ function HealthCard() {
     database: 'قاعدة البيانات',
     cache: 'الذاكرة المؤقتة',
     realtime: 'الاتصال الفوري',
-    blob_storage: 'تخزين المرفقات المشفرة',
-    key_transparency: 'سلسلة شفافية المفاتيح',
+    blob_storage: 'تخزين المرفقات',
+    content_key: 'مفتاح تشفير المحتوى',
   };
   return (
     <Card className="p-5">
@@ -343,7 +343,7 @@ export function Reports() {
                 <h3 className="font-semibold text-gray-900">الاستخدام</h3>
                 <p className="flex justify-between"><span className="text-gray-600">الموظفون</span><span className="tabular-nums">{fmt.format(report.usage.employees)}</span></p>
                 <p className="flex justify-between"><span className="text-gray-600">نشطون آخر 30 يومًا</span><span className="tabular-nums">{fmt.format(report.usage.active_last_30_days)}</span></p>
-                <p className="flex justify-between"><span className="text-gray-600">أجهزة مفعّلة التشفير</span><span className="tabular-nums">{fmt.format(report.usage.active_devices)}</span></p>
+                <p className="flex justify-between"><span className="text-gray-600">أجهزة دخلوا منها</span><span className="tabular-nums">{fmt.format(report.usage.active_devices)}</span></p>
                 <p className="flex justify-between"><span className="text-gray-600">رسائل الشات (عدد فقط)</span><span className="tabular-nums">{fmt.format(report.usage.chat_messages)}</span></p>
               </Card>
             </div>

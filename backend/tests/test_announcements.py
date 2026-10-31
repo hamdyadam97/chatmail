@@ -218,3 +218,13 @@ def test_withdraw_hides_content_and_blocks_new_acks(api_client, org):
     assert ack(api_client, org["h_e1"], ann).status_code == 409
     assert api_client.get(f"{ANN_URL}{ann['id']}/", **org["h_e1"]).json()["content"] is None
     assert api_client.get(f"{ANN_URL}{ann['id']}/", **org["h_pub"]).json()["content"]["title"] == "تعميم الدوام"
+
+
+def test_audience_preview_matches_publish_and_permission(api_client, org):
+    url = f"{ANN_URL}audience-preview/"
+    body = {"target_type": "branch", "target_id": str(org["branch_a"].id)}
+    r = api_client.post(url, body, format="json", **org["h_pub"])
+    assert r.status_code == 200, r.content
+    assert {u["username"] for u in r.json()["recipients"]} == {"a_e1", "a_e2", "a_e3"}
+    assert not Announcement.objects.exists()  # nothing created
+    assert api_client.post(url, body, format="json", **org["h_e1"]).status_code == 403

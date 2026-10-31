@@ -1,28 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BellRing, CheckCircle2, Lock, Megaphone, Plus, ShieldAlert, Users } from 'lucide-react';
+import { BellRing, CheckCircle2, Megaphone, Plus, Users } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
-import { useAuth } from '../auth/AuthContext';
-import { CryptoGate, E2EENote, RecipientPicker, formatDate } from '../correspondence/components';
+import { PrivacyNote, RecipientPicker, formatDate } from '../correspondence/components';
 import {
   announcementsApi,
   PRIORITY_LABELS,
   TARGET_LABELS,
   type Announcement,
   type AnnouncementPriority,
+  type AudienceTarget,
   type TargetType,
   type UserRef,
 } from './api';
-import {
-  acknowledgeAnnouncement,
-  openAnnouncement,
-  prepareAnnouncement,
-  publishAnnouncement,
-  type OpenAnnouncement,
-} from './service';
 
 /** رسائل أخطاء العميل (Error عادي) كما هي، وأخطاء الخادم عبر toUserMessage. */
 function getErrorMessage(err: unknown, fallback: string): string {
@@ -81,9 +74,12 @@ function AnnouncementList({ box }: { box: 'received' | 'published' }) {
             <span dir="ltr" className="w-44 shrink-0 font-mono text-xs text-gray-600">
               {a.reference_number ?? '—'}
             </span>
-            <span className="flex-1 truncate text-gray-800">
-              {box === 'received' ? a.publisher.full_name : `${TARGET_LABELS[a.target.type]}${a.target.name ? `: ${a.target.name}` : ''}`}
-              <span className="ms-2 text-xs text-gray-500">({a.recipient_count} مستلم)</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium text-gray-900">{a.content?.title ?? 'تعميم مسحوب'}</span>
+              <span className="block truncate text-xs text-gray-500">
+                {box === 'received' ? a.publisher.full_name : `${TARGET_LABELS[a.target.type]}${a.target.name ? `: ${a.target.name}` : ''}`}
+                {' '}({a.recipient_count} مستلم)
+              </span>
             </span>
             {a.priority !== 'normal' && (
               <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">{PRIORITY_LABELS[a.priority]}</span>
@@ -111,7 +107,7 @@ export function Announcements() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<'received' | 'published'>('received');
   return (
-    <CryptoGate>
+    <>
       <div className="mx-auto max-w-5xl space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">التعاميم</h2>
@@ -142,12 +138,12 @@ export function Announcements() {
         </div>
         <AnnouncementList key={tab} box={tab} />
       </div>
-    </CryptoGate>
+    </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// الإنشاء: إعداد ← مراجعة الجمهور ← تشفير ونشر
+// الإنشاء: الكتابة ← مراجعة الجمهور ← النشر
 // ---------------------------------------------------------------------------
 
 function ComposeForm() {
@@ -162,7 +158,7 @@ function ComposeForm() {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [review, setReview] = useState<{ prepared: Announcement; recipients: UserRef[] } | null>(null);
+  const [review, setReview] = useState<{ target: AudienceTarget; recipients: UserRef[] } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const { data: institutes } = useQuery({ queryKey: ['org', 'institutes'], queryFn: announcementsApi.institutes });
@@ -181,16 +177,13 @@ function ComposeForm() {
     if (['department', 'branch', 'institute'].includes(targetType) && !targetId) return setError('اختر الوحدة');
     setBusy(true);
     try {
-      const prepared = await prepareAnnouncement({
+      const target: AudienceTarget = {
         target_type: targetType,
         target_id: targetType === 'users' || targetType === 'all' ? null : targetId,
         user_ids: targetType === 'users' ? users : [],
-        priority,
-        requires_ack: requiresAck,
-        ack_due_at: requiresAck && dueAt ? new Date(dueAt).toISOString() : null,
-      });
-      const audience = await announcementsApi.audience(prepared.id);
-      setReview({ prepared, recipients: audience.recipients });
+      };
+      const audience = await announcementsApi.previewAudience(target);
+      setReview({ target, recipients: audience.recipients });
     } catch (err) {
       setError(getErrorMessage(err, 'تعذر إعداد التعميم'));
     } finally {
@@ -203,33 +196,25 @@ function ComposeForm() {
     setBusy(true);
     setError(null);
     try {
-      const published = await publishAnnouncement(
-        review.prepared,
-        review.recipients.map((u) => u.id),
-        subject.trim(),
+      const published = await announcementsApi.publish({
+        ...review.target,
+        priority,
+        requires_ack: requiresAck,
+        ack_due_at: requiresAck && dueAt ? new Date(dueAt).toISOString() : null,
+        client_ref: crypto.randomUUID(),
+        title: subject.trim(),
         body,
-      );
+      });
       await queryClient.invalidateQueries({ queryKey: ['announcements'] });
       navigate(`/announcements/${published.id}`, { replace: true });
     } catch (err) {
-      const unreachable = (err as { unreachableUserIds?: string[] }).unreachableUserIds;
-      if (unreachable?.length) {
-        const names = review.recipients.filter((u) => unreachable.includes(u.id)).map((u) => u.full_name);
-        setError(
-          `لا يمكن النشر: ${unreachable.length} مستلم لم يفعّل التشفير على أي جهاز بعد (${names.slice(0, 10).join('، ')}${names.length > 10 ? '…' : ''}). يجب أن يسجّلوا الدخول مرة واحدة على الأقل، أو اختر نطاقًا آخر.`,
-        );
-      } else {
-        setError(getErrorMessage(err, 'تعذر نشر التعميم'));
-      }
+      setError(getErrorMessage(err, 'تعذر نشر التعميم'));
     } finally {
       setBusy(false);
     }
   };
 
-  const onCancelReview = async () => {
-    if (review) await announcementsApi.discard(review.prepared.id).catch(() => undefined);
-    setReview(null);
-  };
+  const onCancelReview = () => setReview(null);
 
   if (review) {
     return (
@@ -238,19 +223,19 @@ function ComposeForm() {
         <Card className="space-y-3 p-6">
           <p className="flex items-center gap-2 text-sm text-gray-800">
             <Users className="h-4 w-4" />
-            سيُشفَّر التعميم لـ <strong>{review.recipients.length}</strong> مستلمًا فقط — ولا يملك أي طرف آخر مفتاح فكه. هذه
-            القائمة معلنة لكل المستلمين.
+            سيصل التعميم إلى <strong>{review.recipients.length}</strong> مستلمًا فقط، ولا يطلع عليه غيرهم. هذه القائمة معلنة
+            لكل المستلمين.
           </p>
           <div className="max-h-72 overflow-y-auto rounded-lg border border-gray-200 p-3 text-sm text-gray-700">
             {review.recipients.map((u) => u.full_name).join('، ')}
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => void onCancelReview()} disabled={busy}>
-              رجوع وإلغاء
+            <Button variant="outline" onClick={onCancelReview} disabled={busy}>
+              رجوع للتعديل
             </Button>
             <Button onClick={() => void onPublish()} loading={busy}>
-              {busy ? 'جارٍ التشفير والنشر…' : 'تشفير ونشر'}
+              {busy ? 'جارٍ النشر…' : 'نشر'}
             </Button>
           </div>
         </Card>
@@ -262,7 +247,7 @@ function ComposeForm() {
     <form onSubmit={onPrepare} className="mx-auto max-w-3xl space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900">تعميم جديد</h2>
-        <E2EENote />
+        <PrivacyNote />
       </div>
       <Card className="space-y-4 p-6">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -365,9 +350,7 @@ function ComposeForm() {
 
 export function ComposeAnnouncement() {
   return (
-    <CryptoGate>
-      <ComposeForm />
-    </CryptoGate>
+    <ComposeForm />
   );
 }
 
@@ -445,31 +428,18 @@ function ComplianceCard({ a }: { a: Announcement }) {
 }
 
 function Detail({ id }: { id: string }) {
-  const { user } = useAuth();
   const queryClient = useQueryClient();
   const { data: a, isLoading, error } = useQuery({ queryKey: ['announcements', 'detail', id], queryFn: () => announcementsApi.get(id) });
-  const [opened, setOpened] = useState<OpenAnnouncement | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!a || a.status === 'draft') return;
-    let cancelled = false;
-    openAnnouncement(a)
-      .then((r) => {
-        if (cancelled) return;
-        setOpened(r);
-        if (r.state === 'ok' && a.mine && !a.mine.read_at) {
-          void announcementsApi.markRead(a.id).then(() => queryClient.invalidateQueries({ queryKey: ['announcements'] }));
-        }
-      })
-      .catch(() => !cancelled && setOpened({ state: 'unavailable', reason: 'تعذر فك التشفير' }));
-    return () => {
-      cancelled = true;
-    };
+    if (a?.content && a.mine && !a.mine.read_at) {
+      void announcementsApi.markRead(a.id).then(() => queryClient.invalidateQueries({ queryKey: ['announcements'] }));
+    }
   }, [a, queryClient]);
 
   const ack = useMutation({
-    mutationFn: () => acknowledgeAnnouncement(a!, String(user!.id)),
+    mutationFn: () => announcementsApi.ack(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['announcements'] }),
     onError: (err) => setActionError(getErrorMessage(err, 'تعذر تسجيل الإقرار')),
   });
@@ -493,21 +463,13 @@ function Detail({ id }: { id: string }) {
     );
   }
 
-  const ok = opened?.state === 'ok' ? opened.stored : null;
-  const trustworthy = ok && ok.senderVerified && ok.bound && ok.undeclaredMembers.length === 0;
-
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <Card className="space-y-4 p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <h2 className="text-xl font-semibold text-gray-900">
-              {ok ? ok.content.subject : (
-                <span className="flex items-center gap-2 text-gray-400">
-                  <Lock className="h-5 w-5" />
-                  مشفّر
-                </span>
-              )}
+              {a.content?.title ?? 'تعميم مسحوب'}
             </h2>
             <p className="text-xs text-gray-500">
               <span dir="ltr" className="font-mono">{a.reference_number ?? 'غير منشور'}</span> — من {a.publisher.full_name} —{' '}
@@ -528,47 +490,25 @@ function Detail({ id }: { id: string }) {
         </div>
         {a.status === 'withdrawn' && (
           <p className="rounded-lg bg-gray-100 p-3 text-sm text-gray-700">
-            سُحب هذا التعميم في {formatDate(a.withdrawn_at)}. لا يمكن استرجاع النسخ التي سبق فكها على أجهزة المستلمين.
+            سُحب هذا التعميم في {formatDate(a.withdrawn_at)}، ولم يعد محتواه ظاهرًا للمستلمين.
           </p>
         )}
 
-        {ok && (ok.undeclaredMembers.length > 0 || !ok.senderVerified || !ok.bound) && (
-          <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            {ok.undeclaredMembers.length > 0
-              ? `مجموعة التشفير تضم ${ok.undeclaredMembers.length} عضوًا غير معلن في قائمة المستلمين — أبلغ مسؤول الأمن ولا تعتمد على سرية هذا التعميم.`
-              : 'تعذر التحقق من أن المحتوى صادر من الناشر المعروض ومربوط بهذا التعميم.'}
-          </div>
-        )}
-
-        {opened === null && a.status !== 'draft' ? (
-          <span className="flex items-center gap-2 text-sm text-gray-500">
-            <Spinner size="sm" />
-            جارٍ فك التشفير على جهازك…
-          </span>
-        ) : opened?.state === 'unavailable' ? (
-          <p className="flex items-center gap-2 rounded-lg bg-gray-50 p-4 text-sm text-gray-600">
-            <Lock className="h-4 w-4" />
-            {opened.reason}
-          </p>
-        ) : ok ? (
-          <div className="whitespace-pre-wrap break-words text-sm leading-7 text-gray-800">{ok.content.body || '—'}</div>
-        ) : null}
+        {a.content && <div className="whitespace-pre-wrap break-words text-sm leading-7 text-gray-800">{a.content.body || '—'}</div>}
 
         {a.mine && a.requires_ack && a.status === 'published' && (
           <div className="rounded-lg border border-gray-200 p-4">
             {a.mine.acknowledged_at ? (
               <p className="flex items-center gap-2 text-sm text-emerald-700">
                 <CheckCircle2 className="h-4 w-4" />
-                أقررتَ بالاطلاع في {formatDate(a.mine.acknowledged_at)} (موقّع من جهازك).
+                أقررتَ بالاطلاع في {formatDate(a.mine.acknowledged_at)}.
               </p>
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-gray-700">
-                  الإقرار يُوقَّع بمفتاح جهازك ويرتبط بنسخة التعميم التي اطلعت عليها (دليل سلامة داخل النظام، لا توقيع نظامي
-                  قانوني).
+                  يُسجَّل إقرارك مع وقته ونسخة التعميم التي اطلعت عليها (دليل داخل النظام، لا توقيع نظامي قانوني).
                 </p>
-                <Button onClick={() => ack.mutate()} loading={ack.isPending} disabled={!trustworthy}>
+                <Button onClick={() => ack.mutate()} loading={ack.isPending}>
                   أقر بالاطلاع
                 </Button>
               </div>
@@ -576,7 +516,7 @@ function Detail({ id }: { id: string }) {
           </div>
         )}
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}
-        <E2EENote />
+        <PrivacyNote />
       </Card>
       {a.can_track && a.status !== 'draft' && <ComplianceCard a={a} />}
     </div>
@@ -585,7 +525,7 @@ function Detail({ id }: { id: string }) {
 
 export function AnnouncementDetail() {
   const { id } = useParams<{ id: string }>();
-  return <CryptoGate>{id ? <Detail key={id} id={id} /> : null}</CryptoGate>;
+  return id ? <Detail key={id} id={id} /> : null;
 }
 
 export const AnnouncementsPages = { Announcements, Compose: ComposeAnnouncement, Detail: AnnouncementDetail };

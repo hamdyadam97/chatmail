@@ -11,6 +11,14 @@ PY="$APP/.venv/bin/python"
 [ -x "$APP/.tools/node/bin/node" ] && export PATH="$APP/.tools/node/bin:$PATH"
 [ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
 
+# Content key (added with Outlook-style mail): created once if missing, never
+# replaced — every stored message and file is encrypted with it.
+if ! grep -q '^CONTENT_ENCRYPTION_KEY=.\+' "$ENV_FILE"; then
+    key=$(python3 -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())')
+    printf '\n# Mail/chat/attachments at rest. NEVER change or lose it (back up %s).\nCONTENT_ENCRYPTION_KEY=%s\n' "$ENV_FILE" "$key" >> "$ENV_FILE"
+    echo "== created CONTENT_ENCRYPTION_KEY in $ENV_FILE - back this file up off the server NOW"
+fi
+
 set -a; . "$ENV_FILE"; . /etc/correspondence/migrate.env; set +a
 
 echo "== backend dependencies"
@@ -29,6 +37,12 @@ fi
 echo "== migrations as the OWNER role, then re-apply runtime grants"
 ( cd "$APP/backend" && DATABASE_URL="$MIGRATE_DATABASE_URL" "$PY" manage.py migrate --noinput )
 psql "$MIGRATE_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$APP/deploy/postgres/grants.sql"
+
+# One-off (user decision: start clean when switching to Outlook-style mail):
+# content left by the old per-device encryption cannot be opened any more.
+# Deletes only rows not sealed with CONTENT_ENCRYPTION_KEY - a no-op afterwards.
+echo "== remove content of the retired per-device encryption (no-op once done)"
+( cd "$APP/backend" && runuser -u correspondence -- "$PY" manage.py purge_legacy_content --yes )
 
 echo "== frontend build (same-origin API)"
 ( cd "$APP/frontend" && npm ci --no-audit --no-fund \

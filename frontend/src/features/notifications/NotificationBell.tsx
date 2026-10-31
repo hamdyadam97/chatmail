@@ -48,7 +48,7 @@ export function NotificationBell() {
           }
         },
         onResync: () => void queryClient.invalidateQueries({ queryKey: ['notifications'] }),
-        onDeviceRevoked: () => undefined,
+        onRemoved: () => undefined,
       },
     );
     socket.connect();

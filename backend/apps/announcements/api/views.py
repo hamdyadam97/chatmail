@@ -135,6 +135,25 @@ class AnnouncementDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class AudiencePreviewSerializer(serializers.Serializer):
+    target_type = serializers.ChoiceField(choices=[c for c, _ in Announcement.TARGETS])
+    target_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list, max_length=1000)
+
+
+class AudiencePreviewView(APIView):
+    """POST: the resolved audience for a target, before publishing (same
+    permission check as publishing)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        s = AudiencePreviewSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        users = services.preview_audience(publisher=request.user, **s.validated_data)
+        return Response({"recipients": [_user_ref(u) for u in users]})
+
+
 class AudienceView(APIView):
     """The declared audience — every recipient may see who else received it."""
 

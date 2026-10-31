@@ -1,4 +1,4 @@
-/** `/api/v1/announcements/*` — التعاميم: البيانات الوصفية والـciphertext فقط. */
+/** `/api/v1/announcements/*` — التعاميم. المحتوى محفوظ مشفّرًا على الخادم ويُعاد للناشر والمستلمين. */
 import { apiFetch } from '../../shared/api';
 
 export type TargetType = 'users' | 'department' | 'branch' | 'institute' | 'all';
@@ -25,15 +25,9 @@ export interface Announcement {
   recipient_count: number;
   is_publisher: boolean;
   can_track: boolean;
-  thread: { id: string; mls_group_id: string; current_epoch: number };
   content_hash: string | null;
-  content: {
-    seq: number;
-    epoch: number;
-    sender_device_id: string | null;
-    client_msg_id: string;
-    mls_payload: string;
-  } | null;
+  /** null للمستلم بعد سحب التعميم. */
+  content: { title: string; body: string } | null;
   mine: { delivered_at: string | null; read_at: string | null; acknowledged_at: string | null } | null;
 }
 
@@ -62,15 +56,19 @@ export interface Compliance {
   rows: ComplianceRow[];
 }
 
-export interface PrepareBody {
+export interface AudienceTarget {
   target_type: TargetType;
   target_id: string | null;
   user_ids: string[];
+}
+
+export interface PublishBody extends AudienceTarget {
   priority: AnnouncementPriority;
   requires_ack: boolean;
   ack_due_at: string | null;
-  mls_group_id: string;
   client_ref: string;
+  title: string;
+  body: string;
 }
 
 export interface OrgUnit {
@@ -86,13 +84,11 @@ export const announcementsApi = {
     apiFetch<Page<Announcement>>(`/announcements/?box=${box}&page=${page}${pendingAck ? '&pending_ack=1' : ''}`),
   get: (id: string) => apiFetch<Announcement>(`/announcements/${id}/`),
   audience: (id: string) => apiFetch<{ publisher: UserRef; recipients: UserRef[] }>(`/announcements/${id}/audience/`),
-  prepare: (body: PrepareBody) => apiFetch<Announcement>('/announcements/', { method: 'POST', body }),
-  discard: (id: string) => apiFetch<null>(`/announcements/${id}/`, { method: 'DELETE' }),
-  publish: (id: string, body: { mls_payload: string; client_msg_id: string; epoch: number; sender_device_id: string }) =>
-    apiFetch<Announcement>(`/announcements/${id}/publish/`, { method: 'POST', body }),
+  previewAudience: (body: AudienceTarget) =>
+    apiFetch<{ recipients: UserRef[] }>('/announcements/audience-preview/', { method: 'POST', body }),
+  publish: (body: PublishBody) => apiFetch<Announcement>('/announcements/', { method: 'POST', body }),
   markRead: (id: string) => apiFetch<null>(`/announcements/${id}/read/`, { method: 'POST' }),
-  ack: (id: string, body: { payload: string; signature: string; device_id: string }) =>
-    apiFetch<{ acknowledged_at: string }>(`/announcements/${id}/ack/`, { method: 'POST', body }),
+  ack: (id: string) => apiFetch<{ acknowledged_at: string }>(`/announcements/${id}/ack/`, { method: 'POST' }),
   compliance: (id: string) => apiFetch<Compliance>(`/announcements/${id}/compliance/`),
   remind: (id: string) => apiFetch<{ reminded: number }>(`/announcements/${id}/remind/`, { method: 'POST' }),
   withdraw: (id: string) => apiFetch<Announcement>(`/announcements/${id}/withdraw/`, { method: 'POST' }),

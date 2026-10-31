@@ -6,7 +6,6 @@ import { useAuth } from '../features/auth/AuthContext';
 import { MustChangePasswordModal } from '../features/auth/MustChangePasswordModal';
 import { NotificationBell } from '../features/notifications/NotificationBell';
 import { PushPrompt } from '../features/notifications/PushControls';
-import { RecoveryPrompt } from '../features/recovery/RecoveryPrompt';
 import { InstallPrompt } from '../features/install/InstallPrompt';
 import { Avatar } from '../shared/ui';
 import { InstituteLogo } from '../shared/brand';
@@ -113,12 +112,12 @@ export function AppShell() {
           className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-white px-3 md:gap-4 md:px-4"
           style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
-          <span className="hidden text-sm font-semibold text-gray-900 lg:block">المراسلات الداخلية المشفرة</span>
+          <span className="hidden text-sm font-semibold text-gray-900 lg:block">المراسلات الداخلية</span>
           <Link to="/mail/inbox" className="flex items-center gap-2 text-sm font-semibold text-gray-900 md:hidden">
             <Lock className="h-4 w-4 text-primary-700" />
             المراسلات
           </Link>
-          {/* البحث المحلي: الاستعلام يمر بحالة الموجّه لا بالعنوان (خارج سجل المتصفح). */}
+          {/* البحث: الاستعلام يمر بحالة الموجّه لا بالعنوان (خارج سجل المتصفح). */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -131,9 +130,9 @@ export function AppShell() {
             <Search className="pointer-events-none absolute start-3 top-2 h-4 w-4 text-gray-400" />
             <input
               name="q"
-              placeholder="ابحث في بريدك ومحادثاتك (على جهازك فقط)…"
+              placeholder="ابحث في بريدك ومحادثاتك…"
               autoComplete="off"
-              aria-label="بحث محلي في المحتوى"
+              aria-label="بحث في المحتوى"
               className="h-8 w-full rounded-md border border-gray-200 bg-gray-100 ps-9 text-sm focus:border-primary-500 focus:bg-white focus:outline-none"
             />
           </form>
@@ -164,10 +163,9 @@ export function AppShell() {
             </button>
           </div>
         </header>
-        {/* الموبايل: شريط تنبيه واحد في كل مرة بالأولوية (تثبيت ← مفتاح الاستعادة ← الإشعارات) */}
+        {/* الموبايل: شريط تنبيه واحد في كل مرة بالأولوية (تثبيت ← الإشعارات) */}
         <div className="max-md:[&>*+*]:hidden">
           <InstallPrompt />
-          <RecoveryPrompt />
           <PushPrompt />
         </div>
         <main className={cn('min-h-0 flex-1', fullBleed ? 'overflow-hidden' : 'overflow-y-auto p-4 md:p-6')}>

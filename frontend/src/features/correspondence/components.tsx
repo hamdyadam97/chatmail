@@ -1,10 +1,8 @@
-import { archiveKeyApi } from '../../crypto/archive';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Lock, RefreshCw, X } from 'lucide-react';
-import { Button, Card, Spinner } from '../../shared/ui';
+import { Lock, X } from 'lucide-react';
+import { Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
-import { resetCryptoBootstrap, useCryptoBootstrap } from '../../crypto/useCryptoBootstrap';
 import { useAuth } from '../auth/AuthContext';
 import { chatApi } from '../chat/api';
 import {
@@ -13,52 +11,6 @@ import {
   type Classification,
   type Priority,
 } from './api';
-
-/** يعرض المحتوى فقط بعد جاهزية التشفير على هذا الجهاز (نفس حالات صفحة الشات). */
-export function CryptoGate({ children }: { children: ReactNode }) {
-  const bootstrap = useCryptoBootstrap();
-  if (bootstrap.status === 'loading') {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
-  if (bootstrap.status === 'error') {
-    return (
-      <Card className="mx-auto mt-10 flex max-w-md flex-col items-center gap-3 p-8 text-center">
-        <p className="text-sm text-red-600">{bootstrap.message}</p>
-        <Button
-          variant="outline"
-          onClick={() => {
-            resetCryptoBootstrap();
-            window.location.reload();
-          }}
-        >
-          <RefreshCw className="h-4 w-4" />
-          إعادة المحاولة
-        </Button>
-      </Card>
-    );
-  }
-  if (bootstrap.status === 'pending_approval') {
-    return (
-      <Card className="mx-auto mt-10 max-w-md p-8 text-center">
-        <h3 className="text-base font-semibold text-gray-900">هذا الجهاز بانتظار الاعتماد</h3>
-        <p className="mt-2 text-sm text-gray-500">
-          اعتمد هذا الجهاز من أحد أجهزتك الموثّقة من صفحة الأجهزة ليُفعَّل التشفير الطرف-لطرف عليه.
-        </p>
-        <div className="mt-4 flex flex-wrap justify-center gap-2">
-          <Button variant="outline" onClick={() => (window.location.href = '/devices')}>
-            الانتقال إلى الأجهزة
-          </Button>
-          <Button onClick={() => (window.location.href = '/recovery')}>فقدت جهازي — استعادة بالمفتاح</Button>
-        </div>
-      </Card>
-    );
-  }
-  return <>{children}</>;
-}
 
 export function useDirectory() {
   return useQuery({ queryKey: ['directory-users'], queryFn: chatApi.listUsers, staleTime: 60_000 });
@@ -200,11 +152,11 @@ export function ClassificationBadge({ classification }: { classification: Classi
   );
 }
 
-export function E2EENote({ className }: { className?: string }) {
+export function PrivacyNote({ className }: { className?: string }) {
   return (
     <p className={cn('flex items-center gap-1.5 text-xs text-gray-500', className)}>
       <Lock className="h-3.5 w-3.5 text-emerald-600" />
-      العنوان والنص والمرفقات تُشفَّر على جهازك قبل الإرسال؛ لا يستطيع الخادم ولا أي مسؤول قراءتها.
+      تُحفظ المراسلة ومرفقاتها مشفّرة على الخادم، ولا تُعرض إلا لك وللمستلمين.
     </p>
   );
 }
@@ -220,24 +172,14 @@ export function formatDay(iso: string | null): string {
 }
 
 /**
- * المستلم المؤسسي المعلن: يرى المرسل قبل الإرسال أن نسخة مشفّرة ستذهب للأرشيف
- * المركزي، ومن أنشأ مفتاحه (docs/phase1/README §3 — ليس بابًا خلفيًا).
+ * المستلم المؤسسي المعلن: يرى المرسل قبل الإرسال أن المراسلة ستتاح للأرشيف
+ * المركزي (docs/phase1/README §3 — ليس بابًا خلفيًا).
  */
 export function ArchiveNotice() {
-  const { data, isLoading } = useQuery({ queryKey: ['archive-key'], queryFn: archiveKeyApi.state, staleTime: 60_000 });
-  if (isLoading) return null;
-  if (!data?.key) {
-    return (
-      <p className="rounded-lg bg-red-50 p-3 text-xs text-red-700" data-testid="archive-notice">
-        هذا التصنيف يرسل نسخة مشفّرة إلى الأرشيف المركزي، لكن الأرشيف لم يُهيأ بعد — لن يمكن الإرسال حتى يهيئه ضابط
-        الأرشيف.
-      </p>
-    );
-  }
   return (
     <p className="rounded-lg bg-indigo-50 p-3 text-xs text-indigo-800" data-testid="archive-notice">
-      ستُرسل <strong>نسخة مشفّرة إلى الأرشيف المركزي</strong> (مستلم مؤسسي معلن؛ مفتاحه الإصدار {data.key.version} أنشأه{' '}
-      {data.key.created_by}). يفتحها ضباط الأرشيف المعتمدون فقط، وكل فتح يُسجَّل في سجل التدقيق. الخادم والإدارة لا يقرؤونها.
+      ستُتاح هذه المراسلة وردودها <strong>للأرشيف المركزي</strong> (مستلم مؤسسي معلن): يفتحها ضباط الأرشيف المعتمدون
+      فقط، وكل فتح يُسجَّل في سجل التدقيق.
     </p>
   );
 }

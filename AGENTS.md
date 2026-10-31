@@ -1,6 +1,6 @@
-# AGENTS.md — Correspondence System (E2EE)
+# AGENTS.md — Correspondence System
 
-مشروع نظام مراسلات داخلي لمجموعة معاهد، بتشفير طرف-لطرف. التصميم المعتمد موثق في `docs/phase1/` ويجب قراءته قبل أي عمل: ERD في `04-erd.md`، الصلاحيات في `05-permissions-design.md`، هيكل المشروع في `06-project-structure.md`، الاختبارات في `07-test-plan.md`. المراسلات الرسمية (المرحلة الثانية): `docs/phase2/09-correspondence-e2ee.md`. الموافقات والإشعارات: `docs/phase2/10-approvals-notifications.md`. التعاميم: `docs/phase2/11-announcements.md`. التقارير والتدقيق: `docs/phase2/12-reports-audit.md`. البحث المحلي: `docs/phase2/13-local-search.md`. إدارة الموظفين: `docs/phase2/14-employee-admin.md`. النسخ الاحتياطي والاستعادة: `docs/phase2/15-key-backup.md`. الأرشيف المركزي: `docs/phase2/16-central-archive.md`. الموبايل (PWA): `docs/phase2/17-mobile-pwa.md`. البريد الخارجي: `docs/phase2/18-external-mail.md`.
+مشروع نظام مراسلات داخلي لمجموعة معاهد. **قرار المستخدم (2026-10-31): بريد بأسلوب Outlook** — أي دخول للحساب من أي متصفح يرى بريده كاملًا؛ المحتوى يُخزَّن مشفّرًا على الخادم بمفتاح واحد (`CONTENT_ENCRYPTION_KEY`، `apps/vault.py`). التشفير طرف-لطرف (MLS، مفاتيح الأجهزة، اعتماد الأجهزة، مفتاح الاستعادة) أُزيل؛ وثائق `docs/phase1` و`docs/phase2` التي تصفه تاريخية في هذه النقاط. التصميم المعتمد موثق في `docs/phase1/` ويجب قراءته قبل أي عمل: ERD في `04-erd.md`، الصلاحيات في `05-permissions-design.md`، هيكل المشروع في `06-project-structure.md`، الاختبارات في `07-test-plan.md`. المراسلات الرسمية (المرحلة الثانية): `docs/phase2/09-correspondence-e2ee.md`. الموافقات والإشعارات: `docs/phase2/10-approvals-notifications.md`. التعاميم: `docs/phase2/11-announcements.md`. التقارير والتدقيق: `docs/phase2/12-reports-audit.md`. البحث المحلي: `docs/phase2/13-local-search.md`. إدارة الموظفين: `docs/phase2/14-employee-admin.md`. النسخ الاحتياطي والاستعادة: `docs/phase2/15-key-backup.md`. الأرشيف المركزي: `docs/phase2/16-central-archive.md`. الموبايل (PWA): `docs/phase2/17-mobile-pwa.md`. البريد الخارجي: `docs/phase2/18-external-mail.md`.
 
 ## البيئة
 
@@ -19,37 +19,37 @@
 # Frontend
 cd frontend && npm install && npm run dev
 cd frontend && npm run build && npx tsc -b
-cd frontend && npm run test:unit        # فهرس البحث المحلي
-cd frontend && npm run test:ui          # الواجهة الحقيقية في Edge المثبّت (بيئة معزولة 8001/5180) — إلزامي بعد أي تعديل في الواجهة أو crypto/
-
-# إثباتات e2e (كل تشغيل على قاعدة مؤقتة جديدة، منفذ 8001 — لا تلمس db.sqlite3)
-sh frontend/scripts/run-e2e-fresh.sh e2e-correspondence.mjs
-sh frontend/scripts/run-e2e-fresh.sh e2e-approvals.mjs
-sh frontend/scripts/run-e2e-fresh.sh e2e-announcements.mjs
+cd frontend && npm run test:ui          # الواجهة الحقيقية في Edge المثبّت (بيئة معزولة 8001/5180) — إلزامي بعد أي تعديل في الواجهة
 
 # تذكيرات التعاميم المجدولة (cron كل ساعة)
 .venv/Scripts/python.exe backend/manage.py send_announcement_reminders
-sh frontend/scripts/run-e2e-fresh.sh e2e-chat.mjs
-sh frontend/scripts/run-e2e-fresh.sh e2e-multidevice.mjs
 ```
 
 **PostgreSQL بصلاحيات الإنتاج (إلزامي قبل أي نشر يمس قاعدة البيانات):** اختبارات pytest تعمل على SQLite، وSQLite يتجاهل `FOR UPDATE` وصلاحيات الأدوار. شغّل PostgreSQL 16 مؤقتًا: هاجر بدور المالك، وطبّق `deploy/postgres/grants.sql`، ثم شغّل كدور التشغيل:
-`UI_SMOKE_DATABASE_URL=postgresql://corr_app@localhost:55432/correspondence npm run test:ui` و`E2E_DATABASE_URL=… sh frontend/scripts/run-e2e-fresh.sh <script>`. والقاعدة يجب أن تكون نظيفة لكل سكربت e2e.
+`UI_SMOKE_DATABASE_URL=postgresql://corr_app@localhost:55432/correspondence npm run test:ui`. ولتجربة الترقية: هاجر القاعدة بالإصدار القديم (git worktree)، ثم الجديد، ثم `purge_legacy_content --yes` و`verify_integrity` كـ`corr_app`. في WSL يوجد `/usr/lib/postgresql/16/bin` مثبّتًا.
 القواعد المستفادة:
 - لا `select_for_update` على جداول append-only، فهو يحتاج صلاحية UPDATE (`test_append_only_locks.py` يمنعه).
-- سلاسل الشفافية لكل مستخدم على حدة، فتُتحقق بـ`verify_all_chains`.
-
-ملاحظة: سكربتات e2e تولّد هويات جديدة لحسابات seed_demo؛ على قاعدة سبق تشغيلها عليها يرفض الخادم اعتماد الجهاز (403) لأن الهوية موجودة ومفتاحها ضاع — هذا سلوك صحيح، لذا استخدم `run-e2e-fresh.sh`.
+- `grants.sql` يُنفَّذ بـ`ON_ERROR_STOP`: أي جدول يُحذف يجب حذف سطره منه، وإلا توقف النشر.
 
 ## قواعد غير قابلة للكسر
 
-1. لا نصوص Plaintext ولا مفاتيح خاصة تُخزن في قاعدة البيانات أو السجلات (انظر SEC-03/09/10 في خطة الاختبار).
-2. قائمة المنع: لا وجود لأي صلاحية `view_all_messages` / `decrypt_all_messages` أو ما يشابها — فحص SEC-14 ثابت في CI.
-3. إعادة تعيين كلمة المرور (صلاحية دخول فقط) منفصلة تقنيًا عن أي شيء متعلق بالتشفير (SEC-08).
-4. لا Plaintext يُقبل في أي endpoint مصنّف E2EE عند بنائه لاحقًا.
+1. لا محتوى مقروء يُخزَّن: كل محتوى (مراسلات، مسودات، شات، تعاميم، بريد خارجي، ملفات وأسماؤها) يُختم بـ`apps.vault` مربوطًا بصفه، ولا يدخل السجلات أو التدقيق أو الإشعارات (SEC-03/10/11).
+2. قائمة المنع: لا وجود لأي صلاحية `view_all_messages` / `decrypt_all_messages` أو ما يشابها — فحص SEC-14 ثابت في CI. الاستثناء الوحيد المعلن: ضابط الأرشيف يرى المصنّف `institutional_archive_eligible` فقط، وكل فتح مُدقَّق.
+3. حق القراءة مشتق فقط من المشاركة (مشارك مراسلة / عضو محادثة / مستلم تعميم / مالك بريد خارجي). القيد المعلن: من يعيد تعيين كلمة مرور موظف يستطيع الدخول بحسابه — كل إعادة تعيين مُدقَّقة.
+4. `CONTENT_ENCRYPTION_KEY` لا يُغيَّر ولا يُفقد على نظام قائم (ضياعه = ضياع البريد كله)؛ `deploy.sh` ينشئه مرة واحدة إن غاب، و`verify_integrity` يتحقق أنه يفتح المخزَّن.
 5. أي endpoint جديد يمرّ بنفس بوابة object-permission (ممنوع كسر العزل لـ «راحة المدير»).
 
 ## الوضع الحالي
+
+- **تم (الأحدث): التحول إلى بريد بأسلوب Outlook** (قرار المستخدم 2026-10-31؛ والبدء على نظيف):
+  - `apps/vault.py`: AES-256-GCM بمفتاح الخادم، الصيغة `v1‖nonce‖ct` والـAAD = الغرض + معرّف الصف (نسخ كتلة لصف آخر لا تُفتح).
+  - المراسلات: إرسال/مسودة/رد/إحالة بنداء واحد بالنص؛ المسودات على الخادم (`draft_enc`) فتظهر من أي جهاز؛ الإحالة ينسخ الخادم محتوى الأصل ومرفقاته إلى خيط جديد. المرفقات multipart، تُختم هي وأسماؤها (`meta_enc`)، والتنزيل `octet-stream` + `attachment` + `nosniff`.
+  - الشات: نص مختوم في `Message.content_enc`، و`/read/` لموضع القراءة، و`latest`/`before_seq` للصفحات. التعاميم: نشر بنداء واحد بعد `audience-preview/`، والإقرار تسجيل على الخادم ببصمة نسخة المحتوى، والسحب يخفي المحتوى فعلًا. الموافقات: قرار مسجّل ببصمة المحتوى بلا توقيع جهاز. الأرشيف: عرض مُدقَّق للمراسلات المصنّفة فقط بلا مفتاح ولا نسخ. البريد الخارجي: مختوم مرة واحدة.
+  - البحث: `/api/v1/search/` (مراسلات وشات وتعاميم وخارجي) يفتح عناصر المستخدم المقروءة له في الذاكرة (أحدث 2000 لكل نوع) بتوحيد عربي (`apps/textsearch.py`)، وبحث المجلدات `?q=` كذلك.
+  - أُزيل: `frontend/src/crypto` وWASM، صفحات الأجهزة والاستعادة، البحث المحلي، سكربتات e2e في Node، `crypto_keys` (التطبيق باقٍ فارغًا لتحمل ترحيلاته حذف الجداول). `TrustedDevice` صار سجل متصفحات الدخول بلا مفاتيح.
+  - `manage.py purge_legacy_content --yes` يحذف ما تركه التصميم القديم (غير مختوم) — `deploy.sh` يشغّله تلقائيًا وهو no-op بعد أول مرة.
+  - **250 اختبارًا**، و`test:ui` **54/54** على SQLite وعلى PostgreSQL كـ`corr_app` بعد ترقية فعلية من `587fd0f` ببيانات قديمة.
+- البنود التالية تاريخية؛ كل ما فيها عن MLS/الأجهزة/الاستعادة/الفك على الجهاز استُبدل بما سبق.
 
 - تم: المرحلة الأولى (حزمة التصميم في `docs/phase1/`).
 - تم: أساس الـ backend — الحسابات المستقلة + الهيكل التنظيمي (مبذور بخمسة معاهد) + المصادقة/MFA + الجلسات الدوّارة + RBAC بالنطاق التنظيمي + سجل تدقيق append-only + اختبارات بوابة 1 (SEC-01/02/08/14 وغيرها، 63 اختبارًا خضراء في `backend/tests`).

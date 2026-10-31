@@ -1,20 +1,11 @@
 /**
  * عميل WebSocket للمحادثات — تذكرة الدخول، إعادة اتصال بتباعد أسّي، وإعادة
- * الجلب عند كل إعادة اتصال. الإغلاق برمز 4001 = إبطال جهازنا (السيرفر
- * يغلق القناة) — نبقي المكالمة للطبقة الأعلى (تنبيه + توجيه للأمان).
+ * الجلب عند كل إعادة اتصال. الإغلاق برمز 4002 = أُزلنا من المحادثة.
  */
+import type { Message } from './api';
 
-export interface ChatEventMessage {
+export interface ChatEventMessage extends Message {
   event: 'message';
-  seq: number;
-  kind: string;
-  sender_user_id: number | string;
-  sender_device_id: number | string;
-  epoch: number;
-  mls_payload: string;
-  reply_to_seq?: number | null;
-  client_msg_id?: string;
-  created_at: string;
 }
 
 export interface ChatEventMembers {
@@ -28,7 +19,7 @@ interface SocketCallbacks {
   onEvent: (event: ChatEvent) => void;
   /** عند كل إعادة اتصال ناجحة — تُعيد الطبقة العليا الجلب (refetch). */
   onResync: () => void;
-  onDeviceRevoked: () => void;
+  onRemoved: () => void;
   onError?: (message: string) => void;
 }
 
@@ -79,8 +70,8 @@ export class ChatSocket {
     };
     ws.onclose = (event) => {
       if (this.closedByUser) return;
-      if (event.code === 4001) {
-        this.callbacks.onDeviceRevoked();
+      if (event.code === 4002) {
+        this.callbacks.onRemoved();
         return;
       }
       this.scheduleReconnect();

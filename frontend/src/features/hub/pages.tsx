@@ -37,6 +37,6 @@ export const AdminHub = () => (
   />
 );
 
-export const SettingsHub = () => <Hub title="الإعدادات" note="أجهزتك ومفاتيحك وأمان حسابك." items={SETTINGS_ITEMS} />;
+export const SettingsHub = () => <Hub title="الإعدادات" note="أمان حسابك والإشعارات." items={SETTINGS_ITEMS} />;
 
 export const MoreHub = () => <Hub title="المزيد" note="بقية الأقسام." items={MORE_ITEMS} />;

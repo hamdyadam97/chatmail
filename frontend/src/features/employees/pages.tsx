@@ -34,8 +34,8 @@ function TempPassword({ value }: { value: string }) {
         </Button>
       </div>
       <p className="text-xs text-amber-800">
-        سلّمها للموظف بقناة آمنة؛ سيُطلب منه تغييرها عند أول دخول. إعادة كلمة المرور تمنح الدخول فقط ولا تمس مفاتيح التشفير: لقراءة
-        مراسلاته يحتاج أحد أجهزته الموثوقة أو مفتاح الاستعادة.
+        سلّمها للموظف بنفسه وبقناة آمنة؛ سيُطلب منه تغييرها عند أول دخول. من يعرفها يدخل الحساب ويقرأ بريده، لذلك تُسجَّل كل
+        إعادة تعيين في سجل التدقيق.
       </p>
     </div>
   );
@@ -241,7 +241,7 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
           return setTemp((await adminApi.resetPassword(user.id)).temp_password);
         case 'sessions': {
           const r = await adminApi.revokeSessions(user.id);
-          return setMessage({ tone: 'ok', text: `أُلغيت ${r.revoked} جلسة دخول. الأجهزة ومفاتيحها لم تُمس.` });
+          return setMessage({ tone: 'ok', text: `أُلغيت ${r.revoked} جلسة دخول — سيُطلب منه الدخول من جديد على كل أجهزته.` });
         }
         case 'activate':
           await adminApi.setActive(user.id, true);
@@ -370,8 +370,7 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
             <Label htmlFor="d-reason">سبب التعطيل</Label>
             <Input id="d-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
             <p className="text-xs text-gray-600">
-              يمنع الدخول ويلغي الجلسات. لا تُنقل مفاتيحه أو رسائله لأحد؛ يُنصح الموظف (أو مسؤول الأمن مع الموظف) بإبطال أجهزته من
-              صفحة الأجهزة عند المغادرة.
+              يمنع الدخول ويلغي الجلسات فورًا. لا تُنقل رسائله لأحد.
             </p>
             <div className="flex justify-end">
               <Button size="sm" variant="danger" onClick={() => action.mutate('deactivate')}>

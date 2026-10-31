@@ -1,17 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCheck, FileSignature, Lock, ShieldAlert } from 'lucide-react';
+import { CheckCheck, FileSignature, Lock } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
 import { useAuth } from '../auth/AuthContext';
 import { correspondenceApi } from '../correspondence/api';
-import { CryptoGate, RecipientPicker } from '../correspondence/components';
-import { openCorrespondence, type OpenResult } from '../correspondence/service';
+import { RecipientPicker } from '../correspondence/components';
 import { approvalsApi, DECISION_LABELS, type ApprovalRequest, type Decision } from './api';
 import { StatusBadge, StepsView, formatDate } from './components';
-import { ContentMismatchError, signDecision } from './signing';
 
 type Tab = 'pending_mine' | 'requested_by_me' | 'delegations';
 
@@ -100,7 +98,7 @@ function Delegations() {
         <h3 className="text-sm font-semibold text-gray-900">تفويض مؤقت لصلاحية الاعتماد</h3>
         <p className="text-xs text-gray-500">
           يستطيع المفوَّض اتخاذ القرار نيابة عنك فقط في الطلبات التي هو أصلًا من مستلمي مراسلتها — التفويض لا يمنح أي
-          اطلاع على المحتوى. الحد الأقصى 90 يومًا، ويُسجّل كل قرار بالتفويض مع هوية المفوَّض وتوقيع جهازه.
+          اطلاع على المحتوى. الحد الأقصى 90 يومًا، ويُسجّل كل قرار بالتفويض مع هوية المفوَّض.
         </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <RecipientPicker
@@ -166,7 +164,7 @@ export function Approvals() {
     ['delegations', 'التفويضات'],
   ];
   return (
-    <CryptoGate>
+    <>
       <div className="mx-auto max-w-5xl space-y-4">
         <h2 className="text-lg font-semibold text-gray-900">الموافقات</h2>
         <div className="flex gap-1 border-b border-gray-200">
@@ -186,7 +184,7 @@ export function Approvals() {
         </div>
         {tab === 'delegations' ? <Delegations /> : <RequestList key={tab} box={tab} />}
       </div>
-    </CryptoGate>
+    </>
   );
 }
 
@@ -202,40 +200,19 @@ function ApprovalDetail({ id }: { id: string }) {
     queryFn: () => correspondenceApi.get(request!.correspondence.id),
     enabled: Boolean(request),
   });
-  const [opened, setOpened] = useState<OpenResult | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<Decision | null>(null);
 
-  useEffect(() => {
-    if (!detail) return;
-    let cancelled = false;
-    openCorrespondence(detail)
-      .then((r) => !cancelled && setOpened(r))
-      .catch(() => !cancelled && setOpened({ state: 'unavailable', reason: 'تعذر فك التشفير' }));
-    return () => {
-      cancelled = true;
-    };
-  }, [detail]);
-
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['approvals'] });
   const decide = useMutation({
-    mutationFn: async (decision: Decision) => {
-      if (!request || !detail?.content) throw new Error('المحتوى غير متاح');
-      const signed = await signDecision({
-        request,
-        userId: String(user!.id),
-        decision,
-        reviewedCiphertextB64: detail.content.mls_payload,
-      });
-      return approvalsApi.decide(request.id, signed);
-    },
+    mutationFn: (decision: Decision) => approvalsApi.decide(id, decision),
     onSuccess: () => {
       setConfirming(null);
       void refresh();
     },
     onError: (err) => {
       setConfirming(null);
-      setActionError(err instanceof ContentMismatchError || !('status' in (err as object)) ? (err as Error).message : toUserMessage(err));
+      setActionError(toUserMessage(err));
     },
   });
   const cancel = useMutation({ mutationFn: () => approvalsApi.cancel(id), onSuccess: refresh });
@@ -257,7 +234,7 @@ function ApprovalDetail({ id }: { id: string }) {
   }
 
   const isRequester = request.requested_by.id === String(user?.id);
-  const contentReady = opened?.state === 'ok' && opened.stored.senderVerified && opened.stored.bound;
+  const contentReady = Boolean(detail?.content);
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -280,26 +257,20 @@ function ApprovalDetail({ id }: { id: string }) {
         </div>
 
         <div className="rounded-lg bg-gray-50 p-4">
-          {opened === null ? (
+          {!detail ? (
             <span className="flex items-center gap-2 text-sm text-gray-500">
               <Spinner size="sm" />
-              جارٍ فك المحتوى على جهازك…
+              جارٍ تحميل المحتوى…
             </span>
-          ) : opened.state === 'ok' ? (
+          ) : detail.content ? (
             <div className="space-y-1">
-              <p className="font-medium text-gray-900">{opened.stored.content.subject}</p>
-              <p className="line-clamp-6 whitespace-pre-wrap break-words text-sm text-gray-700">{opened.stored.content.body}</p>
-              {(!opened.stored.senderVerified || !opened.stored.bound) && (
-                <p className="flex items-center gap-1 text-sm text-red-700">
-                  <ShieldAlert className="h-4 w-4" />
-                  تعذر التحقق من سلامة المحتوى — لا يمكن اتخاذ قرار عليه.
-                </p>
-              )}
+              <p className="font-medium text-gray-900">{detail.content.subject}</p>
+              <p className="line-clamp-6 whitespace-pre-wrap break-words text-sm text-gray-700">{detail.content.body}</p>
             </div>
           ) : (
             <span className="flex items-center gap-2 text-sm text-gray-600">
               <Lock className="h-4 w-4" />
-              {opened.reason}
+              تعذر عرض محتوى المراسلة.
             </span>
           )}
         </div>
@@ -309,16 +280,14 @@ function ApprovalDetail({ id }: { id: string }) {
         {request.my_slot && (
           <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/50 p-4">
             <p className="text-sm text-gray-800">
-              {request.my_slot.delegated ? 'تتخذ القرار بالتفويض نيابة عن معتمد آخر.' : 'دورك في اتخاذ القرار.'} يُوقَّع القرار بمفتاح
-              جهازك ويرتبط ببصمة النسخة المشفرة التي اطلعت عليها. هذا توقيع سلامة تشفيري داخل النظام وليس توقيعًا إلكترونيًا
-              نظاميًا معتمدًا قانونيًا.
+              {request.my_slot.delegated ? 'تتخذ القرار بالتفويض نيابة عن معتمد آخر.' : 'دورك في اتخاذ القرار.'} يُسجَّل القرار
+              باسمك ووقته ونسخة المراسلة التي اطلعت عليها. هذا سجل داخل النظام وليس توقيعًا إلكترونيًا نظاميًا معتمدًا قانونيًا.
             </p>
-            {!contentReady && <p className="text-sm text-red-700">يجب فك المحتوى والتحقق منه على هذا الجهاز قبل القرار.</p>}
             {confirming ? (
               <div className="flex items-center gap-2">
                 <span className="text-sm">تأكيد «{DECISION_LABELS[confirming]}»؟ لا يمكن التراجع عن القرار.</span>
                 <Button size="sm" loading={decide.isPending} onClick={() => decide.mutate(confirming)}>
-                  تأكيد وتوقيع
+                  تأكيد
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
                   تراجع
@@ -363,7 +332,7 @@ function ApprovalDetail({ id }: { id: string }) {
 
 export function ApprovalDetailPage() {
   const { id } = useParams<{ id: string }>();
-  return <CryptoGate>{id ? <ApprovalDetail key={id} id={id} /> : null}</CryptoGate>;
+  return id ? <ApprovalDetail key={id} id={id} /> : null;
 }
 
 export const ApprovalsPages = { Approvals, Detail: ApprovalDetailPage };

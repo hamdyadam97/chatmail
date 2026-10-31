@@ -1,7 +1,7 @@
 /**
  * عقد المراسلات — `/api/v1/correspondences/*` و`/api/v1/attachments/*`.
- * الخادم لا يستقبل ولا يعيد إلا بيانات وصفية وciphertext؛ المحتوى (العنوان
- * والنص ومفاتيح المرفقات) يسافر داخل رسالة MLS واحدة في `content.mls_payload`.
+ * المحتوى يُخزَّن على الخادم مشفّرًا بمفتاحه ويُعاد مفتوحًا للمشاركين فقط
+ * (أي دخول للحساب من أي متصفح يرى بريده — مثل Outlook).
  */
 import { ApiError, apiFetch, rawFetch } from '../../shared/api';
 
@@ -26,6 +26,10 @@ export interface CorrespondenceSummary {
   id: string;
   reference_number: string | null;
   sender: UserRef;
+  subject: string;
+  /** أول سطر من النص (للقائمة). */
+  preview: string;
+  has_attachments: boolean;
   priority: Priority;
   classification: Classification;
   status: 'draft' | 'sent' | 'closed';
@@ -46,25 +50,26 @@ export interface CorrespondenceSummary {
   thread_last_at?: string | null;
 }
 
-export interface ThreadRef {
+export interface AttachmentMeta {
   id: string;
-  mls_group_id: string;
-  current_epoch: number;
+  name: string;
+  mime: string;
+  size: number;
 }
 
-export interface ContentRef {
-  seq: number;
-  epoch: number;
-  sender_device_id: string | null;
-  client_msg_id: string;
-  mls_payload: string;
+export interface ForwardedQuote {
+  reference_number: string | null;
+  sender_name: string;
+  sent_at: string | null;
+  subject: string;
+  body: string;
 }
 
-export interface AttachmentRef {
-  id: string;
-  ciphertext_size: number;
-  ciphertext_sha256: string;
-  algorithm: string;
+export interface CorrespondenceContent {
+  subject: string;
+  body: string;
+  attachments: AttachmentMeta[];
+  forwarded: ForwardedQuote | null;
 }
 
 export interface ThreadItem {
@@ -73,15 +78,16 @@ export interface ThreadItem {
   sender_id: string;
   sent_at: string;
   reply_to_id: string | null;
-  content_seq: number;
   /** لم أقرأها بعد (صفّي أنا فقط). */
   unread: boolean;
+  subject: string;
+  body: string;
+  attachments: AttachmentMeta[];
+  forwarded: ForwardedQuote | null;
 }
 
 export interface CorrespondenceDetail extends CorrespondenceSummary {
-  thread: ThreadRef;
-  content: ContentRef | null;
-  attachments: AttachmentRef[];
+  content: CorrespondenceContent | null;
   forwarded_from_reference: string | null;
   thread_items: ThreadItem[];
 }
@@ -100,24 +106,29 @@ export interface CorrespondenceEvent {
   created_at: string;
 }
 
-export interface PrepareBody {
+export interface ComposeBody {
   to_user_ids: string[];
   cc_user_ids: string[];
   priority: Priority;
   classification: Classification;
   due_date: string | null;
-  mls_group_id: string;
+  subject: string;
+  body: string;
+  attachment_ids: string[];
   client_ref: string;
+  /** false = حفظ كمسودة. */
+  send: boolean;
 }
 
-export interface SendBody {
-  mls_payload: string;
-  client_msg_id: string;
-  epoch: number;
-  sender_device_id: string;
+export type DraftBody = Omit<ComposeBody, 'client_ref' | 'send'>;
+
+export interface ReplyBody {
+  client_ref: string;
+  priority: Priority;
+  due_date: string | null;
+  subject: string;
+  body: string;
   attachment_ids: string[];
-  /** نسخة مشفّرة للأرشيف المركزي — للمصنّفة «قابلة للأرشفة المؤسسية» فقط. */
-  archive_copy?: { key_id: string; ephemeral_pub: string; iv: string; ciphertext: string } | null;
 }
 
 export interface ListParams {
@@ -138,22 +149,19 @@ function qs(params: ListParams): string {
 
 const BASE = '/correspondences';
 
-/**
- * طلب بايتات خام (ليس JSON) بنفس توكن الذاكرة؛ عند 401 نمرّ بـapiFetch مرة
- * لتجديد التوكن عبر كوكي التحديث ثم نعيد المحاولة.
- */
 export const correspondenceApi = {
   list: (params: ListParams) => apiFetch<Page<CorrespondenceSummary>>(`${BASE}/?${qs(params)}`),
   counts: () =>
     apiFetch<{ inbox_unread: number; pending_replies: number; drafts: number }>(`${BASE}/counts/`),
   get: (id: string) => apiFetch<CorrespondenceDetail>(`${BASE}/${id}/`),
   events: (id: string) => apiFetch<CorrespondenceEvent[]>(`${BASE}/${id}/events/`),
-  prepare: (body: PrepareBody) => apiFetch<CorrespondenceDetail>(`${BASE}/`, { method: 'POST', body }),
-  forward: (id: string, body: PrepareBody) =>
+  compose: (body: ComposeBody) => apiFetch<CorrespondenceDetail>(`${BASE}/`, { method: 'POST', body }),
+  updateDraft: (id: string, body: DraftBody) =>
+    apiFetch<CorrespondenceDetail>(`${BASE}/${id}/`, { method: 'PATCH', body }),
+  sendDraft: (id: string) => apiFetch<CorrespondenceDetail>(`${BASE}/${id}/send/`, { method: 'POST' }),
+  forward: (id: string, body: ComposeBody) =>
     apiFetch<CorrespondenceDetail>(`${BASE}/${id}/forward/`, { method: 'POST', body }),
-  send: (id: string, body: SendBody) =>
-    apiFetch<CorrespondenceDetail>(`${BASE}/${id}/send/`, { method: 'POST', body }),
-  reply: (id: string, body: SendBody & { client_ref: string; priority: Priority; due_date: string | null }) =>
+  reply: (id: string, body: ReplyBody) =>
     apiFetch<CorrespondenceDetail>(`${BASE}/${id}/reply/`, { method: 'POST', body }),
   markRead: (id: string) => apiFetch<null>(`${BASE}/${id}/read/`, { method: 'POST' }),
   setFlags: (id: string, flags: { archived?: boolean; important?: boolean }) =>
@@ -164,22 +172,20 @@ export const correspondenceApi = {
   close: (id: string) => apiFetch<CorrespondenceDetail>(`${BASE}/${id}/close/`, { method: 'POST' }),
   discard: (id: string) => apiFetch<null>(`${BASE}/${id}/`, { method: 'DELETE' }),
 
-  /** رفع blob مشفّر مسبقًا (application/octet-stream) — الخادم يرفض أي ملف صريح. */
-  uploadBlob: async (blob: Uint8Array) => {
-    const res = await rawFetch('/attachments/', {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/octet-stream' },
-      body: blob,
-    });
+  /** رفع ملف (multipart) — الخادم يشفّره ويعيد اسمه وحجمه ومعرّفه. */
+  upload: async (file: File): Promise<AttachmentMeta> => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    const res = await rawFetch('/attachments/', { method: 'POST', headers: { Accept: 'application/json' }, body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiError(res.status, data);
-    return data as { id: string; ciphertext_size: number; ciphertext_sha256: string };
+    return data as AttachmentMeta;
   },
 
-  downloadBlob: async (id: string): Promise<Uint8Array> => {
+  download: async (id: string): Promise<Blob> => {
     const res = await rawFetch(`/attachments/${id}/`, {});
     if (!res.ok) throw new ApiError(res.status, null);
-    return new Uint8Array(await res.arrayBuffer());
+    return res.blob();
   },
 };
 

@@ -12,8 +12,8 @@ import {
   History,
   Lock,
   Paperclip,
+  Pencil,
   Reply,
-  ShieldAlert,
   Star,
   Trash2,
   X,
@@ -27,19 +27,15 @@ import { ApprovalPanel } from '../approvals/components';
 import {
   correspondenceApi,
   PRIORITY_LABELS,
+  type AttachmentMeta,
+  type CorrespondenceContent,
   type CorrespondenceDetail,
   type Participant,
   type Priority,
 } from './api';
-import { ArchiveNotice, ClassificationBadge, CryptoGate, E2EENote, PriorityBadge, formatDate, formatDay } from './components';
-import { decryptAttachment, formatBytes, saveDecryptedFile, type AttachmentKey } from './content';
-import {
-  openCorrespondence,
-  openThreadItems,
-  replyToCorrespondence,
-  type OpenResult,
-  type StoredContent,
-} from './service';
+import { ArchiveNotice, ClassificationBadge, PrivacyNote, PriorityBadge, formatDate, formatDay } from './components';
+import { downloadAttachment, formatBytes } from './content';
+import { replyToCorrespondence } from './service';
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'أُنشئت',
@@ -69,20 +65,18 @@ function ParticipantsLine({ label, people, showReceipts }: { label: string; peop
   );
 }
 
-export function AttachmentRow({ meta }: { meta: AttachmentKey }) {
+export function AttachmentRow({ meta }: { meta: AttachmentMeta }) {
   const [state, setState] = useState<'idle' | 'busy' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const download = async () => {
     setState('busy');
     setError(null);
     try {
-      const blob = await correspondenceApi.downloadBlob(meta.id);
-      const plain = await decryptAttachment(blob, meta);
-      saveDecryptedFile(plain, meta.name);
+      await downloadAttachment(meta);
       setState('idle');
     } catch (err) {
       setState('error');
-      setError(err instanceof Error && !('status' in err) ? err.message : toUserMessage(err, 'تعذر تنزيل المرفق'));
+      setError(toUserMessage(err, 'تعذر تنزيل المرفق'));
     }
   };
   return (
@@ -96,41 +90,24 @@ export function AttachmentRow({ meta }: { meta: AttachmentKey }) {
         {error && <span className="text-xs text-red-600">{error}</span>}
         <Button type="button" size="sm" variant="outline" loading={state === 'busy'} onClick={() => void download()}>
           <Download className="h-4 w-4" />
-          فك وتنزيل
+          تنزيل
         </Button>
       </span>
     </li>
   );
 }
 
-function ContentView({ opened }: { opened: OpenResult | null }) {
-  if (!opened) {
-    return (
-      <div className="flex items-center gap-2 py-8 text-sm text-gray-500">
-        <Spinner size="sm" />
-        جارٍ فك التشفير على جهازك…
-      </div>
-    );
-  }
-  if (opened.state === 'unavailable') {
+function ContentView({ content }: { content: CorrespondenceContent | null }) {
+  if (!content) {
     return (
       <div className="flex items-start gap-2 rounded-lg bg-gray-50 p-4 text-sm text-gray-600">
         <Lock className="mt-0.5 h-4 w-4 shrink-0" />
-        {opened.reason}
+        تعذر عرض محتوى هذه الرسالة.
       </div>
     );
   }
-  const { content, senderVerified, bound } = opened.stored;
   return (
     <div className="space-y-4">
-      {(!senderVerified || !bound) && (
-        <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          {!senderVerified
-            ? 'تعذر التحقق من أن هذا المحتوى صادر فعلًا من المرسل المعروض (هوية MLS لا تطابق). لا تعتمد عليه.'
-            : 'هذا المحتوى ليس مربوطًا بهذه المراسلة — قد يكون مُبدَّلًا. لا تعتمد عليه.'}
-        </div>
-      )}
       {/* نص صريح فقط — لا HTML ولا dangerouslySetInnerHTML (حماية XSS، §21) */}
       <div className="whitespace-pre-wrap break-words text-sm leading-7 text-gray-800">{content.body || '—'}</div>
       {content.forwarded && (
@@ -153,8 +130,7 @@ function ContentView({ opened }: { opened: OpenResult | null }) {
           </ul>
           <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            الخادم لا يستطيع فحص المرفقات المشفّرة بحثًا عن برمجيات ضارة. افحص الملف بمضاد الفيروسات على جهازك قبل فتحه، ولا
-            تفتح ملفات تنفيذية من مصادر غير متوقعة.
+            لا تفتح ملفات تنفيذية أو غير متوقعة، وافحص الملفات بمضاد الفيروسات قبل فتحها.
           </p>
         </div>
       )}
@@ -174,7 +150,7 @@ function ReplyBox({
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState<Priority>('normal');
   const [files, setFiles] = useState<File[]>([]);
-  const [subjectBase, setSubjectBase] = useState('');
+  const subjectBase = detail.content?.subject || `المراسلة ${detail.reference_number}`;
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () =>
@@ -186,13 +162,8 @@ function ReplyBox({
         files,
       }),
     onSuccess: (sent) => onSent(sent.id),
-    onError: (err) => setError(err instanceof Error && !('status' in err) ? err.message : toUserMessage(err, 'تعذر إرسال الرد')),
+    onError: (err) => setError(toUserMessage(err, 'تعذر إرسال الرد')),
   });
-  useEffect(() => {
-    openCorrespondence(detail)
-      .then((r) => setSubjectBase(r.state === 'ok' ? r.stored.content.subject : `المراسلة ${detail.reference_number}`))
-      .catch(() => setSubjectBase(`المراسلة ${detail.reference_number}`));
-  }, [detail]);
   const recipients = detail.participants.filter((p) => p.kind !== 'bcc').length;
   return (
     <Card id="reply-box" className="space-y-3 p-5">
@@ -241,7 +212,7 @@ function ReplyBox({
           </label>
         </div>
         <Button onClick={() => mutation.mutate()} loading={mutation.isPending} disabled={!body.trim()}>
-          إرسال الرد مشفّرًا
+          إرسال الرد
         </Button>
       </div>
       {detail.classification === 'institutional_archive_eligible' && <ArchiveNotice />}
@@ -272,19 +243,8 @@ function Conversation({
 }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [contents, setContents] = useState<Map<string, StoredContent | undefined> | null>(null);
   const items = useMemo(() => [...detail.thread_items].reverse(), [detail.thread_items]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    let cancelled = false;
-    openThreadItems(detail)
-      .then((m) => !cancelled && setContents(m))
-      .catch(() => !cancelled && setContents(new Map()));
-    return () => {
-      cancelled = true;
-    };
-  }, [detail]);
 
   // إعادة الضبط عند تغيّر المحادثة أو وصول رد جديد فقط (لا عند كل إعادة جلب).
   const itemsKey = items.map((it) => it.id).join(',');
@@ -296,12 +256,11 @@ function Conversation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.id, itemsKey]);
 
-  // عنوان المحادثة من أقدم رسالة مفكوكة.
+  // عنوان المحادثة من أقدم رسالة.
   useEffect(() => {
-    if (!contents) return;
-    const oldest = detail.thread_items.map((it) => contents.get(it.id)).find(Boolean);
-    if (oldest) onSubject(conversationSubject(oldest.content.subject));
-  }, [contents, detail.thread_items, onSubject]);
+    const oldest = detail.thread_items[0];
+    if (oldest) onSubject(conversationSubject(oldest.subject));
+  }, [detail.thread_items, onSubject]);
 
   // المعروض مفتوحًا يُعلَّم مقروءًا (الخادم يتجاهل المقروء ورسائلي أنا).
   useEffect(() => {
@@ -337,7 +296,6 @@ function Conversation({
         </div>
       )}
       {items.map((item) => {
-        const stored = contents?.get(item.id);
         const isOpen = expanded.has(item.id);
         const sender = names.get(item.sender_id) ?? 'مشارك';
         const current = item.id === detail.id;
@@ -369,11 +327,7 @@ function Conversation({
                 </div>
                 {!isOpen && (
                   <p className="truncate text-sm text-gray-500">
-                    {contents === null
-                      ? '…'
-                      : stored
-                        ? stored.content.body.replace(/\s+/g, ' ').slice(0, 160) || stored.content.subject
-                        : '🔒 غير متاحة على هذا الجهاز'}
+                    {item.body.replace(/\s+/g, ' ').slice(0, 160) || item.subject}
                   </p>
                 )}
                 {isOpen && current && (
@@ -388,13 +342,7 @@ function Conversation({
             {isOpen && (
               <div className="border-t border-gray-100 px-5 pb-5 pt-4">
                 <ContentView
-                  opened={
-                    contents === null
-                      ? null
-                      : stored
-                        ? { state: 'ok', stored }
-                        : { state: 'unavailable', reason: 'هذه الرسالة غير متاحة على هذا الجهاز (أُرسلت قبل انضمامه أو تعذر فكها).' }
-                  }
+                  content={{ subject: item.subject, body: item.body, attachments: item.attachments, forwarded: item.forwarded }}
                 />
               </div>
             )}
@@ -411,7 +359,6 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
   // المجلد الحالي في البريد (/mail/:folder/:id) — الإحالة تُكتب في لوحة القراءة نفسها.
   const { folder: folderSlug } = useParams<{ folder?: string }>();
   const queryClient = useQueryClient();
-  const [opened, setOpened] = useState<OpenResult | null>(null);
   const [showEvents, setShowEvents] = useState(false);
   const [replying, setReplying] = useState(false);
   const [threadSubject, setThreadSubject] = useState<string | null>(null);
@@ -425,18 +372,6 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
     queryFn: () => correspondenceApi.events(id),
     enabled: showEvents,
   });
-
-  useEffect(() => {
-    let cancelled = false;
-    setOpened(null);
-    if (!detail) return;
-    openCorrespondence(detail)
-      .then((r) => !cancelled && setOpened(r))
-      .catch((err) => !cancelled && setOpened({ state: 'unavailable', reason: err instanceof Error ? err.message : 'تعذر فك التشفير' }));
-    return () => {
-      cancelled = true;
-    };
-  }, [detail]);
 
   const isSender = detail?.sender.id === String(user?.id);
   useEffect(() => {
@@ -492,11 +427,11 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
     );
   }
 
-  const subject = opened?.state === 'ok' ? opened.stored.content.subject : null;
+  const subject = detail.content?.subject ?? null;
   const to = detail.participants.filter((p) => p.kind === 'to');
   const cc = detail.participants.filter((p) => p.kind === 'cc');
   const canReply = detail.status === 'sent';
-  const canForward = detail.status !== 'draft' && opened?.state === 'ok';
+  const canForward = detail.status !== 'draft';
 
   const toolbarButton =
     'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40';
@@ -558,6 +493,12 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
           </button>
         )}
         {isSender && detail.status === 'draft' && (
+          <button type="button" className={toolbarButton} onClick={() => navigate(`/mail/drafts/compose?draft=${detail.id}`)}>
+            <Pencil className="h-4 w-4 text-primary-600" />
+            تحرير وإرسال
+          </button>
+        )}
+        {isSender && detail.status === 'draft' && (
           <button type="button" className={cn(toolbarButton, 'text-red-600')} onClick={() => discard.mutate()} disabled={discard.isPending}>
             <Trash2 className="h-4 w-4" />
             حذف
@@ -567,12 +508,7 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
 
       <div className="space-y-2">
         <h2 className="break-words text-xl font-semibold text-gray-900">
-          {threadSubject ?? (subject ? conversationSubject(subject) : null) ?? (
-            <span className="flex items-center gap-2 text-gray-400">
-              <Lock className="h-5 w-5" />
-              مشفّرة
-            </span>
-          )}
+          {threadSubject ?? (subject ? conversationSubject(subject) : null) ?? '(بلا عنوان)'}
         </h2>
         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
           {detail.thread_items.length > 1 && (
@@ -617,13 +553,13 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
               </div>
               <ParticipantsLine label="إلى" people={to} showReceipts={isSender} />
               <ParticipantsLine label="نسخة" people={cc} showReceipts={isSender} />
-              <p className="text-xs text-gray-500">بلا رقم (لم تُرسل)</p>
+              <p className="text-xs text-gray-500">مسودة — بلا رقم (لم تُرسل)</p>
             </div>
           </div>
-          <ContentView opened={opened} />
+          <ContentView content={detail.content} />
         </div>
       )}
-      <E2EENote />
+      <PrivacyNote />
 
       <ApprovalPanel detail={detail} isSender={isSender} />
 
@@ -656,5 +592,5 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
 
 export function DetailsPage() {
   const { id } = useParams<{ id: string }>();
-  return <CryptoGate>{id ? <Details key={id} id={id} /> : null}</CryptoGate>;
+  return id ? <Details key={id} id={id} /> : null;
 }

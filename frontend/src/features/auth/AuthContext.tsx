@@ -1,8 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { authApi, isMfaChallenge, setAccessToken, type User } from '../../shared/api';
-import { setAuthBridge } from '../../crypto/authBridge';
 import { disablePush } from '../notifications/push';
-import { stopAutoBackup } from '../../crypto/recovery';
 
 export type AuthStatus = 'booting' | 'authenticated' | 'guest';
 
@@ -23,11 +21,6 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('booting');
   const [user, setUser] = useState<User | null>(null);
-
-  // جسر المستخدم لطبقة crypto (بلا React) — يتحدث مع كل تغيّر للمستخدم.
-  useEffect(() => {
-    if (user) setAuthBridge(() => ({ id: user.id }));
-  }, [user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +63,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     // هذا المتصفح لا يستقبل إشعارات الحساب بعد الخروج (جهاز مشترك).
     await disablePush().catch(() => undefined);
-    stopAutoBackup();
     try {
       await authApi.logout();
     } catch {

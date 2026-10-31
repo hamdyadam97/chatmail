@@ -5,7 +5,7 @@
 #
 #   sudo DOMAIN=mail.example.org CERT_EMAIL=it@example.org bash deploy/scripts/make-env.sh
 #
-# Refuses to overwrite existing files: regenerating CRYPTO_LOG_SIGN_SEED or
+# Refuses to overwrite existing files: regenerating CONTENT_ENCRYPTION_KEY or
 # the database passwords on a live install would break it.
 set -euo pipefail
 : "${DOMAIN:?set DOMAIN}"
@@ -36,7 +36,7 @@ values = {
     "DJANGO_SECRET_KEY": secrets.token_urlsafe(50),
     "AUTH_JWT_SECRET": secrets.token_urlsafe(48),
     "AUTH_FERNET_KEY": base64.urlsafe_b64encode(os.urandom(32)).decode(),
-    "CRYPTO_LOG_SIGN_SEED": base64.b64encode(os.urandom(32)).decode(),
+    "CONTENT_ENCRYPTION_KEY": base64.b64encode(os.urandom(32)).decode(),
     "WEB_PUSH_VAPID_PRIVATE_KEY": base64.urlsafe_b64encode(vapid).rstrip(b"=").decode(),
     "WEB_PUSH_SUBJECT": f"mailto:{env['CERT_EMAIL']}",
 }
@@ -54,4 +54,4 @@ chmod 0600 "$DIR/migrate.env" "$DIR/db-passwords.env"
 chmod 0640 "$DIR/correspondence.env"   # group set to the service account by install.sh
 echo "written: $DIR/correspondence.env, migrate.env, db-passwords.env (secrets not shown)"
 echo "IMPORTANT: keep an offline copy of $DIR (with your backups key). Losing"
-echo "CRYPTO_LOG_SIGN_SEED breaks verification of the key-transparency log."
+echo "CONTENT_ENCRYPTION_KEY loses every stored message and attachment."

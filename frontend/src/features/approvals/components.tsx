@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BadgeCheck, CheckCircle2, CircleDashed, Plus, ShieldAlert, ShieldQuestion, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, CircleDashed, Plus, Trash2, XCircle } from 'lucide-react';
 import { Button, Card, Label } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
@@ -11,11 +11,9 @@ import {
   DECISION_LABELS,
   STATUS_LABELS,
   type ApprovalRequest,
-  type DecisionRecord,
   type RequestStatus,
   type StepSpec,
 } from './api';
-import { verifyDecision, type VerifyResult } from './signing';
 
 const STATUS_STYLES: Record<RequestStatus, string> = {
   pending: 'bg-amber-50 text-amber-700',
@@ -39,43 +37,7 @@ export function formatDate(iso: string | null): string {
   return new Intl.DateTimeFormat('ar', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
 }
 
-function SignatureBadge({ request, record }: { request: ApprovalRequest; record: DecisionRecord }) {
-  const [state, setState] = useState<VerifyResult | 'checking'>('checking');
-  useEffect(() => {
-    let cancelled = false;
-    verifyDecision(request, record)
-      .then((r) => !cancelled && setState(r))
-      .catch(() => !cancelled && setState('invalid'));
-    return () => {
-      cancelled = true;
-    };
-  }, [request, record]);
-  if (state === 'checking') return <span className="text-xs text-gray-400">جارٍ التحقق من التوقيع…</span>;
-  if (state === 'valid') {
-    return (
-      <span className="flex items-center gap-1 text-xs text-emerald-700" title="تحقق جهازك من توقيع Ed25519 للقرار">
-        <BadgeCheck className="h-3.5 w-3.5" />
-        توقيع صحيح
-      </span>
-    );
-  }
-  if (state === 'unknown-device') {
-    return (
-      <span className="flex items-center gap-1 text-xs text-gray-500" title="جهاز التوقيع لم يعد في دليل المفاتيح (مُبطل؟)">
-        <ShieldQuestion className="h-3.5 w-3.5" />
-        جهاز التوقيع غير متاح للتحقق
-      </span>
-    );
-  }
-  return (
-    <span className="flex items-center gap-1 text-xs font-medium text-red-700">
-      <ShieldAlert className="h-3.5 w-3.5" />
-      توقيع غير صالح — لا تعتمد على هذا القرار
-    </span>
-  );
-}
-
-/** الخطوات والقرارات مع تحقق محلي من كل توقيع. */
+/** الخطوات والقرارات. */
 export function StepsView({ request }: { request: ApprovalRequest }) {
   return (
     <ol className="space-y-3">
@@ -114,7 +76,6 @@ export function StepsView({ request }: { request: ApprovalRequest }) {
                       {DECISION_LABELS[decision.decision]}
                       {decision.delegated && ` — بالتفويض عبر ${decision.approver.full_name}`} · {formatDate(decision.decided_at)}
                     </span>
-                    <SignatureBadge request={request} record={decision} />
                   </span>
                 ) : (
                   <span className="text-xs text-gray-400">لم يُتخذ قرار</span>
