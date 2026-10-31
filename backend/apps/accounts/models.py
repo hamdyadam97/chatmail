@@ -109,6 +109,9 @@ class TrustedDevice(models.Model):
     status = models.CharField(max_length=16, choices=STATUS, default="pending")
     last_seen_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    # SHA-256 of the long-lived httpOnly device cookie: this browser has been
+    # approved for this account (see LoginApproval). NULL = not yet.
+    browser_token_hash = models.CharField(max_length=64, null=True, blank=True, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -171,3 +174,36 @@ class LoginIntent(models.Model):
 
     def __str__(self):
         return f"intent:{self.user_id}"
+
+
+class LoginApproval(models.Model):
+    """A login from a browser this account has not used before (user
+    decision 2026-10-31): the password was right, but the session is issued
+    only after the user types a one-time code that was sent to the system
+    administrators (in-app + e-mail). The code is sealed at rest (apps.vault)
+    so the admin page can show it; it is never logged."""
+
+    STATUS = [
+        ("pending", "بانتظار الكود"),
+        ("used", "استُخدم"),
+        ("rejected", "مرفوض"),
+        ("expired", "منتهي"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="login_approvals")
+    code_enc = models.BinaryField()
+    status = models.CharField(max_length=16, choices=STATUS, default="pending")
+    attempts = models.IntegerField(default=0)
+    device_label = models.CharField(max_length=255, blank=True, default="")
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    decided_at = models.DateTimeField(null=True, blank=True)
+    rejected_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    class Meta:
+        db_table = "login_approvals"
+        indexes = [models.Index(fields=["status", "expires_at"], name="idx_login_approval_pending")]

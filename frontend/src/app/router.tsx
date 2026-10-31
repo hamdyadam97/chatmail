@@ -13,6 +13,7 @@ import { ReportsPages } from '../features/reports/pages';
 import { NotificationsPages } from '../features/notifications/pages';
 import { ArchivePage } from '../features/archive/pages';
 import { SecurityPages } from '../features/security/pages';
+import { LoginApprovalsPage } from '../features/security/LoginApprovalsPage';
 import { AuditPages } from '../features/audit/pages';
 import { SearchPage } from '../features/search/pages';
 import { AdminHub, MoreHub, SettingsHub } from '../features/hub/pages';
@@ -80,6 +81,7 @@ export const router = createBrowserRouter([
       { path: 'recovery', element: <Redirect to="/security" /> },
       { path: 'archive', element: <ArchivePage /> },
       { path: 'security', element: <SecurityPages.Security /> },
+      { path: 'login-approvals', element: <LoginApprovalsPage /> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

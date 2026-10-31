@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { BarChart3, Building2, CheckCheck, Contact, FolderTree, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu } from 'lucide-react';
+import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu } from 'lucide-react';
 
 export interface RailItem {
   to: string;
@@ -20,7 +20,7 @@ export const RAIL_ITEMS: RailItem[] = [
     to: '/admin',
     label: 'الإدارة',
     icon: Building2,
-    match: ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/reports', '/audit-logs', '/archive'],
+    match: ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/reports', '/audit-logs', '/archive', '/login-approvals'],
   },
 ];
 
@@ -59,6 +59,7 @@ export const ADMIN_ITEMS: HubItem[] = [
   { to: '/departments', label: 'الأقسام', description: 'شجرة الأقسام', icon: FolderTree },
   { to: '/roles', label: 'الأدوار والصلاحيات', description: 'ما يمنحه كل دور والإسنادات', icon: Lock },
   { to: '/reports', label: 'التقارير', description: 'أعداد وأزمنة مجمّعة وحالة الخدمات', icon: BarChart3 },
+  { to: '/login-approvals', label: 'طلبات الدخول', description: 'أكواد الدخول من الأجهزة الجديدة', icon: KeyRound },
   { to: '/audit-logs', label: 'سجل التدقيق', description: 'لمراقب الأمن المعلن', icon: ScrollText },
   { to: '/archive', label: 'الأرشيف المركزي', description: 'المراسلات المصنّفة للأرشفة — لضباط الأرشيف', icon: Archive },
 ];

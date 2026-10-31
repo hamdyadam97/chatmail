@@ -233,6 +233,11 @@ if not CONTENT_ENCRYPTION_KEY:
         hashlib.sha256(b"correspondence-dev-content-key-do-not-use-in-prod").digest()
     ).decode()
 
+# A login from a browser the account has not used before needs a one-time
+# code sent to the administrators (apps.accounts.login_approval). On in
+# production (prod.py), off by default elsewhere.
+LOGIN_NEW_DEVICE_APPROVAL = os.environ.get("LOGIN_NEW_DEVICE_APPROVAL", "0") == "1"
+
 TOTP_ISSUER_NAME = os.environ.get("TOTP_ISSUER_NAME", "مجموعة المعاهد")
 
 # CORS (frontend dev server talks to the API cross-origin in dev).

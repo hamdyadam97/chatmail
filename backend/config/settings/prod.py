@@ -26,6 +26,9 @@ CSRF_COOKIE_SECURE = True
 # Refresh-token cookie: Secure + Strict SameSite in production.
 AUTH_REFRESH_COOKIE_SECURE = True
 
+# New-browser logins need an administrator's code (set "0" to turn off).
+LOGIN_NEW_DEVICE_APPROVAL = os.environ.get("LOGIN_NEW_DEVICE_APPROVAL", "1") == "1"
+
 # --- Secrets: fail fast instead of silently using the dev defaults -----------
 # base.py only *warns* when these are missing (convenient in dev). In
 # production a missing secret must stop the process at startup.

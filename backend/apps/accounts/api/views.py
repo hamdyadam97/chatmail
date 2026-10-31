@@ -4,6 +4,12 @@ Contract (frontend depends on this):
   POST login/            -> {access, mfa_required:false, user:{...}} + refresh cookie
                           | {mfa_required:true, mfa_token}
   POST mfa/verify/       -> {access, mfa_required:false, user:{...}} + refresh cookie
+                          (login and mfa/verify answer {approval_required:true,
+                          approval_token} instead when the browser is new and
+                          LOGIN_NEW_DEVICE_APPROVAL is on — see login_approval)
+  POST login/code/       -> {approval_token, code} -> like login, + device cookie
+  GET  login-approvals/  -> pending new-browser logins with their codes (approvers)
+  POST login-approvals/{id}/reject/
   POST refresh/          -> {access} + rotated refresh cookie
   POST logout/           -> revokes the cookie session, clears the cookie
   GET  sessions/         -> own sessions list
@@ -25,12 +31,14 @@ from rest_framework.views import APIView
 
 from apps.audit.services import log, primary_org_scope, request_context
 
+from .. import login_approval
 from ..crypto import decrypt_secret, encrypt_secret
-from ..models import LoginIntent, User, UserSession
+from ..models import LoginApproval, LoginIntent, TrustedDevice, User, UserSession
 from ..tokens import (
     TokenError,
     decode_mfa_token,
     issue_access_token,
+    issue_login_approval_token,
     issue_mfa_token,
 )
 from .serializers import (
@@ -42,6 +50,7 @@ from .serializers import (
 )
 from .services import (
     create_session,
+    parse_device_info,
     get_session_by_refresh_token,
     live_successor_within_grace,
     revoke_all_user_sessions,
@@ -70,9 +79,37 @@ def _clear_refresh_cookie(response: Response) -> None:
     )
 
 
+def _new_browser_device(user, request) -> tuple[TrustedDevice, str]:
+    """A device row of its own for this browser, marked known (cookie token)."""
+    label, platform = parse_device_info(request.META.get("HTTP_USER_AGENT", "") if request is not None else "")
+    device = TrustedDevice.objects.create(
+        user=user, device_label=label, platform=platform, app_version="api/1.0", status="active",
+        last_seen_at=timezone.now(),
+    )
+    return device, login_approval.mark_known(device)
+
+
 def _complete_login(user, request) -> Response:
-    """Issue session + tokens after all credentials checks passed."""
-    session, raw_refresh = create_session(user, request)
+    """After all credential checks: a known browser (or approvals off) gets a
+    session; a new browser gets a login-approval challenge instead."""
+    device = login_approval.known_device(user, request)
+    if device is None and login_approval.enabled():
+        approval = login_approval.start(user, request)
+        return Response(
+            {"approval_required": True, "mfa_required": False, "approval_token": issue_login_approval_token(approval)}
+        )
+    raw_device = None
+    if device is None:
+        device, raw_device = _new_browser_device(user, request)
+    else:
+        device.last_seen_at = timezone.now()
+        device.status = "active"
+        device.save(update_fields=["last_seen_at", "status"])
+    return _issue_session(user, request, device, raw_device)
+
+
+def _issue_session(user, request, device, raw_device=None) -> Response:
+    session, raw_refresh = create_session(user, request, device=device)
     access = issue_access_token(user, session)
     log(
         actor=user,
@@ -91,6 +128,8 @@ def _complete_login(user, request) -> Response:
         }
     )
     _set_refresh_cookie(response, raw_refresh)
+    if raw_device:
+        login_approval.set_device_cookie(response, raw_device)
     return response
 
 
@@ -197,6 +236,61 @@ class MFAVerifyView(APIView):
         return _complete_login(user, request)
 
 
+class LoginCodeView(APIView):
+    """Finish a new-browser login with the code the administrators gave."""
+
+    throttle_classes = [MFAVerifyIPThrottle]
+
+    def post(self, request):
+        token = str(request.data.get("approval_token") or "")
+        code = str(request.data.get("code") or "")
+        approval = login_approval.verify(token, code, request)
+        device, raw_device = _new_browser_device(approval.user, request)
+        log(actor=approval.user, actor_device=device, action="login_approval_used", target_type="user",
+            target_id=approval.user_id, metadata={"approval_id": str(approval.id)}, **request_context(request))
+        return _issue_session(approval.user, request, device, raw_device)
+
+
+def _require_approver(request) -> None:
+    from apps.authorization.services import has_permission
+
+    if not has_permission(request.user, login_approval.APPROVER_PERMISSION, unit=None):
+        raise PermissionDenied("طلبات الدخول متاحة لمسؤولي الحسابات المركزيين فقط.")
+
+
+class LoginApprovalListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _require_approver(request)
+        rows = login_approval.pending()
+        return Response([
+            {
+                "id": str(a.id),
+                "user": {"id": str(a.user_id), "full_name": a.user.full_name, "username": a.user.username},
+                "device_label": a.device_label,
+                "ip": a.ip,
+                "code": login_approval.code_of(a),
+                "attempts": a.attempts,
+                "created_at": a.created_at.isoformat(),
+                "expires_at": a.expires_at.isoformat(),
+            }
+            for a in rows
+        ])
+
+
+class LoginApprovalRejectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, approval_id):
+        _require_approver(request)
+        approval = LoginApproval.objects.filter(id=approval_id).first()
+        if approval is None:
+            raise ValidationError({"detail": "طلب غير موجود."})
+        login_approval.reject(approval, request.user, request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class RefreshView(APIView):
     def post(self, request):
         raw = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME)
@@ -227,6 +321,12 @@ class RefreshView(APIView):
         access = issue_access_token(new_session.user, new_session)
         response = Response({"access": access})
         _set_refresh_cookie(response, raw_refresh)
+        # Browsers signed in before new-browser approval existed become known
+        # through their live session (no code needed for them).
+        device = new_session.device
+        if (device is not None and not device.browser_token_hash
+                and login_approval.known_device(new_session.user, request) is None):
+            login_approval.set_device_cookie(response, login_approval.mark_known(device))
         return response
 
 

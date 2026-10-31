@@ -7,7 +7,7 @@ import { cn } from '../../shared/lib/cn';
 import { GROUP_INSTITUTES, InstituteLogo, OWNER } from '../../shared/brand';
 import { useAuth } from './AuthContext';
 
-type Step = 'password' | 'otp';
+type Step = 'password' | 'otp' | 'code';
 
 const POINTS = [
   { icon: Lock, title: 'محفوظة مشفّرة', text: 'المراسلات والمرفقات تُحفظ مشفّرة، ولا يطلع عليها إلا أطرافها.' },
@@ -63,7 +63,7 @@ const inputClass =
   'transition focus:border-primary-500 focus:outline-none focus:ring-4 focus:ring-primary-100';
 
 export default function LoginPage() {
-  const { status, login, verifyMfa } = useAuth();
+  const { status, login, verifyMfa, submitLoginCode } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -72,6 +72,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [mfaToken, setMfaToken] = useState('');
+  const [approvalToken, setApprovalToken] = useState('');
   const [otp, setOtp] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -89,6 +90,10 @@ export default function LoginPage() {
       const result = await login(username, password);
       if (result.ok) {
         navigate('/', { replace: true });
+      } else if ('approvalToken' in result) {
+        setApprovalToken(result.approvalToken);
+        setOtp('');
+        setStep('code');
       } else {
         setMfaToken(result.mfaToken);
         setOtp('');
@@ -106,10 +111,21 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      await verifyMfa(mfaToken, otp);
-      navigate('/', { replace: true });
+      if (step === 'code') {
+        await submitLoginCode(approvalToken, otp);
+        navigate('/', { replace: true });
+        return;
+      }
+      const result = await verifyMfa(mfaToken, otp);
+      if (result.ok) {
+        navigate('/', { replace: true });
+      } else if ('approvalToken' in result) {
+        setApprovalToken(result.approvalToken);
+        setOtp('');
+        setStep('code');
+      }
     } catch (err) {
-      setError(toUserMessage(err, 'تعذر التحقق من رمز MFA، حاول مجددًا'));
+      setError(toUserMessage(err, step === 'code' ? 'الكود غير صحيح' : 'تعذر التحقق من رمز MFA، حاول مجددًا'));
     } finally {
       setLoading(false);
     }
@@ -215,7 +231,7 @@ export default function LoginPage() {
               </form>
 
               <p className="mt-6 text-center text-sm text-gray-500">
-                نسيت كلمة المرور؟ تواصل مع مسؤول النظام لإعادة تعيينها — لا يؤثر ذلك على مفاتيح تشفيرك.
+                نسيت كلمة المرور؟ تواصل مع مسؤول النظام لإعادة تعيينها.
               </p>
               <InstitutesStrip className="mt-10 lg:hidden" />
             </>
@@ -224,8 +240,12 @@ export default function LoginPage() {
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
                 <KeyRound className="h-6 w-6" />
               </span>
-              <h2 className="mt-4 text-2xl font-bold text-gray-900">التحقق الثنائي</h2>
-              <p className="mt-1 text-sm text-gray-500">أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة على هاتفك.</p>
+              <h2 className="mt-4 text-2xl font-bold text-gray-900">{step === 'code' ? 'دخول من جهاز جديد' : 'التحقق الثنائي'}</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                {step === 'code'
+                  ? 'هذا أول دخول لحسابك من هذا المتصفح. أُرسل كود من 6 أرقام لمسؤول النظام — اطلبه منه واكتبه هنا (صالح 30 دقيقة). بعدها يُعرف هذا الجهاز ولن يُطلب الكود مرة أخرى.'
+                  : 'أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة على هاتفك.'}
+              </p>
 
               <form onSubmit={handleOtpSubmit} className="mt-8 space-y-5">
                 <input
@@ -235,7 +255,7 @@ export default function LoginPage() {
                   maxLength={6}
                   autoFocus
                   dir="ltr"
-                  aria-label="رمز التحقق"
+                  aria-label={step === 'code' ? 'كود الدخول' : 'رمز التحقق'}
                   placeholder="••••••"
                   className="h-14 w-full rounded-xl border border-gray-300 text-center font-mono text-2xl tracking-[0.6em] focus:border-primary-500 focus:outline-none focus:ring-4 focus:ring-primary-100"
                   value={otp}

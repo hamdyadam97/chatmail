@@ -8,5 +8,5 @@ export {
   refreshAccessToken,
   rawFetch,
 } from './client';
-export { authApi, isMfaChallenge } from './auth';
-export type { LoginResponse, LoginSuccess, MfaChallenge, MfaVerifyResponse, User } from './auth';
+export { authApi, isApprovalChallenge, isMfaChallenge } from './auth';
+export type { LoginApprovalChallenge, LoginResponse, LoginSuccess, MfaChallenge, MfaVerifyResponse, User } from './auth';

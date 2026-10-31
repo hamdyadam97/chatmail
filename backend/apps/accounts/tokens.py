@@ -65,6 +65,20 @@ def decode_mfa_token(token: str) -> dict:
     return _decode(token, "mfa_login")
 
 
+LOGIN_APPROVAL_TTL_SECONDS = 30 * 60
+
+
+def issue_login_approval_token(approval) -> str:
+    return _encode(
+        {"sub": str(approval.user_id), "aid": str(approval.id), "typ": "login_approval"},
+        LOGIN_APPROVAL_TTL_SECONDS,
+    )
+
+
+def decode_login_approval_token(token: str) -> dict:
+    return _decode(token, "login_approval")
+
+
 def generate_refresh_token() -> tuple[str, str]:
     """Returns (raw_token, sha256_hex_digest)."""
     raw = secrets.token_urlsafe(32)  # 256 bits

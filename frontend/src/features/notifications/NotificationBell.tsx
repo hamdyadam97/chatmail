@@ -19,6 +19,7 @@ const INVALIDATES: Record<string, string[][]> = {
   correspondence_overdue: [['correspondences'], ['correspondence-counts']],
   correspondence_overdue_sender: [['correspondences']],
   external_mail: [['external-messages'], ['external-mailbox']],
+  login_approval: [['login-approvals']],
 };
 
 /**

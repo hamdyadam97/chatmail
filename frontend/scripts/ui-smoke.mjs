@@ -60,6 +60,8 @@ const env = {
   EXTERNAL_MAIL_DOMAIN: MAIL_DOMAIN,
   BREVO_API_KEY: 'ui-smoke-key',
   BREVO_API_BASE: `http://127.0.0.1:${BREVO_PORT}`,
+  // كل دخول من متصفح جديد يحتاج كود المسؤول — كما في الإنتاج.
+  LOGIN_NEW_DEVICE_APPROVAL: '1',
   PYTHONWARNINGS: 'ignore',
 };
 const children = [];
@@ -114,6 +116,16 @@ function deliverMail(raw, recipient) {
     });
     p.on('exit', (code) => resolve(code));
     p.stdin.end(raw);
+  });
+}
+
+/** كود الدخول المعلّق كما يراه root على الخادم (manage.py login_codes). */
+function consoleCode(username) {
+  return new Promise((resolve) => {
+    let out = '';
+    const p = spawn(PY, ['manage.py', 'login_codes', '--user', username], { cwd: path.join(ROOT, 'backend'), env });
+    p.stdout.on('data', (d) => (out += d));
+    p.on('exit', () => resolve((out.match(/\t(\d{6})\t/) ?? [])[1] ?? ''));
   });
 }
 
@@ -187,7 +199,8 @@ function teardown() {
 // خطوات الواجهة
 // ---------------------------------------------------------------------------
 
-async function newDevice(browser, username, password, contextOptions = {}) {
+async function newDevice(browser, username, password, options = {}) {
+  const { keepCodeScreen = false, ...contextOptions } = options;
   const context = await browser.newContext({ locale: 'ar', viewport: { width: 1440, height: 900 }, ...contextOptions });
   const page = await context.newPage();
   page.errors = [];
@@ -205,6 +218,17 @@ async function newDevice(browser, username, password, contextOptions = {}) {
   await page.fill('#username', username);
   await page.fill('#password', password);
   await page.click('button[type="submit"]');
+  // متصفح جديد: شاشة كود المسؤول (يُقرأ هنا من أمر الخادم؛ القسم 1أ يجرّب صفحة المسؤول).
+  const codeInput = page.locator('input[aria-label="كود الدخول"]');
+  const left = page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000, waitUntil: 'commit' }).then(() => 'in');
+  const asked = codeInput.waitFor({ timeout: 15000 }).then(() => 'code');
+  let neededCode = false;
+  if ((await Promise.race([left, asked]).catch(() => 'none')) === 'code' && !keepCodeScreen) {
+    neededCode = true;
+    await codeInput.fill(await consoleCode(username));
+    await page.getByRole('button', { name: 'تحقق' }).click();
+  }
+  if (keepCodeScreen) return { context, page, username, neededCode: true };
   try {
     await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000, waitUntil: 'commit' });
   } catch (err) {
@@ -213,7 +237,7 @@ async function newDevice(browser, username, password, contextOptions = {}) {
     const visible = await page.locator('body').innerText().catch(() => '');
     throw new Error(`login ${username} did not leave /login (${file}); page: ${visible.slice(0, 300)}; console: ${page.errors.join(' | ')}`);
   }
-  return { context, page, username };
+  return { context, page, username, neededCode };
 }
 
 /** يفتح الوارد وينتظر ظهوره (null = جاهز، وإلا وصف ما ظهر بدلًا منه). */
@@ -269,6 +293,30 @@ async function main() {
       console.log(`    [cookie after reload] ${c ? c.value : 'none'}`);
     }
     check('ahmed: الجلسة تصمد بعد إعادة التحميل', afterReload === null, afterReload ?? '');
+
+    section('1أ) دخول من متصفح جديد بكود المسؤول');
+    check('أول دخول من متصفح جديد طلب كود المسؤول', ahmed.neededCode && mohamed.neededCode);
+    await ahmed.context.clearCookies({ name: 'refresh_token' });
+    await ahmed.page.goto(`${UI}/login`);
+    await ahmed.page.fill('#username', 'ahmed');
+    await ahmed.page.fill('#password', 'Ahmed@12345');
+    await ahmed.page.click('button[type="submit"]');
+    const again = await ahmed.page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000, waitUntil: 'commit' })
+      .then(() => true).catch(() => false);
+    check('نفس المتصفح بعد الخروج: يدخل بلا كود', again);
+    const admin = await newDevice(browser, 'admin', 'Admin@12345');
+    const waiting = await newDevice(browser, 'sara', 'Sara@12345', { keepCodeScreen: true });
+    await admin.page.goto(`${UI}/login-approvals`);
+    const approvalRow = admin.page.locator('[data-testid="login-approval"]:has-text("sara")');
+    await approvalRow.waitFor({ timeout: 15000 }).catch(() => undefined);
+    const shownCode = ((await approvalRow.locator('span.font-mono').innerText().catch(() => '')) || '').trim();
+    check('المسؤول يرى طلب سارة وكودها في «طلبات الدخول»', /^\d{6}$/.test(shownCode), shownCode);
+    await waiting.page.fill('input[aria-label="كود الدخول"]', shownCode);
+    await waiting.page.getByRole('button', { name: 'تحقق' }).click();
+    const saraIn = await waiting.page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000, waitUntil: 'commit' })
+      .then(() => true).catch(() => false);
+    check('سارة دخلت بالكود الذي أعطاه المسؤول', saraIn);
+    await waiting.context.close();
 
     section('2) مراسلة عبر الواجهة');
     const subject = `اختبار واجهة ${Date.now()}`;

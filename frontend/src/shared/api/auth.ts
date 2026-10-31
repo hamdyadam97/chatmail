@@ -22,10 +22,22 @@ export interface MfaChallenge {
   mfa_token: string;
 }
 
-export type LoginResponse = LoginSuccess | MfaChallenge;
+/** Password (and MFA) accepted from a browser this account never used:
+ *  the session opens only with the code sent to the administrators. */
+export interface LoginApprovalChallenge {
+  approval_required: true;
+  mfa_required: false;
+  approval_token: string;
+}
+
+export type LoginResponse = LoginSuccess | MfaChallenge | LoginApprovalChallenge;
 
 export function isMfaChallenge(response: LoginResponse): response is MfaChallenge {
   return response.mfa_required === true;
+}
+
+export function isApprovalChallenge(response: LoginResponse | MfaVerifyResponse): response is LoginApprovalChallenge {
+  return (response as LoginApprovalChallenge).approval_required === true;
 }
 
 export interface MfaVerifyResponse {
@@ -42,10 +54,18 @@ export const authApi = {
     }),
 
   verifyMfa: (mfa_token: string, otp: string) =>
-    apiFetch<MfaVerifyResponse>('/auth/mfa/verify/', {
+    apiFetch<MfaVerifyResponse | LoginApprovalChallenge>('/auth/mfa/verify/', {
       method: 'POST',
       auth: false,
       body: { mfa_token, otp },
+    }),
+
+  /** New browser: the code the administrators gave. */
+  loginCode: (approval_token: string, code: string) =>
+    apiFetch<MfaVerifyResponse>('/auth/login/code/', {
+      method: 'POST',
+      auth: false,
+      body: { approval_token, code },
     }),
 
   /** Uses the httpOnly refresh cookie (sent via credentials: 'include'). */

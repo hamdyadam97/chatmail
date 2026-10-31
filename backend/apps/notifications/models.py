@@ -24,6 +24,7 @@ class Notification(models.Model):
         ("correspondence_overdue", "تجاوز موعد الرد"),
         ("correspondence_overdue_sender", "مراسلة صادرة متأخرة"),
         ("external_mail", "بريد خارجي"),
+        ("login_approval", "طلب دخول من جهاز جديد"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
