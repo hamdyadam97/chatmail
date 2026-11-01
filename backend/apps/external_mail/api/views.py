@@ -80,7 +80,18 @@ class MessageDetailView(APIView):
         content = services.message_content(message)
         data = services.summary(message, content or {})
         data["content"] = services.with_html(message, content) if content else None
+        data["images_allowed"] = services.images_allowed(request.user, message)
         return Response(data)
+
+
+class ImageSenderView(APIView):
+    """Always (or no longer) load remote images from one sender."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        senders = services.set_image_sender(request.user, request.data.get("address"), bool(request.data.get("allow")))
+        return Response({"image_senders": senders})
 
 
 class MessageReadView(APIView):

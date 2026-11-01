@@ -610,6 +610,13 @@ async function main() {
     await ahmed.page.getByRole('button', { name: 'إظهار الصور' }).click().catch(() => undefined);
     await ahmed.page.waitForTimeout(1500);
     check('HTML: «إظهار الصور» يحمّلها عند الطلب', pixelHits() > 0);
+    await ahmed.page.getByRole('button', { name: 'إعادة توجيه' }).click().catch(() => undefined);
+    await ahmed.page.locator('#ext-subject').waitFor({ timeout: 10000 }).catch(() => undefined);
+    await ahmed.page.waitForFunction(() => document.querySelector('#ext-subject')?.value.startsWith('Fwd:'), null, { timeout: 10000 })
+      .catch(() => undefined);
+    check('إعادة توجيه: العنوان Fwd: والنص الأصلي في المحرر', (await ahmed.page.inputValue('#ext-subject').catch(() => '')) === `Fwd: ${htmlSubject}`
+      && (await ahmed.page.inputValue('#ext-body').catch(() => '')).includes('رسالة محوّلة')
+      && (await ahmed.page.inputValue('#ext-to').catch(() => 'x')) === '');
     brevo.close();
 
     section('7ج) الموبايل (PWA) — شاشة 412×915 لمس');

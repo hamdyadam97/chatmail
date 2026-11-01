@@ -57,7 +57,7 @@ export interface ExternalContent {
 
 export interface StoredExternal {
   content: ExternalContent;
-  meta: { from: string; created_at: string; direction: 'in' | 'out' };
+  meta: { from: string; created_at: string; direction: 'in' | 'out'; images_allowed: boolean };
 }
 
 interface Page<T> {
@@ -71,7 +71,11 @@ export const externalApi = {
   me: () => apiFetch<MailboxInfo>('/external-mail/me/'),
   list: (page: number, box: 'all' | 'in' | 'out') =>
     apiFetch<Page<ExternalSummary>>(`/external-mail/messages/?page=${page}${box === 'all' ? '' : `&box=${box}`}`),
-  detail: (id: string) => apiFetch<ExternalSummary & { content: ExternalContent | null }>(`/external-mail/messages/${id}/`),
+  detail: (id: string) =>
+    apiFetch<ExternalSummary & { content: ExternalContent | null; images_allowed: boolean }>(`/external-mail/messages/${id}/`),
+  /** إظهار صور مرسل موثّق تلقائيًا (أو إيقافه). */
+  imageSender: (address: string, allow: boolean) =>
+    apiFetch<{ image_senders: string[] }>('/external-mail/image-senders/', { method: 'POST', body: { address, allow } }),
   markRead: (id: string) => apiFetch<null>(`/external-mail/messages/${id}/read/`, { method: 'POST' }),
   send: (body: {
     to: string[];
@@ -93,7 +97,10 @@ export async function openExternal(id: string): Promise<ExternalOpen> {
   if (!detail.content) return { state: 'unavailable', reason: 'تعذر عرض محتوى هذه الرسالة.' };
   return {
     state: 'ok',
-    stored: { content: detail.content, meta: { from: detail.from, created_at: detail.created_at, direction: detail.direction } },
+    stored: {
+      content: detail.content,
+      meta: { from: detail.from, created_at: detail.created_at, direction: detail.direction, images_allowed: detail.images_allowed },
+    },
   };
 }
 

@@ -145,6 +145,19 @@ def test_html_mail_text_and_safe_formatted_view(ahmed, api_client):
     assert 'src="https://t.example/pixel.gif"' in html  # held back by the reader until asked
 
 
+def test_always_show_images_only_for_trusted_verified_senders(ahmed, api_client):
+    m = services.ingest(mail(html="<p>x</p>"), recipient=f"ahmed@{DOMAIN}")
+    login_and_get_access(api_client, "ahmed")
+    assert api_client.get(f"{API}messages/{m.id}/").json()["images_allowed"] is False
+    assert api_client.post(f"{API}image-senders/", {"address": "Sales@Example.com", "allow": True}, format="json").status_code == 200
+    assert api_client.get(f"{API}messages/{m.id}/").json()["images_allowed"] is False  # sender not verified
+    ExternalMessage.objects.filter(id=m.id).update(auth_result="pass")
+    assert api_client.get(f"{API}messages/{m.id}/").json()["images_allowed"] is True
+    api_client.post(f"{API}image-senders/", {"address": "sales@example.com", "allow": False}, format="json")
+    assert api_client.get(f"{API}messages/{m.id}/").json()["images_allowed"] is False
+    assert api_client.post(f"{API}image-senders/", {"address": "not-an-address", "allow": True}, format="json").status_code == 400
+
+
 def test_messages_from_before_the_formatted_view_get_it_from_the_original(ahmed, api_client):
     m = services.ingest(mail(html="<p><b>قديم</b> <a href='https://x.example/a'>link</a></p>"), recipient=f"ahmed@{DOMAIN}")
     old = open_copy(m)

@@ -5,12 +5,20 @@ import {
   AlertTriangle,
   ArrowRight,
   AtSign,
+  ChevronDown,
   Copy,
+  Download,
+  File as FileIcon,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  Forward,
   Globe,
   ImageOff,
   Paperclip,
   PenSquare,
   Reply,
+  ReplyAll,
   Send,
   ShieldAlert,
   ShieldCheck,
@@ -21,7 +29,8 @@ import { toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
 import { formatDate } from '../correspondence/components';
 import { AttachmentRow } from '../correspondence/DetailsPage';
-import { formatBytes } from '../correspondence/content';
+import { correspondenceApi, type AttachmentMeta } from '../correspondence/api';
+import { downloadAttachment, formatBytes } from '../correspondence/content';
 import {
   externalApi,
   fileToBase64,
@@ -184,12 +193,21 @@ function ExternalList({
  * الرسالة المنسّقة كما أرسلها صاحبها (مثل Outlook). الخادم نظّفها بقائمة سماح
  * (لا سكربتات ولا نماذج ولا CSS يحمّل شيئًا). تُعرض في Shadow DOM معزولة عن
  * أنماط التطبيق، وسمات style تُطبَّق عبر CSSOM لأن CSP تمنع style المضمّنة.
- * الصور الخارجية لا تُحمَّل حتى يطلبها القارئ (صور التتبع تكشف فتح الرسالة).
+ * الصور الخارجية لا تُحمَّل حتى يطلبها القارئ (صور التتبع تكشف فتح الرسالة)،
+ * إلا من مرسل موثّق اختار القارئ إظهار صوره دائمًا.
  */
-function EmailHtml({ html }: { html: string }) {
+function EmailHtml({ html, autoImages, trustable }: { html: string; autoImages: boolean; trustable: string | null }) {
   const host = useRef<HTMLDivElement>(null);
-  const [showImages, setShowImages] = useState(false);
+  const [showImages, setShowImages] = useState(autoImages);
+  const [always, setAlways] = useState(autoImages);
   const [blocked, setBlocked] = useState(0);
+  const trust = useMutation({
+    mutationFn: (allow: boolean) => externalApi.imageSender(trustable!, allow),
+    onSuccess: (_, allow) => {
+      setAlways(allow);
+      if (allow) setShowImages(true);
+    },
+  });
 
   useEffect(() => {
     const el = host.current;
@@ -225,25 +243,83 @@ function EmailHtml({ html }: { html: string }) {
     setBlocked(held);
   }, [html, showImages]);
 
+  const link = 'font-medium text-primary-700 hover:underline disabled:opacity-50';
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {blocked > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600">
-          <ImageOff className="h-4 w-4 shrink-0" />
-          حُجبت الصور الخارجية في هذه الرسالة لحمايتك.
-          <button type="button" onClick={() => setShowImages(true)} className="font-medium text-primary-700 hover:underline">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600 ring-1 ring-gray-200">
+          <ImageOff className="h-4 w-4 shrink-0 text-gray-400" />
+          <span>حُجبت الصور الخارجية لحمايتك.</span>
+          <button type="button" onClick={() => setShowImages(true)} className={link}>
             إظهار الصور
           </button>
+          {trustable && (
+            <button type="button" onClick={() => trust.mutate(true)} disabled={trust.isPending} className={link}>
+              إظهارها دائمًا من هذا المرسل
+            </button>
+          )}
         </div>
       )}
-      <div ref={host} className="rounded-lg bg-white p-4 ring-1 ring-gray-200" data-testid="external-html" />
+      {always && trustable && (
+        <p className="text-xs text-gray-400">
+          صور هذا المرسل تظهر تلقائيًا.{' '}
+          <button type="button" onClick={() => trust.mutate(false)} disabled={trust.isPending} className="underline hover:text-gray-600">
+            إيقاف
+          </button>
+        </p>
+      )}
+      <div ref={host} data-testid="external-html" />
     </div>
+  );
+}
+
+function fileIcon(name: string, mime: string) {
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  if (mime.startsWith('image/')) return FileImage;
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return FileSpreadsheet;
+  if (['pdf', 'doc', 'docx', 'txt', 'rtf'].includes(ext)) return FileText;
+  return FileIcon;
+}
+
+/** المرفق كبطاقة صغيرة بنوعه وحجمه (أسلوب Outlook)؛ الضغط يُنزّله. */
+function AttachmentChip({ meta }: { meta: AttachmentMeta }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'error'>('idle');
+  const Icon = fileIcon(meta.name, meta.mime);
+  const download = async () => {
+    setState('busy');
+    try {
+      await downloadAttachment(meta);
+      setState('idle');
+    } catch {
+      setState('error');
+    }
+  };
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => void download()}
+        disabled={state === 'busy'}
+        title={`تنزيل ${meta.name}`}
+        className="flex w-56 max-w-full items-center gap-2.5 rounded-md border border-gray-200 bg-white px-2.5 py-2 text-start hover:border-primary-300 hover:bg-primary-50/40"
+      >
+        {state === 'busy' ? <Spinner size="sm" /> : <Icon className="h-7 w-7 shrink-0 text-primary-600" strokeWidth={1.5} />}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-gray-800" dir="auto">{meta.name}</span>
+          <span className={cn('block text-xs', state === 'error' ? 'text-red-600' : 'text-gray-500')}>
+            {state === 'error' ? 'تعذر التنزيل' : formatBytes(meta.size)}
+          </span>
+        </span>
+        <Download className="h-4 w-4 shrink-0 text-gray-400" />
+      </button>
+    </li>
   );
 }
 
 function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [showRecipients, setShowRecipients] = useState(false);
   const { data, isLoading, error } = useQuery({ queryKey: ['external-open', id], queryFn: () => openExternal(id), staleTime: Infinity });
 
   useEffect(() => {
@@ -283,99 +359,137 @@ function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
   const files = c.attachments.filter((a) => a.name !== 'original.eml' || a.mime !== 'message/rfc822');
   const original = c.attachments.find((a) => a.name === 'original.eml' && a.mime === 'message/rfc822');
   const incoming = c.direction === 'in';
+  const verified = incoming && c.auth === 'pass';
+  const mine = (mailbox.address ?? '').toLowerCase();
+  const canSend = mailbox.sending_enabled && mailbox.sending_configured;
+  const others = [...c.to, ...c.cc].filter((a) => a.address.toLowerCase() !== mine);
+  const who = (a: { name: string; address: string }) => (a.address.toLowerCase() === mine ? 'أنا' : a.name || a.address);
+  const action = (label: string, Icon: typeof Reply, to: string) => (
+    <button
+      type="button"
+      onClick={() => navigate(to)}
+      className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+    >
+      <Icon className="h-4 w-4 text-primary-600" />
+      {label}
+    </button>
+  );
 
   return (
-    <div className="space-y-4 px-3 pb-8 md:px-6" data-testid="external-reader">
-      <div className="sticky top-0 z-10 -mx-3 flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5 md:-mx-6 md:px-4">
+    <div className="min-h-full bg-white" data-testid="external-reader">
+      <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5 md:px-4">
         {back}
-        {incoming && mailbox.sending_enabled && mailbox.sending_configured && (
-          <button
-            type="button"
-            onClick={() => navigate(`/mail/external/compose?reply=${id}`)}
-            className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
-          >
-            <Reply className="h-4 w-4 text-primary-600" />
-            رد
-          </button>
-        )}
+        {canSend && incoming && action('رد', Reply, `/mail/external/compose?reply=${id}`)}
+        {canSend && incoming && others.length > 0 && action('رد على الكل', ReplyAll, `/mail/external/compose?reply=${id}&all=1`)}
+        {canSend && action('إعادة توجيه', Forward, `/mail/external/compose?forward=${id}`)}
       </div>
 
-      <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-100">
-        <Globe className="mt-0.5 h-4 w-4 shrink-0" />
-        بريد خارجي: {incoming ? 'وصل من خارج النظام' : 'خرج إلى خارج النظام'} عبر الإنترنت، وهو محفوظ مشفّرًا على الخادم ولا يظهر إلا لك.
-      </div>
-      {incoming &&
-        (c.auth === 'pass' ? (
-          <p className="flex items-center gap-1.5 text-xs text-emerald-700">
-            <ShieldCheck className="h-4 w-4" />
-            تم التحقق من أن الرسالة صادرة فعلًا من نطاق المرسل.
-          </p>
-        ) : (
-          <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 ring-1 ring-red-100">
+      <article className="mx-auto max-w-4xl space-y-5 px-4 py-5 md:px-8">
+        <h2 className="break-words text-2xl font-semibold leading-snug text-gray-900" dir="auto">
+          {c.subject || '(بلا عنوان)'}
+        </h2>
+
+        {incoming && !verified && (
+          <p className="flex items-start gap-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            لم يُتحقق من هوية المرسل — قد يكون العنوان منتحلًا. لا تفتح روابط أو مرفقات لم تكن تتوقعها، ولا ترسل بيانات دخولك.
+            لم يُتحقق من هوية المرسل — قد يكون منتحلًا. لا تفتح روابط أو مرفقات لم تتوقعها.
+          </p>
+        )}
+
+        <div className="flex items-start gap-3">
+          <Avatar name={c.from.name || c.from.address} size="lg" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="font-semibold text-gray-900" dir="auto">{c.from.name || c.from.address}</span>
+              {c.from.name && (
+                <span dir="ltr" className="truncate text-xs text-gray-500">&lt;{c.from.address}&gt;</span>
+              )}
+              {verified && <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" aria-label="مرسل موثّق" />}
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700 ring-1 ring-amber-100"
+                title={incoming ? 'وصلت من خارج النظام عبر الإنترنت' : 'خرجت إلى خارج النظام عبر الإنترنت'}
+              >
+                <Globe className="h-3 w-3" />
+                خارجي
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowRecipients((v) => !v)}
+              className="mt-0.5 flex max-w-full items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+              aria-expanded={showRecipients}
+            >
+              <span className="truncate">
+                إلى: {c.to.map(who).join('، ')}
+                {c.cc.length > 0 && ` · نسخة: ${c.cc.map(who).join('، ')}`}
+              </span>
+              <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', showRecipients && 'rotate-180')} />
+            </button>
+            {showRecipients && (
+              <div className="mt-1 space-y-0.5 rounded-md bg-gray-50 px-2.5 py-1.5 text-xs text-gray-600">
+                <p>
+                  <span className="text-gray-400">من: </span>
+                  <span dir="ltr">{addressLine(c.from)}</span>
+                </p>
+                <p>
+                  <span className="text-gray-400">إلى: </span>
+                  <span dir="ltr">{c.to.map(addressLine).join(', ')}</span>
+                </p>
+                {c.cc.length > 0 && (
+                  <p>
+                    <span className="text-gray-400">نسخة: </span>
+                    <span dir="ltr">{c.cc.map(addressLine).join(', ')}</span>
+                  </p>
+                )}
+              </div>
+            )}
           </div>
-        ))}
-
-      <div>
-        <h2 className="break-words text-xl font-semibold text-gray-900">{c.subject || '(بلا عنوان)'}</h2>
-        <div className="mt-2 space-y-0.5 text-sm text-gray-600" dir="auto">
-          <p>
-            <span className="text-gray-500">من: </span>
-            <span dir="ltr">{addressLine(c.from)}</span>
-          </p>
-          <p>
-            <span className="text-gray-500">إلى: </span>
-            <span dir="ltr">{c.to.map(addressLine).join(', ')}</span>
-          </p>
-          {c.cc.length > 0 && (
-            <p>
-              <span className="text-gray-500">نسخة: </span>
-              <span dir="ltr">{c.cc.map(addressLine).join(', ')}</span>
-            </p>
-          )}
-          <p className="text-xs text-gray-500">{formatDate(data.stored.meta.created_at)}</p>
+          <span className="shrink-0 pt-0.5 text-xs text-gray-500">{formatDate(data.stored.meta.created_at)}</span>
         </div>
-      </div>
 
-      {c.html ? (
-        <EmailHtml html={c.html} />
-      ) : (
-        <div className="whitespace-pre-wrap break-words rounded-lg bg-white p-4 text-sm leading-7 text-gray-800 ring-1 ring-gray-200" dir="auto">
-          {c.body || '—'}
-        </div>
-      )}
+        {(files.length > 0 || c.removed_infected.length > 0) && (
+          <div className="space-y-2">
+            {files.length > 0 && (
+              <ul className="flex flex-wrap gap-2" aria-label={`المرفقات (${files.length})`}>
+                {files.map((a) => (
+                  <AttachmentChip key={a.id} meta={a} />
+                ))}
+              </ul>
+            )}
+            {incoming && files.length > 0 && c.virus_scan === 'off' && (
+              <p className="flex items-start gap-1.5 text-xs text-amber-700">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                لم تُفحص المرفقات من الفيروسات على الخادم. افحصها على جهازك قبل فتحها.
+              </p>
+            )}
+            {c.removed_infected.length > 0 && (
+              <p className="flex items-start gap-1.5 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+                <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                حُذفت مرفقات مصابة بفيروس: {c.removed_infected.join('، ')}
+              </p>
+            )}
+          </div>
+        )}
 
-      {files.length > 0 && (
-        <div>
-          <h4 className="mb-2 text-sm font-medium text-gray-700">المرفقات ({files.length})</h4>
-          <ul className="space-y-2">
-            {files.map((a) => (
-              <AttachmentRow key={a.id} meta={a} />
-            ))}
-          </ul>
-          {incoming && c.virus_scan === 'off' && (
-            <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              لم تُفحص هذه المرفقات من الفيروسات على الخادم. افحصها على جهازك قبل فتحها.
-            </p>
+        <div className="border-t border-gray-100 pt-5">
+          {c.html ? (
+            <EmailHtml html={c.html} autoImages={data.stored.meta.images_allowed} trustable={verified ? c.from.address : null} />
+          ) : (
+            <div className="whitespace-pre-wrap break-words text-sm leading-7 text-gray-800" dir="auto">
+              {c.body || '—'}
+            </div>
           )}
         </div>
-      )}
-      {c.removed_infected.length > 0 && (
-        <p className="flex items-start gap-1.5 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
-          <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          حُذفت مرفقات مصابة بفيروس: {c.removed_infected.join('، ')}
-        </p>
-      )}
-      {original && (
-        <details className="text-xs text-gray-500">
-          <summary className="cursor-pointer">الرسالة الأصلية (.eml) — للأرشفة أو الإحالة لجهة فنية</summary>
-          <ul className="mt-2">
-            <AttachmentRow meta={original} />
-          </ul>
-        </details>
-      )}
+
+        {original && (
+          <details className="border-t border-gray-100 pt-3 text-xs text-gray-400">
+            <summary className="cursor-pointer hover:text-gray-600">الرسالة الأصلية (.eml) — للأرشفة أو الإحالة لجهة فنية</summary>
+            <ul className="mt-2">
+              <AttachmentRow meta={original} />
+            </ul>
+          </details>
+        )}
+      </article>
     </div>
   );
 }
@@ -394,6 +508,8 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const replyId = params.get('reply');
+  const replyAll = params.get('all') === '1';
+  const forwardId = params.get('forward');
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
   const [subject, setSubject] = useState('');
@@ -402,20 +518,49 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!replyId) return;
-    void openExternal(replyId).then((r) => {
-      if (r.state !== 'ok') return;
+    const sourceId = replyId ?? forwardId;
+    if (!sourceId) return;
+    let alive = true;
+    void openExternal(sourceId).then(async (r) => {
+      if (r.state !== 'ok' || !alive) return;
       const c = r.stored.content;
+      const when = formatDate(r.stored.meta.created_at);
+      if (forwardId) {
+        setSubject(/^(fwd?|توجيه)\s*:/i.test(c.subject) ? c.subject : `Fwd: ${c.subject}`);
+        setBody(
+          `\n\n---------- رسالة محوّلة ----------\nمن: ${addressLine(c.from)}\nالتاريخ: ${when}\n`
+            + `العنوان: ${c.subject}\nإلى: ${c.to.map(addressLine).join(', ')}\n\n${c.body}`,
+        );
+        const originals = c.attachments.filter((a) => a.name !== 'original.eml' || a.mime !== 'message/rfc822');
+        const loaded = await Promise.all(
+          originals.map(async (a) => new File([await correspondenceApi.download(a.id)], a.name, { type: a.mime })),
+        ).catch(() => []);
+        if (alive) setFiles(loaded);
+        return;
+      }
+      const mine = (mailbox.address ?? '').toLowerCase();
       setTo(c.from.address);
+      if (replyAll) {
+        const sender = c.from.address.toLowerCase();
+        setCc(
+          [...c.to, ...c.cc]
+            .map((a) => a.address)
+            .filter((a) => ![mine, sender].includes(a.toLowerCase()))
+            .join(', '),
+        );
+      }
       setSubject(/^(re|رد)\s*:/i.test(c.subject) ? c.subject : `Re: ${c.subject}`);
       const quoted = c.body
         .split('\n')
         .slice(0, 60)
         .map((l) => `> ${l}`)
         .join('\n');
-      setBody(`\n\n— كتب ${addressLine(c.from)} في ${formatDate(r.stored.meta.created_at)}:\n${quoted}`);
+      setBody(`\n\n— كتب ${addressLine(c.from)} في ${when}:\n${quoted}`);
     });
-  }, [replyId]);
+    return () => {
+      alive = false;
+    };
+  }, [replyId, replyAll, forwardId, mailbox.address]);
 
   const send = useMutation({
     mutationFn: async () =>
@@ -454,7 +599,7 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
       <div className="flex items-center justify-between border-b border-gray-200 px-4 py-2">
         <span className="flex items-center gap-2 font-semibold text-gray-900">
           <Globe className="h-4 w-4" />
-          {replyId ? 'رد خارجي' : 'رسالة خارجية'}
+          {replyId ? 'رد خارجي' : forwardId ? 'إعادة توجيه' : 'رسالة خارجية'}
         </span>
         <button type="button" onClick={() => navigate('/mail/external')} className="rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="إلغاء">
           <X className="h-4 w-4" />
@@ -487,6 +632,9 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
               <Paperclip className="h-3.5 w-3.5 text-gray-400" />
               <span className="max-w-[12rem] truncate">{f.name}</span>
               <span className="text-gray-400">{formatBytes(f.size)}</span>
+              <button type="button" onClick={() => setFiles((all) => all.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-600" aria-label={`إزالة ${f.name}`}>
+                <X className="h-3.5 w-3.5" />
+              </button>
             </li>
           ))}
         </ul>
@@ -500,7 +648,11 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
         <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
           <Paperclip className="h-4 w-4" />
           إرفاق
-          <input type="file" multiple className="hidden" onChange={(e) => setFiles(e.target.files ? [...e.target.files] : [])} />
+          <input type="file" multiple className="hidden" onChange={(e) => {
+              const picked = e.target.files ? [...e.target.files] : [];
+              setFiles((all) => [...all, ...picked]);
+              e.target.value = '';
+            }} />
         </label>
       </div>
     </form>

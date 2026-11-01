@@ -117,6 +117,28 @@ def set_local_part(user, local_part: str | None) -> ExternalMailbox:
     return mb
 
 
+MAX_IMAGE_SENDERS = 200
+
+
+def images_allowed(user, message: ExternalMessage) -> bool:
+    """Remote images load without asking only for a verified sender the owner trusts."""
+    return (message.direction == "in" and message.auth_result == "pass"
+            and message.mail_from.lower() in mailbox_for(user).image_senders)
+
+
+def set_image_sender(user, address: str, allow: bool) -> list[str]:
+    address = (address or "").strip().lower()
+    if not EMAIL_RE.match(address):
+        raise ValidationError({"address": "عنوان غير صالح."})
+    mb = mailbox_for(user)
+    senders = [a for a in mb.image_senders if a != address]
+    if allow:
+        senders = [address, *senders][:MAX_IMAGE_SENDERS]
+    mb.image_senders = senders
+    mb.save()
+    return senders
+
+
 def recipients_map_lines() -> list[str]:
     """For Postfix relay_recipient_maps: every address that may receive."""
     lines = []

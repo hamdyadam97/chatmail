@@ -24,6 +24,8 @@ class ExternalMailbox(models.Model):
     local_part = models.CharField(max_length=64, null=True, blank=True, unique=True)
     receiving_enabled = models.BooleanField(default=True)
     sending_enabled = models.BooleanField(default=False)
+    # Senders (verified addresses) whose remote images the owner chose to always load.
+    image_senders = models.JSONField(default=list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
