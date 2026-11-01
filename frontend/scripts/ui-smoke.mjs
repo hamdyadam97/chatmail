@@ -565,6 +565,51 @@ async function main() {
       await ahmed.page.locator('text=شكرًا، استلمنا العرض.').first().waitFor({ timeout: 20000 }).catch(() => undefined);
       check('ahmed: نسخة الرد المرسل محفوظة لديه', (await ahmed.page.locator('text=شكرًا، استلمنا العرض.').count()) > 0);
     }
+
+    // رسالة منسّقة (HTML) كما تصل من أنظمة المهام: تُعرض بتنسيقها، بلا سكربت، والصور محجوبة حتى الطلب.
+    const htmlSubject = `إسناد مهمة ${Date.now()}`;
+    const pixel = `http://127.0.0.1:${BREVO_PORT}/pixel.gif`;
+    const htmlBody = `<table width="600"><tr><td bgcolor="#0a6ed1" style="color:#ffffff;font-weight:bold">نظام إدارة المهام</td></tr>`
+      + `<tr><td>مرحبًا <b>أحمد</b>، <a href="https://tasks.example/t/5791">مهمة رقم 5791</a></td></tr></table>`
+      + `<img src="${pixel}" alt="logo"><script>window.__pwned = 1</script><p onclick="window.__pwned = 2">نص</p>`;
+    const htmlRaw = [
+      'From: Task Manager <tasks@supplier.example>',
+      `To: ahmed@${MAIL_DOMAIN}`,
+      `Subject: =?utf-8?B?${Buffer.from(htmlSubject).toString('base64')}?=`,
+      'Message-ID: <task-1@supplier.example>',
+      'MIME-Version: 1.0',
+      'Content-Type: text/html; charset=utf-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      Buffer.from(htmlBody).toString('base64'),
+      '',
+    ].join('\r\n');
+    await deliverMail(htmlRaw, `ahmed@${MAIL_DOMAIN}`);
+    await ahmed.page.goto(`${UI}/mail/external`);
+    const htmlRow = ahmed.page.locator(`button:has-text("${htmlSubject}")`).first();
+    await htmlRow.waitFor({ timeout: 30000 }).catch(() => undefined);
+    await htmlRow.click().catch(() => undefined);
+    const mailHtml = ahmed.page.locator('[data-testid="external-html"]');
+    await mailHtml.locator('b').first().waitFor({ timeout: 20000 }).catch(() => undefined);
+    const rendered = await mailHtml.evaluate((host) => {
+      const td = host.shadowRoot?.querySelector('td[bgcolor]');
+      const a = host.shadowRoot?.querySelector('a');
+      return {
+        bold: host.shadowRoot?.querySelector('b')?.textContent ?? '',
+        color: td ? getComputedStyle(td).color : '',
+        link: a ? `${a.getAttribute('href')}|${a.getAttribute('target')}` : '',
+        imgSrc: host.shadowRoot?.querySelector('img')?.getAttribute('src') ?? null,
+      };
+    }).catch(() => ({}));
+    if (process.env.SHOTS) console.log(`    لقطة الرسالة المنسّقة: ${await shot(ahmed, 'external-html')}`);
+    check('HTML: التنسيق ظاهر (عريض، لون الخلية، رابط في تبويب جديد)', rendered.bold === 'أحمد'
+      && rendered.color === 'rgb(255, 255, 255)' && rendered.link === 'https://tasks.example/t/5791|_blank', JSON.stringify(rendered));
+    const pixelHits = () => brevoCalls.filter((c) => c.url === '/pixel.gif').length;
+    check('HTML: لا سكربت ولا معالج أحداث، والصورة الخارجية لم تُحمَّل', rendered.imgSrc === null && pixelHits() === 0
+      && (await ahmed.page.evaluate(() => window.__pwned ?? 0)) === 0);
+    await ahmed.page.getByRole('button', { name: 'إظهار الصور' }).click().catch(() => undefined);
+    await ahmed.page.waitForTimeout(1500);
+    check('HTML: «إظهار الصور» يحمّلها عند الطلب', pixelHits() > 0);
     brevo.close();
 
     section('7ج) الموبايل (PWA) — شاشة 412×915 لمس');

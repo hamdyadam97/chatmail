@@ -160,7 +160,8 @@ def _store_attachments(owner, message: ExternalMessage, files: list[dict]) -> li
 # --- inbound --------------------------------------------------------------------------------
 
 class _TextExtractor(HTMLParser):
-    """HTML -> plain text. Mail HTML is never rendered (XSS/tracking pixels)."""
+    """HTML -> plain text, for the preview, search and reply quoting (the
+    formatted view is safe_html)."""
 
     BLOCK = {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6", "table", "blockquote"}
 
@@ -174,10 +175,6 @@ class _TextExtractor(HTMLParser):
             self.skip += 1
         elif tag in self.BLOCK:
             self.parts.append("\n")
-        elif tag == "a":
-            href = dict(attrs).get("href") or ""
-            if href.startswith(("http://", "https://", "mailto:")):
-                self.parts.append(f" [{href}] ")
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "head") and self.skip:
@@ -193,8 +190,81 @@ class _TextExtractor(HTMLParser):
 def html_to_text(html: str) -> str:
     parser = _TextExtractor()
     parser.feed(html)
-    text = "".join(parser.parts)
-    return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", text)).strip()
+    lines = (re.sub(r"\s+", " ", line).strip() for line in "".join(parser.parts).split("\n"))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+# Formatted view: a strict allowlist. No scripts, forms, frames, <style>
+# blocks or CSS that can load anything or escape the message box; links open
+# in a new tab without a referrer. Remote images stay off until the reader
+# asks (the frontend holds their src back).
+MAX_HTML_CHARS = 1_000_000
+HTML_TAGS = {
+    "a", "abbr", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd", "del",
+    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "ins", "li", "ol",
+    "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody", "td", "tfoot", "th",
+    "thead", "tr", "u", "ul",
+}
+HTML_ATTRIBUTES = {
+    "*": {"style", "dir", "align", "valign", "width", "height", "bgcolor", "title", "lang"},
+    "a": {"href"},
+    "img": {"src", "alt", "border"},
+    "font": {"color", "face", "size"},
+    "table": {"border", "cellpadding", "cellspacing"},
+    "td": {"colspan", "rowspan", "nowrap"},
+    "th": {"colspan", "rowspan", "nowrap"},
+    "col": {"span"},
+    "colgroup": {"span"},
+    "ol": {"start", "type"},
+}
+STYLE_PROPERTIES = {
+    "color", "background-color", "font", "font-family", "font-size", "font-style", "font-weight", "line-height",
+    "letter-spacing", "text-align", "text-decoration", "text-transform", "text-indent", "vertical-align",
+    "white-space", "word-break", "direction", "unicode-bidi",
+    "width", "min-width", "max-width", "height", "min-height", "max-height",
+    "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+    "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+    "border", "border-top", "border-right", "border-bottom", "border-left", "border-color", "border-style",
+    "border-width", "border-radius", "border-collapse", "border-spacing",
+    "display", "float", "clear", "list-style-type", "table-layout",
+}
+
+
+def _keep_url(tag, attr, value):
+    if (tag, attr) in (("a", "href"), ("img", "src")):
+        ok = ("http://", "https://", "mailto:") if tag == "a" else ("http://", "https://")
+        return value if value.strip().lower().startswith(ok) else None
+    return value
+
+
+def safe_html(html: str) -> str:
+    import nh3
+
+    if not html or len(html) > MAX_HTML_CHARS:
+        return ""
+    return nh3.clean(
+        html,
+        tags=HTML_TAGS,
+        clean_content_tags={"script", "style", "head", "title", "template", "noscript", "iframe", "object", "svg", "math"},
+        attributes=HTML_ATTRIBUTES,
+        attribute_filter=_keep_url,
+        url_schemes={"http", "https", "mailto"},
+        url_relative="deny",
+        filter_style_properties=STYLE_PROPERTIES,
+        set_tag_attribute_values={"a": {"target": "_blank"}},
+        link_rel="noopener noreferrer nofollow",
+    )
+
+
+def _html_part(msg) -> str:
+    part = msg.get_body(preferencelist=("html",))
+    if part is None:
+        return ""
+    try:
+        html = part.get_content()
+    except (LookupError, UnicodeError):
+        html = (part.get_payload(decode=True) or b"").decode("utf-8", errors="replace")
+    return html if len(html) <= MAX_HTML_CHARS else ""
 
 
 def _addresses(values) -> list[dict]:
@@ -269,6 +339,7 @@ def parse(raw: bytes) -> dict:
         "message_id": str(msg.get("Message-ID", "")).strip(),
         "in_reply_to": str(msg.get("In-Reply-To", "")).strip(),
         "body": body,
+        "html": _html_part(msg),
         "html_converted": converted,
         "files": files,
     }
@@ -316,6 +387,7 @@ def ingest(raw: bytes, *, recipient: str, sender: str = "") -> ExternalMessage:
             "subject": p["subject"],
             "date": p["date"],
             "body": p["body"],
+            "html": p["html"],
             "html_converted": p["html_converted"],
             "auth": auth,
             "attachments": attachments,
@@ -441,6 +513,28 @@ def summary(m: ExternalMessage, content: dict | None = None) -> dict:
         "created_at": m.created_at.isoformat(),
         "read_at": m.read_at.isoformat() if m.read_at else None,
     }
+
+
+def with_html(message: ExternalMessage, content: dict) -> dict:
+    """Content for the reader, with "html" sanitized. Messages received
+    before the formatted view get theirs once from the sealed original.eml."""
+    if "html" not in content and message.direction == "in":
+        from apps.correspondence.services import file_meta, read_blob
+
+        html = ""
+        for att in ExternalAttachment.objects.filter(message=message).select_related("stored_file"):
+            meta = file_meta(att.stored_file)
+            if meta.get("name") == "original.eml" and meta.get("mime") == "message/rfc822":
+                try:
+                    html = _html_part(message_from_bytes(read_blob(att.stored_file), policy=policy.default))
+                except Exception:  # unreadable original: keep the text view
+                    logger.warning("original.eml unreadable for an external message")
+                break
+        content = {**content, "html": html}
+        if html and content.get("html_converted"):  # the old text kept every link as [url]
+            content["body"] = html_to_text(html)[:MAX_BODY_CHARS]
+        _seal_content(message, content)
+    return {**content, "html": safe_html(content.get("html") or "")}
 
 
 def own_message(user, message_id) -> ExternalMessage:

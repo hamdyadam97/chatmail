@@ -46,6 +46,8 @@ export interface ExternalContent {
   subject: string;
   date: string;
   body: string;
+  /** HTML منظّف على الخادم (قائمة سماح)؛ فارغ للرسائل النصية والصادرة. */
+  html?: string;
   html_converted: boolean;
   auth: 'pass' | 'fail' | 'none';
   attachments: AttachmentMeta[];

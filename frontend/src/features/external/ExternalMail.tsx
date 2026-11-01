@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -7,6 +7,7 @@ import {
   AtSign,
   Copy,
   Globe,
+  ImageOff,
   Paperclip,
   PenSquare,
   Reply,
@@ -179,6 +180,67 @@ function ExternalList({
 
 // --- القارئ -----------------------------------------------------------------------------------
 
+/**
+ * الرسالة المنسّقة كما أرسلها صاحبها (مثل Outlook). الخادم نظّفها بقائمة سماح
+ * (لا سكربتات ولا نماذج ولا CSS يحمّل شيئًا). تُعرض في Shadow DOM معزولة عن
+ * أنماط التطبيق، وسمات style تُطبَّق عبر CSSOM لأن CSP تمنع style المضمّنة.
+ * الصور الخارجية لا تُحمَّل حتى يطلبها القارئ (صور التتبع تكشف فتح الرسالة).
+ */
+function EmailHtml({ html }: { html: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const [showImages, setShowImages] = useState(false);
+  const [blocked, setBlocked] = useState(0);
+
+  useEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    const root = el.shadowRoot ?? el.attachShadow({ mode: 'open' });
+    const parsed = new DOMParser().parseFromString(`<!doctype html><body>${html}</body>`, 'text/html');
+    const styled: Array<[HTMLElement, string]> = [];
+    parsed.body.querySelectorAll<HTMLElement>('[style]').forEach((e) => {
+      styled.push([e, e.getAttribute('style') ?? '']);
+      e.removeAttribute('style');
+    });
+    let held = 0;
+    parsed.body.querySelectorAll('img').forEach((img) => {
+      if (!showImages && img.hasAttribute('src')) {
+        img.removeAttribute('src');
+        held += 1;
+      }
+      img.referrerPolicy = 'no-referrer';
+      img.loading = 'lazy';
+    });
+
+    const box = document.createElement('div');
+    box.dir = 'auto';
+    box.style.cssText =
+      'font-family:Tahoma,Arial,sans-serif;font-size:14px;line-height:1.6;color:#1f2937;overflow-x:auto;overflow-wrap:anywhere';
+    box.append(...Array.from(parsed.body.childNodes));
+    for (const [e, css] of styled) e.style.cssText = css;
+    box.querySelectorAll('img').forEach((img) => {
+      img.style.maxWidth = '100%';
+      img.style.height = 'auto';
+    });
+    root.replaceChildren(box);
+    setBlocked(held);
+  }, [html, showImages]);
+
+  return (
+    <div className="space-y-2">
+      {blocked > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600">
+          <ImageOff className="h-4 w-4 shrink-0" />
+          حُجبت الصور الخارجية في هذه الرسالة لحمايتك.
+          <button type="button" onClick={() => setShowImages(true)} className="font-medium text-primary-700 hover:underline">
+            إظهار الصور
+          </button>
+        </div>
+      )}
+      <div ref={host} className="rounded-lg bg-white p-4 ring-1 ring-gray-200" data-testid="external-html" />
+    </div>
+  );
+}
+
 function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -276,11 +338,13 @@ function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
         </div>
       </div>
 
-      {/* نص صريح فقط — HTML الوارد حُوّل إلى نص على الخادم ولا يُعرض أبدًا */}
-      <div className="whitespace-pre-wrap break-words rounded-lg bg-white p-4 text-sm leading-7 text-gray-800 ring-1 ring-gray-200" dir="auto">
-        {c.body || '—'}
-      </div>
-      {c.html_converted && <p className="text-xs text-gray-400">عُرضت النسخة النصية من رسالة منسّقة (للحماية لا تُعرض الصيغ المنسّقة).</p>}
+      {c.html ? (
+        <EmailHtml html={c.html} />
+      ) : (
+        <div className="whitespace-pre-wrap break-words rounded-lg bg-white p-4 text-sm leading-7 text-gray-800 ring-1 ring-gray-200" dir="auto">
+          {c.body || '—'}
+        </div>
+      )}
 
       {files.length > 0 && (
         <div>

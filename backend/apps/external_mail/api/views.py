@@ -79,7 +79,7 @@ class MessageDetailView(APIView):
         message = services.own_message(request.user, message_id)
         content = services.message_content(message)
         data = services.summary(message, content or {})
-        data["content"] = content
+        data["content"] = services.with_html(message, content) if content else None
         return Response(data)
 
 

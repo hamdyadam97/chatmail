@@ -116,12 +116,47 @@ def test_ingest_seals_content_and_stores_nothing_readable(ahmed, settings):
     assert CANARY not in json.dumps(audit.metadata, ensure_ascii=False) and "عرض" not in json.dumps(audit.metadata, ensure_ascii=False)
 
 
-def test_html_only_mail_becomes_plain_text(ahmed):
-    html = "<html><head><style>p{}</style><script>alert(1)</script></head><body><p>مرحبا</p><a href='https://x.example/a'>link</a></body></html>"
-    m = services.ingest(mail(html=html), recipient=f"ahmed@{DOMAIN}")
+HOSTILE_HTML = (
+    "<html><head><style>p{}</style><script>alert(1)</script></head><body>"
+    "<table bgcolor='#0a6ed1'><tr><td style='color:#fff;font-weight:bold;position:fixed;background-image:url(https://t.example/p)'>"
+    "مرحبا</td></tr></table>"
+    "<p>  </p><p>  </p><p>  </p>"
+    "<a href='https://x.example/a' onclick='steal()'>link</a> <a href='javascript:alert(2)'>js</a>"
+    "<img src='https://t.example/pixel.gif' onerror='alert(3)'><img src='cid:logo'>"
+    "<form action='https://evil.example'><input name=p></form><iframe src='https://evil.example'></iframe>"
+    "</body></html>"
+)
+
+
+def test_html_mail_text_and_safe_formatted_view(ahmed, api_client):
+    m = services.ingest(mail(html=HOSTILE_HTML), recipient=f"ahmed@{DOMAIN}")
     content = open_copy(m)
-    assert "مرحبا" in content["body"] and "https://x.example/a" in content["body"]
-    assert "<script>" not in content["body"] and "alert(1)" not in content["body"] and content["html_converted"]
+    assert "مرحبا" in content["body"] and "link" in content["body"] and content["html_converted"]
+    assert "https://x.example/a" not in content["body"] and "alert(1)" not in content["body"]
+    assert "\n\n\n" not in content["body"]
+
+    login_and_get_access(api_client, "ahmed")
+    html = api_client.get(f"{API}messages/{m.id}/").json()["content"]["html"]
+    assert "مرحبا" in html and 'bgcolor="#0a6ed1"' in html and "font-weight:bold" in html.replace(" ", "")
+    for bad in ("<script", "alert(", "onclick", "onerror", "javascript:", "position", "url(", "<form", "<input",
+                "<iframe", "<style", "cid:"):
+        assert bad not in html, bad
+    assert 'href="https://x.example/a"' in html and 'target="_blank"' in html and "noreferrer" in html
+    assert 'src="https://t.example/pixel.gif"' in html  # held back by the reader until asked
+
+
+def test_messages_from_before_the_formatted_view_get_it_from_the_original(ahmed, api_client):
+    m = services.ingest(mail(html="<p><b>قديم</b> <a href='https://x.example/a'>link</a></p>"), recipient=f"ahmed@{DOMAIN}")
+    old = open_copy(m)
+    del old["html"]
+    old["body"] = "قديم link [https://x.example/a]"
+    services._seal_content(m, old)
+
+    login_and_get_access(api_client, "ahmed")
+    html = api_client.get(f"{API}messages/{m.id}/").json()["content"]["html"]
+    assert "<b>قديم</b>" in html
+    stored = open_copy(m)
+    assert "html" in stored and "[https://" not in stored["body"]
 
 
 def test_unknown_and_too_large(ahmed, user_factory, settings):
