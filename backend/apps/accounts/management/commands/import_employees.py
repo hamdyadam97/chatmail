@@ -13,6 +13,11 @@ marked as a test account, or it is a branch-less "possible duplicate". Rows
 without a branch are created without a membership (no role yet) — assign
 their branch from the employees page.
 
+Branches: men and women share one branch (user decision), so "— رجال/نساء" is
+dropped. --create-branches adds a missing branch under the row's institute,
+coded by its city (reference numbers read AHL-SKK-…); an existing branch of
+that institute with the same code is reused instead.
+
 The --out file holds the temporary passwords: it is written 0600 and must be
 handed out and deleted. Nothing is written in a dry run.
 """
@@ -33,6 +38,24 @@ from apps.textsearch import normalize
 
 COLUMNS = {"name": "الاسم", "email": "البريد الإلكتروني", "branch": "الفرع", "institute": "المعهد", "note": "ملاحظة"}
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+GENDER_SUFFIX = re.compile(r"\s*[—–-]\s*(رجال|نساء)\s*$")
+CITY_CODES = {
+    "الرياض": "RYD", "سكاكا": "SKK", "عرعر": "ARR", "القصيم": "QSM", "طريف": "TRF",
+    "القريات": "QRY", "خميس مشيط": "KMS", "الدمام": "DMM", "جدة": "JED", "مكة": "MKH",
+    "المدينة": "MED", "تبوك": "TBK", "حائل": "HAL", "أبها": "ABH", "الجوف": "JOF",
+}
+
+
+def branch_name(raw: str) -> str:
+    return GENDER_SUFFIX.sub("", raw or "").strip()
+
+
+def city_code(name: str) -> str:
+    norm = normalize(name)
+    for city, code in CITY_CODES.items():
+        if normalize(city) in norm:
+            return code
+    return "MAIN"
 
 
 def _key(text: str) -> str:
@@ -44,16 +67,10 @@ def _key(text: str) -> str:
 
 
 def _find_branch(branches: dict, name: str):
-    """Exact (normalized) name first, then without the "— رجال/نساء" suffix,
-    then a unique system branch whose name is contained in it."""
-    key = _key(name)
-    if key in branches:
-        return branches[key]
-    bare = _key(re.sub(r"[—–-]\s*(رجال|نساء)\s*$", "", name or ""))
-    if bare in branches:
-        return branches[bare]
-    hits = [b for k, b in branches.items() if k and k in key]
-    return hits[0] if len(hits) == 1 else None
+    """The system branch with the same (normalized) name, with or without the
+    "— رجال/نساء" suffix. No partial matching: "الفاو المتقدم بالرياض" must
+    never land on another institute's "فرع الرياض"."""
+    return branches.get(_key(name)) or branches.get(_key(branch_name(name)))
 
 
 class Command(BaseCommand):
@@ -65,6 +82,8 @@ class Command(BaseCommand):
         parser.add_argument("--out", default="", help="xlsx report with the temporary passwords")
         parser.add_argument("--by", default="it.admin", help="administrator recorded as the creator")
         parser.add_argument("--include-test", action="store_true", help="also import rows marked as test accounts")
+        parser.add_argument("--create-branches", action="store_true",
+                            help="create missing branches under the row's institute (code from the city)")
 
     def handle(self, *args, **opts):
         import openpyxl
@@ -99,6 +118,7 @@ class Command(BaseCommand):
         existing = set(User.objects.filter(username__in=list(seen)).values_list("username", flat=True))
 
         plan, missing_branches, done = [], Counter(), set()
+        new_branches: dict[str, Branch] = {}  # unsaved, keyed by normalized name
         for rec in records:
             u, status, branch = rec["username"], "", None
             if not USERNAME_RE.match(u):
@@ -113,10 +133,14 @@ class Command(BaseCommand):
                 status = "مكرر محتمل بلا فرع — لم يُستورد"
             elif rec["branch"]:
                 branch = _find_branch(branches, rec["branch"])
-                if branch is None:
+                if branch is None and opts["create_branches"]:
+                    branch, why = self._branch_to_create(rec, institutes, new_branches)
+                    if branch is None:
+                        status = why
+                if branch is None and not status:
                     missing_branches[rec["branch"]] += 1
                     status = "الفرع غير موجود في النظام"
-                elif rec["institute"] and institutes.get(_key(rec["institute"])) not in (None, branch.institute):
+                elif branch is not None and rec["institute"] and institutes.get(_key(rec["institute"])) not in (None, branch.institute):
                     status = "الفرع لا يتبع المعهد المكتوب"
             if not status:
                 status = "سيُنشأ" if branch else "سيُنشأ بلا فرع"
@@ -127,12 +151,20 @@ class Command(BaseCommand):
             self.stdout.write(f"{n:4d}  {status}")
         for name, n in missing_branches.most_common():
             self.stdout.write(f"      فرع غير موجود: {name} ({n})")
+        for b in new_branches.values():
+            if b.pk is None or b._state.adding:
+                self.stdout.write(f"      فرع جديد: {b.institute.code}-{b.code}  {b.name}  (معهد {b.institute.name})")
         if not opts["apply"]:
             self.stdout.write("dry run — nothing written (add --apply --out FILE)")
             return
 
         created = 0
         with transaction.atomic():
+            for b in new_branches.values():
+                if b._state.adding:
+                    b.save()
+                    log(actor=admin, action="branch_created", target_type="branch", target_id=b.id,
+                        metadata={"code": b.code, "via": "import_employees"})
             for p in plan:
                 if not p["status"].startswith("سيُنشأ"):
                     continue
@@ -154,6 +186,26 @@ class Command(BaseCommand):
                 created += 1
         self._write_report(opts["out"], plan)
         self.stdout.write(self.style.SUCCESS(f"created {created} account(s); report: {opts['out']} (delete it after use)"))
+
+    @staticmethod
+    def _branch_to_create(rec, institutes, new_branches):
+        """(branch, "") — existing same-code branch or a new unsaved one — or (None, reason)."""
+        name = branch_name(rec["branch"])
+        key = _key(name)
+        if key in new_branches:
+            return new_branches[key], ""
+        institute = institutes.get(_key(rec["institute"])) if rec["institute"] else None
+        if institute is None:
+            hits = [i for k, i in institutes.items() if k and k in key]
+            institute = hits[0] if len(hits) == 1 else None
+        if institute is None:
+            return None, "المعهد غير موجود في النظام"
+        code = city_code(name)
+        branch = Branch.objects.filter(institute=institute, code=code).first()
+        if branch is None:
+            branch = Branch(institute=institute, name=name, code=code)
+        new_branches[key] = branch
+        return branch, ""
 
     @staticmethod
     def _write_report(path, plan):

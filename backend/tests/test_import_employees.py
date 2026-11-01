@@ -52,3 +52,29 @@ def test_dry_run_then_apply(sheet, tmp_path, branch_a, capsys):
     password = by_user["ahmed.kamal"][2]
     assert ahmed.check_password(password) and by_user["ahmed.kamal"][4] == "أُنشئ"
     assert by_user["taken"][4] == "موجود مسبقًا" and not by_user["dev"][2]
+
+
+def test_missing_branches_are_created_per_city_without_gender(tmp_path, institute_a, user_factory, capsys):
+    from apps.org.models import Branch
+
+    from .conftest import assign_role
+
+    assign_role(user_factory("it.admin"), "sys_admin")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(HEADER)
+    inst = institute_a.name
+    ws.append(("أ", "a1@x.com", "موظف", f"فرع {inst} بسكاكا — رجال", inst, None, "نشط", "", None))
+    ws.append(("ب", "b1@x.com", "موظف", f"فرع {inst} بسكاكا — نساء", inst, None, "نشط", "", None))
+    ws.append(("ج", "c1@x.com", "موظف", f"فرع {inst} بالدمام — رجال", inst, None, "نشط", "", None))
+    ws.append(("د", "d1@x.com", "موظف", "فرع مجهول بعرعر — رجال", "معهد لا يوجد", None, "نشط", "", None))
+    path = tmp_path / "s.xlsx"
+    wb.save(path)
+    call_command("import_employees", str(path), "--create-branches")
+    assert "فرع جديد" in capsys.readouterr().out and not Branch.objects.filter(code="SKK").exists()
+    call_command("import_employees", str(path), "--create-branches", "--apply", "--out", str(tmp_path / "p.xlsx"))
+    skk = Branch.objects.get(institute=institute_a, code="SKK")
+    assert skk.name == f"فرع {inst} بسكاكا"
+    assert {u.memberships.get().branch_id for u in User.objects.filter(username__in=["a1", "b1"])} == {skk.id}
+    assert Branch.objects.filter(institute=institute_a, code="DMM").exists()
+    assert not User.objects.filter(username="d1").exists()
