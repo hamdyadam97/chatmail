@@ -71,6 +71,8 @@ function CreateEmployee({ onClose, onCreated }: { onClose: () => void; onCreated
           employment_type: employment,
         },
       });
+      // الخادم يعيد الكلمة المؤقتة الموحدة إن كانت مضبوطة، وإلا نُصدر واحدة عشوائية.
+      if (user.temp_password) return { temp_password: user.temp_password };
       return adminApi.resetPassword(user.id);
     },
     onSuccess: (r) => {

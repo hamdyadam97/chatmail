@@ -94,6 +94,33 @@ def test_delete_only_an_account_never_used(api_client, user_factory, staff):
     assert api_client.delete(f"{USERS}{staff['central'].id}/", **staff["h_central"]).status_code == 403
 
 
+def test_new_account_gets_the_shared_temp_password_when_configured(api_client, staff, settings):
+    from apps.accounts.models import User
+
+    def create(username):
+        body = {"username": username, "first_name": "س", "last_name": "ع", "phone": "",
+                "membership": {"institute_id": str(staff["branch_a"].institute.id),
+                               "branch_id": str(staff["branch_a"].id)}}
+        return api_client.post(USERS, body, format="json", **staff["h_central"])
+
+    settings.NEW_ACCOUNT_TEMP_PASSWORD = ""
+    resp = create("adm_new1")
+    assert resp.status_code == 201 and "temp_password" not in resp.json()
+    assert not User.objects.get(username="adm_new1").has_usable_password()
+
+    settings.NEW_ACCOUNT_TEMP_PASSWORD = "Shared@2025*"
+    resp = create("adm_new2")
+    assert resp.status_code == 201 and resp.json()["temp_password"] == "Shared@2025*"
+    user = User.objects.get(username="adm_new2")
+    assert user.check_password("Shared@2025*") and user.must_change_password
+    entry = AuditLog.objects.get(action="account_created", target_id=user.id)
+    assert "Shared@2025*" not in str(entry.metadata)
+
+    # a username the shared password would contain → falls back to no password (random via reset)
+    resp = create("shared")
+    assert resp.status_code == 201 and "temp_password" not in resp.json()
+
+
 def test_managed_list_filters_by_branch(api_client, user_factory, staff):
     user_factory("adm_nobranch")  # imported without a branch: no membership
     url = f"{USERS}managed/?page_size=100&branch="

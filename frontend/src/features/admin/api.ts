@@ -116,7 +116,7 @@ export const adminApi = {
     phone: string;
     optional_email?: string | null;
     membership?: { institute_id: string; branch_id?: string | null; department_id?: string | null; job_title?: string; employment_type?: EmploymentType };
-  }) => apiFetch<{ id: string }>('/users/', { method: 'POST', body }),
+  }) => apiFetch<{ id: string; temp_password?: string }>('/users/', { method: 'POST', body }),
   setActive: (id: string, isActive: boolean, reason = '') =>
     apiFetch<unknown>(`/users/${id}/`, { method: 'PATCH', body: { is_active: isActive, deactivation_reason: reason } }),
   resetPassword: (id: string) => apiFetch<{ temp_password: string }>(`/users/${id}/reset-password/`, { method: 'POST' }),

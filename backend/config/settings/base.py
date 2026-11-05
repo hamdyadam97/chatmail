@@ -238,7 +238,12 @@ if not CONTENT_ENCRYPTION_KEY:
 # production (prod.py), off by default elsewhere.
 LOGIN_NEW_DEVICE_APPROVAL = os.environ.get("LOGIN_NEW_DEVICE_APPROVAL", "0") == "1"
 
-TOTP_ISSUER_NAME = os.environ.get("TOTP_ISSUER_NAME", "مجموعة المعاهد")
+# One shared temporary password for accounts created from the employees page
+# (the user must change it at first login). From the server's env file only —
+# never in the repository. Empty = a random one per account, as before.
+NEW_ACCOUNT_TEMP_PASSWORD = os.environ.get("NEW_ACCOUNT_TEMP_PASSWORD", "")
+
+TOTP_ISSUER_NAME =os.environ.get("TOTP_ISSUER_NAME", "مجموعة المعاهد")
 
 # CORS (frontend dev server talks to the API cross-origin in dev).
 CORS_ALLOW_ALL_ORIGINS = False

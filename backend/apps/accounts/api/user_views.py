@@ -36,6 +36,21 @@ def _scope_unit_for_user(user: User):
     return membership.department or membership.branch or membership.institute
 
 
+def _shared_temp_password(username: str) -> str | None:
+    """settings.NEW_ACCOUNT_TEMP_PASSWORD if set and acceptable for this
+    username; otherwise None (the caller falls back to a random one)."""
+    from django.conf import settings
+
+    shared = getattr(settings, "NEW_ACCOUNT_TEMP_PASSWORD", "") or ""
+    if not shared:
+        return None
+    try:
+        validate_password_policy(username, shared)
+    except ValidationError:
+        return None
+    return shared
+
+
 def _require_manage_users(request, target_user: User) -> None:
     if not has_permission(
         request.user, "accounts.manage_users", unit=_scope_unit_for_user(target_user)
@@ -99,9 +114,13 @@ class UserDirectoryView(APIView):
                 must_change_password=True,
             )
             password = data.get("password")
+            shared_temp = _shared_temp_password(user.username) if not password else None
             if password:
                 validate_password_policy(user.username, password)
                 user.set_password(password)
+            elif shared_temp:
+                user.set_password(shared_temp)
+                user.password_changed_at = timezone.now()
             else:
                 # No password yet: account is unusable until an admin issues
                 # a temp password via reset-password/.
@@ -130,7 +149,11 @@ class UserDirectoryView(APIView):
             **request_context(request),
             metadata={"unit_type": type(unit).__name__ if unit is not None else "central"},
         )
-        return Response(DirectoryUserSerializer(user).data, status=status.HTTP_201_CREATED)
+        body = DirectoryUserSerializer(user).data
+        if shared_temp:
+            # Shown once to the creating admin; never logged or audited.
+            body["temp_password"] = shared_temp
+        return Response(body, status=status.HTTP_201_CREATED)
 
 
 class UserDetailView(APIView):
