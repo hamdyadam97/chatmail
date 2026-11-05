@@ -102,9 +102,11 @@ export interface Assignment {
 }
 
 export const adminApi = {
-  managed: (params: { q?: string; status?: 'active' | 'inactive' | 'all'; page?: number }) => {
+  /** branch: معرّف فرع العضوية الرئيسية، أو 'none' لمن لا فرع له. */
+  managed: (params: { q?: string; status?: 'active' | 'inactive' | 'all'; branch?: string; page?: number }) => {
     const s = new URLSearchParams({ page: String(params.page ?? 1), status: params.status ?? 'all' });
     if (params.q) s.set('q', params.q);
+    if (params.branch) s.set('branch', params.branch);
     return apiFetch<Page<ManagedUser>>(`/users/managed/?${s.toString()}`);
   },
   createUser: (body: {

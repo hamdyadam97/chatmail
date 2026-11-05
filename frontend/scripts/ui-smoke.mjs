@@ -318,6 +318,19 @@ async function main() {
     check('سارة دخلت بالكود الذي أعطاه المسؤول', saraIn);
     await waiting.context.close();
 
+    section('1ب) فلتر الموظفين بالفرع');
+    await admin.page.goto(`${UI}/employees`);
+    const branchSelect = admin.page.locator('select[aria-label="الفرع"]');
+    await admin.page.locator('option:has-text("فرع الرياض")').first().waitFor({ state: 'attached', timeout: 15000 }).catch(() => undefined);
+    const rows = () => admin.page.locator('tbody tr');
+    const listed = async (name) => (await rows().filter({ hasText: name }).count()) > 0;
+    await branchSelect.selectOption({ label: 'فرع الرياض' }).catch(() => undefined);
+    await rows().filter({ hasText: 'ahmed' }).first().waitFor({ timeout: 15000 }).catch(() => undefined);
+    const inRyd = await listed('ahmed');
+    await branchSelect.selectOption('none').catch(() => undefined);
+    await admin.page.waitForFunction(() => !document.body.innerText.includes('ahmed'), null, { timeout: 15000 }).catch(() => undefined);
+    check('الموظفون: فلتر «فرع الرياض» يعرض أحمد، و«بلا فرع» لا يعرضه', inRyd && !(await listed('ahmed')));
+
     section('2) مراسلة عبر الواجهة');
     const subject = `اختبار واجهة ${Date.now()}`;
     const body = 'نص سري لا يراه غير أطرافه — سطر ثانٍ للتأكد.';

@@ -12,6 +12,8 @@ None of these paths reads or writes devices or crypto identities: account
 administration stays technically separate from E2EE (SEC-08). Nothing here
 exposes content, mailboxes or keys.
 """
+import uuid
+
 from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
@@ -97,7 +99,8 @@ class _Pagination(PageNumberPagination):
 
 
 class ManagedUsersView(APIView):
-    """GET /users/managed/?q=&status=active|inactive|all"""
+    """GET /users/managed/?q=&status=active|inactive|all&branch=<id>|none
+    (branch = of the primary membership; "none" = no branch yet)."""
 
     permission_classes = [IsAuthenticated]
 
@@ -111,6 +114,14 @@ class ManagedUsersView(APIView):
             qs = qs.filter(is_active=True)
         elif state == "inactive":
             qs = qs.filter(is_active=False)
+        branch = (request.query_params.get("branch") or "").strip()
+        if branch == "none":
+            qs = qs.exclude(memberships__is_primary=True, memberships__branch__isnull=False)
+        elif branch:
+            try:
+                qs = qs.filter(memberships__is_primary=True, memberships__branch_id=uuid.UUID(branch))
+            except ValueError:
+                raise ValidationError({"branch": "فرع غير صالح."})
         term = (request.query_params.get("q") or "").strip()
         if term:
             qs = qs.filter(Q(full_name__icontains=term) | Q(username__icontains=term) | Q(phone__icontains=term))

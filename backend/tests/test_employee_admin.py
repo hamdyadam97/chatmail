@@ -58,6 +58,18 @@ def test_managed_list_includes_inactive_and_filters(api_client, staff):
     assert found == {"adm_jed"}
 
 
+def test_managed_list_filters_by_branch(api_client, user_factory, staff):
+    user_factory("adm_nobranch")  # imported without a branch: no membership
+    url = f"{USERS}managed/?page_size=100&branch="
+    in_a2 = _usernames(api_client.get(url + str(staff["branch_a2"].id), **staff["h_central"]))
+    assert in_a2 == {"adm_jed"}
+    none = _usernames(api_client.get(url + "none", **staff["h_central"]))
+    assert "adm_nobranch" in none and not {"adm_emp", "adm_jed", "adm_faw"} & none
+    # the branch filter never widens a scoped manager's list
+    assert _usernames(api_client.get(url + str(staff["branch_b"].id), **staff["h_scoped"])) == set()
+    assert api_client.get(url + "bad", **staff["h_central"]).status_code == 400
+
+
 def test_add_secondary_membership_multi_branch(api_client, staff):
     url = f"{USERS}{staff['emp'].id}/memberships/"
     body = {"institute": str(staff["branch_a2"].institute_id), "branch": str(staff["branch_a2"].id),

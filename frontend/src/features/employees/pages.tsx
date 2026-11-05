@@ -13,7 +13,7 @@ import {
   type ManagedUser,
   type UnitChoice,
 } from '../admin/api';
-import { Modal, UnitPicker } from '../admin/components';
+import { Modal, UnitPicker, useOrg } from '../admin/components';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—';
@@ -396,12 +396,14 @@ export function Employees() {
   const [q, setQ] = useState('');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | 'active' | 'inactive'>('active');
+  const [branch, setBranch] = useState('');
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<ManagedUser | null>(null);
+  const org = useOrg();
   const { data, isLoading, error } = useQuery({
-    queryKey: ['admin', 'managed', query, status, page],
-    queryFn: () => adminApi.managed({ q: query, status, page }),
+    queryKey: ['admin', 'managed', query, status, branch, page],
+    queryFn: () => adminApi.managed({ q: query, status, branch, page }),
     placeholderData: keepPreviousData,
     retry: false,
   });
@@ -443,6 +445,20 @@ export function Employees() {
           <option value="active">النشطون</option>
           <option value="inactive">المعطّلون</option>
           <option value="all">الكل</option>
+        </select>
+        <select value={branch} onChange={(e) => { setBranch(e.target.value); setPage(1); }} className="h-10 max-w-[16rem] rounded-lg border border-gray-300 bg-white px-2 text-sm" aria-label="الفرع">
+          <option value="">كل الفروع</option>
+          <option value="none">بلا فرع</option>
+          {org.institutes.map((inst) => {
+            const list = org.branches.filter((b) => b.institute === inst.id);
+            return list.length ? (
+              <optgroup key={inst.id} label={inst.name}>
+                {list.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </optgroup>
+            ) : null;
+          })}
         </select>
         <Button type="submit" variant="outline">
           بحث
