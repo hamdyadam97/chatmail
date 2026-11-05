@@ -331,6 +331,22 @@ async function main() {
     await admin.page.waitForFunction(() => !document.body.innerText.includes('ahmed'), null, { timeout: 15000 }).catch(() => undefined);
     check('الموظفون: فلتر «فرع الرياض» يعرض أحمد، و«بلا فرع» لا يعرضه', inRyd && !(await listed('ahmed')));
 
+    // حذف نهائي لحساب لم يُستخدم (خطأ استيراد)، والحساب المستخدم لا يُعرض له الزر.
+    await runPython("from apps.accounts.models import User; User.objects.create(username='typo.import', full_name='حساب مكرر')");
+    await admin.page.reload();
+    await branchSelect.selectOption('none').catch(() => undefined);
+    await rows().filter({ hasText: 'typo.import' }).first().click({ timeout: 15000 }).catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'حذف نهائي' }).click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'تأكيد الحذف النهائي' }).click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.waitForFunction(() => !document.body.innerText.includes('typo.import'), null, { timeout: 15000 }).catch(() => undefined);
+    const gone = !(await listed('typo.import'));
+    await branchSelect.selectOption({ label: 'فرع الرياض' }).catch(() => undefined);
+    await rows().filter({ hasText: 'ahmed' }).first().click({ timeout: 15000 }).catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'تعطيل الحساب' }).waitFor({ timeout: 10000 }).catch(() => undefined);
+    const noDeleteForUsed = (await admin.page.getByRole('button', { name: 'حذف نهائي' }).count()) === 0;
+    await admin.page.keyboard.press('Escape');
+    check('الموظفون: حذف نهائي لحساب لم يُستخدم، ولا زر حذف لمن دخل', gone && noDeleteForUsed);
+
     section('2) مراسلة عبر الواجهة');
     const subject = `اختبار واجهة ${Date.now()}`;
     const body = 'نص سري لا يراه غير أطرافه — سطر ثانٍ للتأكد.';

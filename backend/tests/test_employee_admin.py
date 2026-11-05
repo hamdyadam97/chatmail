@@ -58,6 +58,42 @@ def test_managed_list_includes_inactive_and_filters(api_client, staff):
     assert found == {"adm_jed"}
 
 
+def test_delete_only_an_account_never_used(api_client, user_factory, staff):
+    from django.utils import timezone
+
+    from apps.accounts.models import User
+    from apps.authorization.services import grant_default_role
+
+    from .correspondence_utils import make_employee
+
+    # imported and never used: membership + automatic role + notification settings → deletable
+    fresh = make_employee(user_factory, "adm_fresh", staff["branch_a"])
+    grant_default_role(fresh, staff["branch_a"].institute, granted_by=staff["central"])
+    assert api_client.delete(f"{USERS}{fresh.id}/", **staff["h_emp"]).status_code == 403
+    assert api_client.delete(f"{USERS}{fresh.id}/", **staff["h_central"]).status_code == 204
+    assert not User.objects.filter(id=fresh.id).exists()
+    entry = AuditLog.objects.get(action="account_deleted", target_id=fresh.id)
+    assert entry.metadata["username"] == "adm_fresh" and entry.actor_id == staff["central"].id
+
+    # logged in once → kept
+    User.objects.filter(id=staff["jed"].id).update(last_login_at=timezone.now())
+    assert api_client.delete(f"{USERS}{staff['jed'].id}/", **staff["h_central"]).status_code == 409
+    # acted in the audit log (even without a recorded login) → kept, and the log is never rewritten
+    quiet = make_employee(user_factory, "adm_quiet", staff["branch_a"])
+    AuditLog.objects.create(actor=quiet, action="login_failed")
+    resp = api_client.delete(f"{USERS}{quiet.id}/", **staff["h_central"])
+    assert resp.status_code == 409 and "audit.auditlog" in resp.json()["used"]
+    # received a correspondence without ever logging in → kept
+    from .correspondence_utils import prepare_and_send
+
+    recipient = make_employee(user_factory, "adm_inbox", staff["branch_a"])
+    prepare_and_send(api_client, staff["h_emp"], [recipient])
+    resp = api_client.delete(f"{USERS}{recipient.id}/", **staff["h_central"])
+    assert resp.status_code == 409 and User.objects.filter(id=recipient.id).exists()
+    # never one's own account
+    assert api_client.delete(f"{USERS}{staff['central'].id}/", **staff["h_central"]).status_code == 403
+
+
 def test_managed_list_filters_by_branch(api_client, user_factory, staff):
     user_factory("adm_nobranch")  # imported without a branch: no membership
     url = f"{USERS}managed/?page_size=100&branch="

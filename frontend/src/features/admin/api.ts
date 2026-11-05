@@ -120,6 +120,8 @@ export const adminApi = {
   setActive: (id: string, isActive: boolean, reason = '') =>
     apiFetch<unknown>(`/users/${id}/`, { method: 'PATCH', body: { is_active: isActive, deactivation_reason: reason } }),
   resetPassword: (id: string) => apiFetch<{ temp_password: string }>(`/users/${id}/reset-password/`, { method: 'POST' }),
+  /** حذف نهائي لحساب لم يُستخدم أبدًا؛ الخادم يرفض (409) ما سواه. */
+  deleteUser: (id: string) => apiFetch<null>(`/users/${id}/`, { method: 'DELETE' }),
   revokeSessions: (id: string) => apiFetch<{ revoked: number }>(`/users/${id}/revoke-sessions/`, { method: 'POST' }),
   memberships: (id: string) => apiFetch<Membership[]>(`/users/${id}/memberships/`),
   addMembership: (id: string, body: UnitChoice & { job_title?: string; employment_type?: EmploymentType; is_primary?: boolean }) =>

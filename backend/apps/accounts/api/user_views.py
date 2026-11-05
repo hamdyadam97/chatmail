@@ -179,6 +179,36 @@ class UserDetailView(APIView):
             )
         return Response(DirectoryUserSerializer(target).data)
 
+    def delete(self, request, user_id):
+        """Permanent deletion — only for an account never used (accounts.deletion)."""
+        from ..deletion import delete_unused
+
+        target = User.objects.filter(id=user_id).first()
+        if target is None:
+            raise PermissionDenied("المستخدم غير موجود.")
+        _require_manage_users(request, target)
+        if target.id == request.user.id:
+            raise PermissionDenied("لا يمكنك حذف حسابك.")
+        username, target_id = target.username, target.id
+        with transaction.atomic():
+            used = delete_unused(target)
+            if used:
+                return Response(
+                    {"detail": "هذا الحساب استُخدم في النظام (دخول أو مراسلات أو محادثات أو سجل نشاط)، "
+                               "فلا يُحذف حفاظًا على السجلات. عطّله بدلًا من ذلك.", "used": used},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            log(
+                actor=request.user,
+                action="account_deleted",
+                target_type="user",
+                target_id=target_id,
+                org_scope=primary_org_scope(request.user),
+                **request_context(request),
+                metadata={"username": username},
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class ResetPasswordView(APIView):
     """Login-only password reset (SEC-08).

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { externalApi } from '../external/service';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Contact, KeyRound, LogOut, Plus, Search, ShieldOff, UserCheck, UserX, Globe } from 'lucide-react';
+import { Contact, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { ApiError, toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
@@ -223,7 +223,7 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
   const { data: memberships } = useQuery({ queryKey: ['admin', 'memberships', user.id], queryFn: () => adminApi.memberships(user.id) });
   const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
   const [temp, setTemp] = useState<string | null>(null);
-  const [mode, setMode] = useState<'none' | 'add' | 'transfer' | 'deactivate'>('none');
+  const [mode, setMode] = useState<'none' | 'add' | 'transfer' | 'deactivate' | 'delete'>('none');
   const [unit, setUnit] = useState<UnitChoice | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [reason, setReason] = useState('');
@@ -250,6 +250,10 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
           await adminApi.setActive(user.id, false, reason);
           setMode('none');
           return setMessage({ tone: 'ok', text: 'عُطّل الحساب وأُلغيت جلساته.' });
+        case 'delete':
+          await adminApi.deleteUser(user.id);
+          onChanged();
+          return onClose();
         case 'add':
           if (!unit) throw new Error('حدد الوحدة');
           await adminApi.addMembership(user.id, { ...unit, job_title: jobTitle });
@@ -364,7 +368,29 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
               إعادة التفعيل
             </Button>
           )}
+          {!user.last_login_at && (
+            <Button size="sm" variant="danger" onClick={() => setMode(mode === 'delete' ? 'none' : 'delete')}>
+              <Trash2 className="h-4 w-4" />
+              حذف نهائي
+            </Button>
+          )}
         </div>
+        {mode === 'delete' && (
+          <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/50 p-3">
+            <p className="text-sm text-gray-800">
+              يُحذف الحساب <span dir="ltr" className="font-mono">{user.username}</span> نهائيًا ولا يمكن استرجاعه.
+            </p>
+            <p className="text-xs text-gray-600">
+              متاح فقط لحساب لم يُستخدم أبدًا (خطأ استيراد أو حساب مكرر). الحساب الذي له مراسلات أو محادثات أو نشاط يُعطَّل ولا يُحذف.
+            </p>
+            <div className="flex justify-end">
+              <Button size="sm" variant="danger" loading={action.isPending && action.variables === 'delete'} onClick={() => action.mutate('delete')}>
+                <Trash2 className="h-4 w-4" />
+                تأكيد الحذف النهائي
+              </Button>
+            </div>
+          </div>
+        )}
         {mode === 'deactivate' && (
           <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/50 p-3">
             <Label htmlFor="d-reason">سبب التعطيل</Label>
