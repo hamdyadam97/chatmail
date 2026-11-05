@@ -214,3 +214,37 @@ def test_role_catalog_is_transparent(api_client, staff):
     assert "branch_manager" in roles and "sys_admin" in roles
     codes = {p["code"] for r in roles.values() for p in r["permissions"]}
     assert not any("view_all" in c or "decrypt" in c for c in codes)
+
+
+def test_export_managed_list_follows_scope_and_filters(api_client, staff):
+    import io
+
+    import openpyxl
+
+    def export(headers, query=""):
+        return api_client.get(f"{USERS}managed/export/{query}", **headers)
+
+    resp = export(staff["h_central"], f"?branch={staff['branch_a2'].id}")
+    assert resp.status_code == 200 and resp["Content-Disposition"].startswith("attachment")
+    rows = list(openpyxl.load_workbook(io.BytesIO(resp.content)).active.iter_rows(values_only=True))
+    assert rows[0][:3] == ("الاسم", "اسم المستخدم", "الفرع")
+    assert [r[1] for r in rows[1:]] == ["adm_jed"] and rows[1][2] == staff["branch_a2"].name
+    entry = AuditLog.objects.get(action="employees_exported")
+    assert entry.actor_id == staff["central"].id and entry.metadata["count"] == 1
+
+    scoped = {r[1] for r in list(openpyxl.load_workbook(io.BytesIO(export(staff["h_scoped"]).content)).active.iter_rows(values_only=True))[1:]}
+    assert "adm_emp" in scoped and not {"adm_jed", "adm_faw"} & scoped
+    assert export(staff["h_emp"]).status_code == 403
+
+
+def test_export_never_writes_formulas(api_client, staff, user_factory):
+    import io
+
+    import openpyxl
+
+    from apps.accounts.models import User
+
+    User.objects.filter(id=staff["emp"].id).update(full_name="=HYPERLINK(\"http://x\")")
+    data = api_client.get(f"{USERS}managed/export/?q=adm_emp", **staff["h_central"]).content
+    cell = openpyxl.load_workbook(io.BytesIO(data)).active["A2"]
+    assert cell.data_type == "s" and cell.value.startswith("=HYPERLINK")

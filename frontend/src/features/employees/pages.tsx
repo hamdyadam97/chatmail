@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { externalApi } from '../external/service';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Contact, FileSpreadsheet, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe } from 'lucide-react';
+import { Contact, Download, FileSpreadsheet, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { ApiError, toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
+import { saveBlob } from '../../shared/lib/download';
 import {
   adminApi,
   EMPLOYMENT_LABELS,
@@ -438,6 +439,10 @@ export function Employees() {
     retry: false,
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['admin', 'managed'] });
+  const exporting = useMutation({
+    mutationFn: () => adminApi.exportManaged({ q: query, status, branch }),
+    onSuccess: (blob) => saveBlob(blob, `الموظفون-${new Date().toISOString().slice(0, 10)}.xlsx`),
+  });
 
   if (error instanceof ApiError && error.status === 403) {
     return (
@@ -498,6 +503,16 @@ export function Employees() {
         </select>
         <Button type="submit" variant="outline">
           بحث
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          loading={exporting.isPending}
+          onClick={() => exporting.mutate()}
+          title="تصدير القائمة المعروضة (بنفس الفلاتر) إلى Excel"
+        >
+          <Download className="h-4 w-4" />
+          تصدير Excel
         </Button>
       </form>
       {isLoading ? (

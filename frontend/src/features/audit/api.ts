@@ -45,6 +45,7 @@ export const ACTION_LABELS: Record<string, string> = {
   password_changed: 'تغيير كلمة المرور',
   password_reset: 'إعادة تعيين كلمة المرور (من المسؤول)',
   account_deleted: 'حذف حساب لم يُستخدم',
+  employees_exported: 'تصدير قائمة الموظفين',
   mfa_setup: 'بدء إعداد التحقق الثنائي',
   mfa_enabled: 'تفعيل التحقق الثنائي',
   mfa_disabled: 'تعطيل التحقق الثنائي',

@@ -370,6 +370,22 @@ async function main() {
     const listedNew = await rows().filter({ hasText: 'salma.imp' }).first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
     check('الموظفون: استيراد Excel — معاينة ثم إنشاء الصالح فقط في فرعه', previewOk && createdOk && listedNew);
 
+    // تصدير القائمة المعروضة (فلتر فرع الرياض) إلى Excel.
+    const [empDownload] = await Promise.all([
+      admin.page.waitForEvent('download', { timeout: 20000 }).catch(() => null),
+      admin.page.getByRole('button', { name: 'تصدير Excel' }).click({ timeout: 10000 }).catch(() => undefined),
+    ]);
+    let empXlsxOk = false;
+    if (empDownload) {
+      const file = path.join(work, 'employees-export.xlsx');
+      await empDownload.saveAs(file);
+      empXlsxOk = await runPython(
+        `import openpyxl; rows = list(openpyxl.load_workbook(${JSON.stringify(file)}).active.iter_rows(values_only=True)); ` +
+          `assert len(rows) > 2 and any(r[1] == "salma.imp" for r in rows) and all(r[2] == "فرع الرياض" for r in rows[1:])`,
+      ).then(() => empDownload.suggestedFilename().endsWith('.xlsx')).catch(() => false);
+    }
+    check('الموظفون: تصدير Excel بنفس فلتر الفرع', empXlsxOk);
+
     section('2) مراسلة عبر الواجهة');
     const subject = `اختبار واجهة ${Date.now()}`;
     const body = 'نص سري لا يراه غير أطرافه — سطر ثانٍ للتأكد.';

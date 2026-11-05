@@ -98,6 +98,31 @@ class _Pagination(PageNumberPagination):
     max_page_size = 100
 
 
+def filtered_managed_users(request):
+    """The caller's managed users with the list filters (q, status, branch)."""
+    scope = managed_scope_q(request.user)
+    if scope is None:
+        raise PermissionDenied("لا تملك صلاحية إدارة الحسابات.")
+    qs = User.objects.filter(scope).distinct()
+    state = request.query_params.get("status", "all")
+    if state == "active":
+        qs = qs.filter(is_active=True)
+    elif state == "inactive":
+        qs = qs.filter(is_active=False)
+    branch = (request.query_params.get("branch") or "").strip()
+    if branch == "none":
+        qs = qs.exclude(memberships__is_primary=True, memberships__branch__isnull=False)
+    elif branch:
+        try:
+            qs = qs.filter(memberships__is_primary=True, memberships__branch_id=uuid.UUID(branch))
+        except ValueError:
+            raise ValidationError({"branch": "فرع غير صالح."})
+    term = (request.query_params.get("q") or "").strip()
+    if term:
+        qs = qs.filter(Q(full_name__icontains=term) | Q(username__icontains=term) | Q(phone__icontains=term))
+    return qs
+
+
 class ManagedUsersView(APIView):
     """GET /users/managed/?q=&status=active|inactive|all&branch=<id>|none
     (branch = of the primary membership; "none" = no branch yet)."""
@@ -105,26 +130,7 @@ class ManagedUsersView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        scope = managed_scope_q(request.user)
-        if scope is None:
-            raise PermissionDenied("لا تملك صلاحية إدارة الحسابات.")
-        qs = User.objects.filter(scope).distinct()
-        state = request.query_params.get("status", "all")
-        if state == "active":
-            qs = qs.filter(is_active=True)
-        elif state == "inactive":
-            qs = qs.filter(is_active=False)
-        branch = (request.query_params.get("branch") or "").strip()
-        if branch == "none":
-            qs = qs.exclude(memberships__is_primary=True, memberships__branch__isnull=False)
-        elif branch:
-            try:
-                qs = qs.filter(memberships__is_primary=True, memberships__branch_id=uuid.UUID(branch))
-            except ValueError:
-                raise ValidationError({"branch": "فرع غير صالح."})
-        term = (request.query_params.get("q") or "").strip()
-        if term:
-            qs = qs.filter(Q(full_name__icontains=term) | Q(username__icontains=term) | Q(phone__icontains=term))
+        qs = filtered_managed_users(request)
         now = timezone.now()
         qs = (
             qs.annotate(
@@ -398,5 +404,60 @@ class EmployeeImportTemplateView(APIView):
         response = HttpResponse(buf.getvalue(),
                                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         response["Content-Disposition"] = 'attachment; filename="employees-template.xlsx"'
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+class ManagedUsersExportView(APIView):
+    """GET /users/managed/export/ — the same filtered list as .xlsx (same
+    scope as the page; account data only, no content). Audited."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        import io
+
+        import openpyxl
+        from django.http import HttpResponse
+
+        qs = (
+            filtered_managed_users(request)
+            .prefetch_related("memberships__institute", "memberships__branch", "memberships__department")
+            .order_by("full_name", "username")
+        )
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "الموظفون"
+        ws.sheet_view.rightToLeft = True
+        # Same first columns as the import template, so the file can be re-imported.
+        ws.append(["الاسم", "اسم المستخدم", "الفرع", "المعهد", "القسم", "المسمى الوظيفي", "الجوال",
+                   "البريد الإلكتروني", "الحالة", "آخر دخول", "تاريخ الإنشاء"])
+        count = 0
+        for u in qs.iterator(chunk_size=500):
+            m = next((m for m in u.memberships.all() if m.is_primary), None)
+            state = ("بانتظار تغيير كلمة المرور" if u.must_change_password else "نشط") if u.is_active else "معطّل"
+            values = [
+                u.full_name or f"{u.first_name} {u.last_name}".strip(), u.username,
+                m.branch.name if m and m.branch_id else "", m.institute.name if m else "",
+                m.department.name if m and m.department_id else "", m.job_title if m else "",
+                u.phone or "", u.optional_email or "", state,
+                timezone.localtime(u.last_login_at).strftime("%Y-%m-%d %H:%M") if u.last_login_at else "",
+                timezone.localtime(u.created_at).strftime("%Y-%m-%d"),
+            ]
+            ws.append([str(v) for v in values])
+            for cell in ws[ws.max_row]:
+                cell.data_type = "s"  # text only — no formula injection from names
+            count += 1
+        for col, width in zip("ABCDEFGHIJK", (30, 24, 28, 28, 22, 22, 16, 28, 24, 18, 14)):
+            ws.column_dimensions[col].width = width
+        log(actor=request.user, action="employees_exported", target_type="user", target_id=None,
+            metadata={"count": count, "status": request.query_params.get("status", "all"),
+                      "branch": request.query_params.get("branch", ""), "filtered": bool(request.query_params.get("q"))},
+            **request_context(request))
+        buf = io.BytesIO()
+        wb.save(buf)
+        response = HttpResponse(buf.getvalue(),
+                                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        response["Content-Disposition"] = 'attachment; filename="employees.xlsx"'
         response["Cache-Control"] = "no-store"
         return response

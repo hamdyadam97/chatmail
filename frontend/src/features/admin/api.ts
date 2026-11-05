@@ -130,6 +130,16 @@ export const adminApi = {
     if (!res.ok) throw new ApiError(res.status, data);
     return data as ImportResult;
   },
+  /** قائمة الموظفين بنفس فلاتر الصفحة كملف Excel. */
+  exportManaged: async (params: { q?: string; status?: string; branch?: string }): Promise<Blob> => {
+    const s = new URLSearchParams();
+    if (params.q) s.set('q', params.q);
+    if (params.status) s.set('status', params.status);
+    if (params.branch) s.set('branch', params.branch);
+    const res = await rawFetch(`/users/managed/export/?${s.toString()}`, {});
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+    return res.blob();
+  },
   importTemplate: async (): Promise<Blob> => {
     const res = await rawFetch('/users/import/template/', {});
     if (!res.ok) throw new ApiError(res.status, null);
