@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { externalApi } from '../external/service';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Contact, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe } from 'lucide-react';
+import { Contact, FileSpreadsheet, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { ApiError, toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
@@ -14,6 +14,7 @@ import {
   type UnitChoice,
 } from '../admin/api';
 import { Modal, UnitPicker, useOrg } from '../admin/components';
+import { ImportEmployees } from './ImportEmployees';
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—';
@@ -427,6 +428,7 @@ export function Employees() {
   const [branch, setBranch] = useState('');
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<ManagedUser | null>(null);
   const org = useOrg();
   const { data, isLoading, error } = useQuery({
@@ -452,10 +454,16 @@ export function Employees() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-gray-900">الموظفون</h2>
-        <Button onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" />
-          موظف جديد
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setImporting(true)}>
+            <FileSpreadsheet className="h-4 w-4" />
+            استيراد من Excel
+          </Button>
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" />
+            موظف جديد
+          </Button>
+        </div>
       </div>
       <form
         className="flex flex-wrap gap-2"
@@ -549,6 +557,7 @@ export function Employees() {
         </Card>
       )}
       {creating && <CreateEmployee onClose={() => setCreating(false)} onCreated={refresh} />}
+      {importing && <ImportEmployees onClose={() => setImporting(false)} onDone={refresh} />}
       {selected && (
         <EmployeeDetail
           key={selected.id}

@@ -313,3 +313,90 @@ class RevokeSessionsView(APIView):
         _audit(request, "sessions_revoked_by_admin", target, count=count)
         return Response({"revoked": count})
 
+
+
+class EmployeeImportView(APIView):
+    """POST /users/import/ (multipart: file, apply=0|1, create_branches=0|1,
+    include_test=0|1) — preview, then create, employees from a spreadsheet
+    (apps.accounts.employee_import). Each row is created only where the caller
+    holds accounts.manage_users on its branch (central for branch-less rows);
+    creating missing branches needs central org.manage_structure. The
+    temporary passwords appear once in the apply response, never in the audit."""
+
+    permission_classes = [IsAuthenticated]
+    MAX_BYTES = 5 * 1024 * 1024
+
+    def get_parsers(self):
+        from rest_framework.parsers import MultiPartParser
+
+        return [MultiPartParser()]
+
+    def post(self, request):
+        from .. import employee_import as imp
+
+        if managed_scope_q(request.user) is None:
+            raise PermissionDenied("لا تملك صلاحية إدارة الموظفين.")
+        flag = lambda k: str(request.data.get(k, "")).lower() in ("1", "true")  # noqa: E731
+        create_branches = flag("create_branches")
+        if create_branches and not has_permission(request.user, "org.manage_structure", unit=None):
+            raise PermissionDenied("إنشاء الفروع يحتاج صلاحية إدارة الهيكل المركزية.")
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"file": "ارفع ملف Excel."})
+        if upload.size > self.MAX_BYTES:
+            raise ValidationError({"file": "الملف أكبر من 5 ميجابايت."})
+        try:
+            records = imp.read_records(upload)
+        except imp.ImportError_ as exc:
+            raise ValidationError({"file": str(exc)})
+
+        def allowed(branch):
+            return has_permission(request.user, "accounts.manage_users", unit=branch)
+
+        rows, new_branches = imp.plan(records, include_test=flag("include_test"),
+                                      create_branches=create_branches, allowed=allowed)
+        applied = flag("apply")
+        new_branch_names = [f"{b.name} ({b.institute.name})" for b in new_branches.values() if b._state.adding]
+        created = 0
+        if applied:
+            created = imp.apply(rows, new_branches, admin=request.user, via="employees_page",
+                                request_ctx=request_context(request))
+        out = [
+            {
+                "name": p["name"], "username": p["username"], "branch": p["branch"],
+                "branch_matched": p["branch_obj"].name if p["branch_obj"] is not None else None,
+                "status": p["status"],
+                "will_create": p["status"] in (imp.CREATE, imp.CREATE_NO_BRANCH),
+                "created": p.get("password") is not None,
+                **({"temp_password": p["password"]} if p.get("password") and not p.get("shared_password") else {}),
+            }
+            for p in rows
+        ]
+        shared = next((p["password"] for p in rows if p.get("shared_password")), None)
+        return Response({
+            "applied": applied, "created": created, "rows": out, "shared_temp_password": shared,
+            "new_branches": new_branch_names,
+        })
+
+
+class EmployeeImportTemplateView(APIView):
+    """GET /users/import/template/ — an empty spreadsheet with the columns."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.http import HttpResponse
+
+        from ..employee_import import template_workbook
+
+        if managed_scope_q(request.user) is None:
+            raise PermissionDenied("لا تملك صلاحية إدارة الموظفين.")
+        import io
+
+        buf = io.BytesIO()
+        template_workbook().save(buf)
+        response = HttpResponse(buf.getvalue(),
+                                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        response["Content-Disposition"] = 'attachment; filename="employees-template.xlsx"'
+        response["Cache-Control"] = "no-store"
+        return response

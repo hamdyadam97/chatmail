@@ -4,7 +4,7 @@
  * النطاق لكل عملية (accounts.manage_users / org.manage_structure /
  * accounts.manage_sessions / roles.manage).
  */
-import { apiFetch } from '../../shared/api';
+import { ApiError, apiFetch, rawFetch } from '../../shared/api';
 
 export interface UnitRef {
   id: string;
@@ -119,6 +119,22 @@ export const adminApi = {
   }) => apiFetch<{ id: string; temp_password?: string }>('/users/', { method: 'POST', body }),
   setActive: (id: string, isActive: boolean, reason = '') =>
     apiFetch<unknown>(`/users/${id}/`, { method: 'PATCH', body: { is_active: isActive, deactivation_reason: reason } }),
+  /** استيراد موظفين من Excel: معاينة (apply=false) ثم إنشاء بنفس الملف. */
+  importEmployees: async (file: File, opts: { apply: boolean; createBranches: boolean }): Promise<ImportResult> => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('apply', opts.apply ? '1' : '0');
+    form.append('create_branches', opts.createBranches ? '1' : '0');
+    const res = await rawFetch('/users/import/', { method: 'POST', headers: { Accept: 'application/json' }, body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiError(res.status, data);
+    return data as ImportResult;
+  },
+  importTemplate: async (): Promise<Blob> => {
+    const res = await rawFetch('/users/import/template/', {});
+    if (!res.ok) throw new ApiError(res.status, null);
+    return res.blob();
+  },
   resetPassword: (id: string) => apiFetch<{ temp_password: string }>(`/users/${id}/reset-password/`, { method: 'POST' }),
   /** حذف نهائي لحساب لم يُستخدم أبدًا؛ الخادم يرفض (409) ما سواه. */
   deleteUser: (id: string) => apiFetch<null>(`/users/${id}/`, { method: 'DELETE' }),
@@ -161,4 +177,23 @@ export const EMPLOYMENT_LABELS: Record<EmploymentType, string> = {
 
 export function unitLabel(m: Pick<Membership, 'institute' | 'branch' | 'department'>): string {
   return [m.institute.name, m.branch?.name, m.department?.name].filter(Boolean).join(' / ');
+}
+
+export interface ImportRow {
+  name: string;
+  username: string;
+  branch: string;
+  branch_matched: string | null;
+  status: string;
+  will_create: boolean;
+  created: boolean;
+  temp_password?: string;
+}
+
+export interface ImportResult {
+  applied: boolean;
+  created: number;
+  rows: ImportRow[];
+  shared_temp_password: string | null;
+  new_branches: string[];
 }

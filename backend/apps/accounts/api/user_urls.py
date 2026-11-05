@@ -7,6 +7,8 @@ urlpatterns = [
     path("me/", user_views.MeView.as_view(), name="users-me"),
     path("", user_views.UserDirectoryView.as_view(), name="users-directory"),
     path("managed/", admin_views.ManagedUsersView.as_view(), name="users-managed"),
+    path("import/", admin_views.EmployeeImportView.as_view(), name="users-import"),
+    path("import/template/", admin_views.EmployeeImportTemplateView.as_view(), name="users-import-template"),
     path("<uuid:user_id>/memberships/", admin_views.MembershipsView.as_view(), name="user-memberships"),
     path(
         "<uuid:user_id>/memberships/<uuid:membership_id>/",

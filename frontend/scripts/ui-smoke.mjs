@@ -347,6 +347,29 @@ async function main() {
     await admin.page.keyboard.press('Escape');
     check('الموظفون: حذف نهائي لحساب لم يُستخدم، ولا زر حذف لمن دخل', gone && noDeleteForUsed);
 
+    // استيراد من Excel: معاينة لا تنشئ شيئًا، ثم «إنشاء» ينشئ الصالح فقط.
+    const sheetPath = path.join(work, 'staff.xlsx');
+    await runPython(
+      'import openpyxl; wb = openpyxl.Workbook(); ws = wb.active; ' +
+        'ws.append(["الاسم", "اسم المستخدم", "الفرع"]); ws.append(["سلمى المستوردة", "salma.imp", "فرع الرياض"]); ' +
+        'ws.append(["مكرر", "ahmed", "فرع الرياض"]); ' +
+        `wb.save(${JSON.stringify(sheetPath)})`,
+    );
+    await admin.page.locator('[role="dialog"] button[aria-label="إغلاق"]').first().click({ timeout: 5000 }).catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'استيراد من Excel' }).click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.setInputFiles('#imp-file', sheetPath).catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'معاينة' }).click({ timeout: 10000 }).catch(() => undefined);
+    const createBtn = admin.page.getByRole('button', { name: 'إنشاء 1 حساب' });
+    const previewOk =
+      (await createBtn.waitFor({ timeout: 15000 }).then(() => true).catch(() => false)) &&
+      (await admin.page.locator('td:has-text("موجود مسبقًا")').count()) > 0;
+    await createBtn.click({ timeout: 10000 }).catch(() => undefined);
+    const createdOk = await admin.page.locator('text=أُنشئ 1 حساب').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    await admin.page.getByRole('button', { name: 'تم' }).click({ timeout: 10000 }).catch(() => undefined);
+    await branchSelect.selectOption({ label: 'فرع الرياض' }).catch(() => undefined);
+    const listedNew = await rows().filter({ hasText: 'salma.imp' }).first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    check('الموظفون: استيراد Excel — معاينة ثم إنشاء الصالح فقط في فرعه', previewOk && createdOk && listedNew);
+
     section('2) مراسلة عبر الواجهة');
     const subject = `اختبار واجهة ${Date.now()}`;
     const body = 'نص سري لا يراه غير أطرافه — سطر ثانٍ للتأكد.';
