@@ -44,13 +44,14 @@ def test_central_scope_covers_all_units(user_factory, role_factory, tree):
     assert has_permission(user, "accounts.manage_users", unit=None) is True
     assert has_permission(user, "accounts.manage_users", unit=tree["inst_b"]) is True
     assert has_permission(user, "accounts.manage_users", unit=tree["dept1"]) is True
-    # ...but only for permissions the role actually holds
-    assert has_permission(user, "roles.manage", unit=None) is False
+    assert has_permission(user, "roles.manage", unit=None) is True  # the admin controls roles too
+    # ...but only for permissions the role actually holds (never archive access)
+    assert has_permission(user, "archive.institutional.access", unit=None) is False
 
 
 def test_branch_scope_subtree(user_factory, role_factory, tree):
     user = user_factory("branch_user")
-    role_factory(user, "branch_manager", institute=tree["inst_a"], branch=tree["branch1"])
+    role_factory(user, "sys_admin", institute=tree["inst_a"], branch=tree["branch1"])
     assert has_permission(user, "org.manage_structure", unit=tree["dept1"]) is True
     assert has_permission(user, "org.manage_structure", unit=tree["dept1b"]) is True
     assert has_permission(user, "org.manage_structure", unit=tree["branch1"]) is True

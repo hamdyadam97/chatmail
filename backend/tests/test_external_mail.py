@@ -222,8 +222,11 @@ def test_send_requires_permission_then_goes_out_as_the_employee(ahmed, monkeypat
     monkeypatch.setattr("requests.post", lambda url, **kw: calls.append((url, kw)) or FakeResponse())
     login_and_get_access(api_client, "ahmed")
     body = {"to": ["client@gmail.com"], "subject": "رد", "body": CANARY}
+    # on by default (user decision 2026-11-08); the admin can switch it off per employee
+    box = ExternalMailbox.objects.create(user=ahmed["user"], sending_enabled=False, local_part="a.alotaibi")
     assert api_client.post(f"{API}send/", body, format="json").status_code == 403
-    ExternalMailbox.objects.create(user=ahmed["user"], sending_enabled=True, local_part="a.alotaibi")
+    box.sending_enabled = True
+    box.save()
 
     inbound = services.ingest(mail(to=f"a.alotaibi@{DOMAIN}"), recipient=f"a.alotaibi@{DOMAIN}")
     r = api_client.post(f"{API}send/", {**body, "reply_to_id": str(inbound.id)}, format="json")
@@ -264,7 +267,7 @@ def test_messages_are_private_to_their_owner(ahmed, user_factory, api_client):
     listing = api_client.get(f"{API}messages/?q=اسعار").json()
     assert [x["id"] for x in listing["results"]] == [str(m.id)]
     me = api_client.get(f"{API}me/").json()
-    assert me["address"] == f"ahmed@{DOMAIN}" and me["unread"] == 1 and me["sending_enabled"] is False
+    assert me["address"] == f"ahmed@{DOMAIN}" and me["unread"] == 1 and me["sending_enabled"] is True
     api_client.post(f"{API}messages/{m.id}/read/")
     assert api_client.get(f"{API}me/").json()["unread"] == 0
 
@@ -275,10 +278,10 @@ def test_mailbox_settings_need_manage_users(ahmed, user_factory, api_client, bra
     plain = user_factory("plain_user", membership_unit=branch_a)
     url = f"{API}mailboxes/{ahmed['user'].id}/"
     login_and_get_access(api_client, "plain_user")
-    assert api_client.patch(url, {"sending_enabled": True}, format="json").status_code == 403
+    assert api_client.patch(url, {"sending_enabled": False}, format="json").status_code == 403
     login_and_get_access(api_client, "acct_admin")
-    r = api_client.patch(url, {"sending_enabled": True, "local_part": "A.Alotaibi"}, format="json")
-    assert r.status_code == 200 and r.json()["address"] == f"a.alotaibi@{DOMAIN}" and r.json()["sending_enabled"]
+    r = api_client.patch(url, {"sending_enabled": False, "local_part": "A.Alotaibi"}, format="json")
+    assert r.status_code == 200 and r.json()["address"] == f"a.alotaibi@{DOMAIN}" and not r.json()["sending_enabled"]
     assert api_client.patch(url, {"local_part": "bad name!"}, format="json").status_code == 400
     assert AuditLog.objects.filter(action="external_mailbox_updated", target_id=ahmed["user"].id).exists()
     del plain

@@ -26,13 +26,10 @@ def test_creates_central_admin_with_one_time_password(capsys, api_client):
     assert resp.status_code == 200
 
 
-def test_refuses_combined_duties_unless_explicit():
-    with pytest.raises(CommandError, match="separation of duties"):
-        call_command("bootstrap_admin", "--username", "a1", "--institute", "AHL",
-                     "--role", "sys_admin", "--role", "hr_admin")
-    call_command("bootstrap_admin", "--username", "a2", "--institute", "AHL",
-                 "--role", "sys_admin", "--role", "hr_admin", "--allow-combined-duties")
-    assert User.objects.filter(username="a2").exists()
+def test_the_admin_also_assigns_roles():
+    """User decision 2026-11-08: the admin controls permissions too."""
+    call_command("bootstrap_admin", "--username", "a2", "--institute", "AHL", "--role", "sys_admin")
+    assert has_permission(User.objects.get(username="a2"), "roles.manage", unit=None)
 
 
 @pytest.mark.parametrize("args", [

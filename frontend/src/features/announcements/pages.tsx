@@ -106,15 +106,19 @@ function AnnouncementList({ box }: { box: 'received' | 'published' }) {
 export function Announcements() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<'received' | 'published'>('received');
+  const { data: targets } = useQuery({ queryKey: ['announcements', 'targets'], queryFn: announcementsApi.targets });
+  const canPublish = !!targets && (targets.all || targets.institutes.length > 0 || targets.branches.length > 0);
   return (
     <>
       <div className="mx-auto max-w-5xl space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">التعاميم</h2>
-          <Button onClick={() => navigate('/announcements/new')}>
-            <Plus className="h-4 w-4" />
-            تعميم جديد
-          </Button>
+          {canPublish && (
+            <Button onClick={() => navigate('/announcements/new')}>
+              <Plus className="h-4 w-4" />
+              تعميم جديد
+            </Button>
+          )}
         </div>
         <div className="flex gap-1 border-b border-gray-200">
           {(
@@ -161,13 +165,30 @@ function ComposeForm() {
   const [review, setReview] = useState<{ target: AudienceTarget; recipients: UserRef[] } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const { data: institutes } = useQuery({ queryKey: ['org', 'institutes'], queryFn: announcementsApi.institutes });
-  const { data: branches } = useQuery({ queryKey: ['org', 'branches'], queryFn: announcementsApi.branches });
-  const { data: departments } = useQuery({ queryKey: ['org', 'departments'], queryFn: announcementsApi.departments });
+  const [branchIds, setBranchIds] = useState<string[] | null>(null);
+  // الخادم يحدد أين يحق لي النشر حسب دوري: مدير الفرع فرعه، والإقليمي فروعه، والتنفيذي الكل.
+  const { data: targets, isLoading: targetsLoading } = useQuery({ queryKey: ['announcements', 'targets'], queryFn: announcementsApi.targets });
+  const allowedTypes = useMemo<TargetType[]>(() => {
+    if (!targets) return [];
+    const t: TargetType[] = [];
+    if (targets.all) t.push('all');
+    if (targets.branches.length > 1 && !targets.all) t.push('branches');
+    if (targets.institutes.length) t.push('institute');
+    if (targets.branches.length) t.push('branch');
+    if (t.length) t.push('users');
+    return t;
+  }, [targets]);
+  // الافتراضي: أوسع ما يحق لي.
+  useEffect(() => {
+    if (!targets || !allowedTypes.length) return;
+    setTargetType(allowedTypes[0]);
+    setTargetId(allowedTypes[0] === 'branch' && targets.branches.length === 1 ? targets.branches[0].id : '');
+  }, [targets, allowedTypes]);
   const units = useMemo(
-    () => ({ institute: institutes ?? [], branch: branches ?? [], department: departments ?? [] }),
-    [institutes, branches, departments],
+    () => ({ institute: targets?.institutes ?? [], branch: targets?.branches ?? [], department: [] as Array<{ id: string; name: string; code: string }> }),
+    [targets],
   );
+  const chosenBranches = branchIds ?? (targets?.branches ?? []).map((b) => b.id);
 
   const onPrepare = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,12 +196,14 @@ function ComposeForm() {
     if (!subject.trim()) return setError('العنوان مطلوب');
     if (targetType === 'users' && users.length === 0) return setError('اختر موظفًا واحدًا على الأقل');
     if (['department', 'branch', 'institute'].includes(targetType) && !targetId) return setError('اختر الوحدة');
+    if (targetType === 'branches' && chosenBranches.length === 0) return setError('اختر فرعًا واحدًا على الأقل');
     setBusy(true);
     try {
       const target: AudienceTarget = {
         target_type: targetType,
-        target_id: targetType === 'users' || targetType === 'all' ? null : targetId,
+        target_id: targetType === 'users' || targetType === 'all' || targetType === 'branches' ? null : targetId,
         user_ids: targetType === 'users' ? users : [],
+        branch_ids: targetType === 'branches' ? chosenBranches : [],
       };
       const audience = await announcementsApi.previewAudience(target);
       setReview({ target, recipients: audience.recipients });
@@ -215,6 +238,18 @@ function ComposeForm() {
   };
 
   const onCancelReview = () => setReview(null);
+
+  if (targetsLoading) return <Spinner />;
+  if (!allowedTypes.length) {
+    return (
+      <EmptyState
+        icon={Megaphone}
+        title="إصدار التعاميم لمدير الفرع والمدير الإقليمي والمدير التنفيذي"
+        description="اطلب من مسؤول النظام إسناد الدور المناسب إن كان عملك يتطلب ذلك."
+        className="mx-auto mt-8 max-w-lg"
+      />
+    );
+  }
 
   if (review) {
     return (
@@ -262,9 +297,9 @@ function ComposeForm() {
               }}
               className="h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm"
             >
-              {(Object.keys(TARGET_LABELS) as TargetType[]).map((t) => (
+              {allowedTypes.map((t) => (
                 <option key={t} value={t}>
-                  {TARGET_LABELS[t]}
+                  {t === 'branches' ? 'كل فروعي' : TARGET_LABELS[t]}
                 </option>
               ))}
             </select>
@@ -288,6 +323,26 @@ function ComposeForm() {
             </div>
           )}
         </div>
+        {targetType === 'branches' && (
+          <fieldset className="space-y-1">
+            <legend className="mb-1 text-sm font-medium text-gray-700">الفروع</legend>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {(targets?.branches ?? []).map((b) => (
+                <label key={b.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="accent-primary-600"
+                    checked={chosenBranches.includes(b.id)}
+                    onChange={(e) =>
+                      setBranchIds(e.target.checked ? [...chosenBranches, b.id] : chosenBranches.filter((x) => x !== b.id))
+                    }
+                  />
+                  {b.name}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
         {targetType === 'users' && <RecipientPicker id="ann-users" label="الموظفون" value={users} onChange={setUsers} />}
         <p className="text-xs text-gray-500">
           يحدد الخادم المستلمين من الهيكل التنظيمي الحالي (العضويات السارية)، ويتحقق من صلاحيتك للنشر في هذا النطاق. ستراجع

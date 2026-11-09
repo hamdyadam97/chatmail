@@ -758,6 +758,50 @@ async function main() {
     if (!xlsxOk) console.log(`    لقطة: ${await shot(manager, 'export')} — console: ${manager.page.errors.join(' | ')}`);
     check('manager: نزّل التقرير كملف Excel', xlsxOk);
 
+    section('8ب) الأدوار الخمسة والتعاميم');
+    // المسؤول يسند «مدير إقليمي» لمحمد على فرعين بمربعات الاختيار.
+    await runPython(
+      "from apps.org.models import Branch, Institute; i = Branch.objects.get(name='فرع الرياض').institute; " +
+        "Branch.objects.get_or_create(institute=i, code='JED', defaults={'name': 'فرع جدة'})",
+    );
+    await admin.page.goto(`${UI}/roles`);
+    await admin.page.getByRole('button', { name: 'إسناد دور' }).click({ timeout: 15000 }).catch(() => undefined);
+    await admin.page.fill('#as-user', 'محمد').catch(() => undefined);
+    await admin.page.locator('[role="listbox"] [role="option"]:has-text("محمد الشهري")').first().click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.locator('[role="dialog"] h3').click().catch(() => undefined); // يغلق قائمة الأسماء
+    const roleOptions = await admin.page.locator('#as-role option').allTextContents().catch(() => []);
+    await admin.page.selectOption('#as-role', 'regional_manager').catch(() => undefined);
+    const boxes = admin.page.locator('[role="dialog"] fieldset input[type="checkbox"]');
+    await boxes.first().waitFor({ timeout: 10000 }).catch(() => undefined);
+    await boxes.nth(0).check().catch(() => undefined);
+    await boxes.nth(1).check().catch(() => undefined);
+    await admin.page.locator('[role="dialog"] button[type="submit"]:has-text("إسناد")').click({ timeout: 10000 }).catch(() => undefined);
+    const rmRows = admin.page.locator('tbody tr', { hasText: 'مدير إقليمي' });
+    await rmRows.nth(1).waitFor({ timeout: 15000 }).catch(() => undefined);
+    const fiveRoles = ['موظف', 'مدير فرع', 'مدير إقليمي', 'مدير تنفيذي', 'مدير النظام'].every((n) => roleOptions.includes(n));
+    check('الأدوار: خمسة أدوار فقط، والإقليمي يُسند على عدة فروع', fiveRoles && roleOptions.length === 6 && (await rmRows.count()) === 2,
+      `options=${roleOptions.join('|')} rows=${await rmRows.count()}`);
+
+    // المدير الإقليمي: «كل فروعي» متاحة ولا «جميع المعاهد».
+    await mohamed2.page.goto(`${UI}/announcements/new`);
+    await mohamed2.page.locator('#target option').first().waitFor({ state: 'attached', timeout: 15000 }).catch(() => undefined);
+    const rmTargets = await mohamed2.page.locator('#target option').allTextContents().catch(() => []);
+    check('التعاميم: المدير الإقليمي يرى «كل فروعي» لا «جميع المعاهد»',
+      rmTargets[0] === 'كل فروعي' && !rmTargets.includes('جميع المعاهد'), rmTargets.join('|'));
+
+    // مدير الفرع: فرعه فقط، وينشر عليه.
+    await manager.page.goto(`${UI}/announcements/new`);
+    await manager.page.locator('#target option').first().waitFor({ state: 'attached', timeout: 15000 }).catch(() => undefined);
+    const bmTargets = await manager.page.locator('#target option').allTextContents().catch(() => []);
+    const bmUnits = await manager.page.locator('#unit option').allTextContents().catch(() => []);
+    await manager.page.fill('#ann-subject', 'تعميم فرع الرياض').catch(() => undefined);
+    await manager.page.locator('button[type="submit"]').last().click({ timeout: 10000 }).catch(() => undefined);
+    await manager.page.getByRole('button', { name: 'نشر' }).click({ timeout: 15000 }).catch(() => undefined);
+    const publishedOk = await manager.page.waitForURL(/\/announcements\/[0-9a-f-]{36}$/, { timeout: 15000 }).then(() => true).catch(() => false);
+    check('التعاميم: مدير الفرع ينشر على فرعه فقط',
+      bmTargets[0] === 'فرع' && !bmTargets.includes('جميع المعاهد') && bmUnits.filter((u) => u !== 'اختر…').length === 1 && publishedOk,
+      `targets=${bmTargets.join('|')} units=${bmUnits.join('|')} published=${publishedOk}`);
+
     section('9) أخطاء الـConsole');
     for (const dev of [ahmed, mohamed2, manager, archivist, sara]) {
       check(`${dev.username}: لا أخطاء JavaScript`, dev.page.errors.length === 0, dev.page.errors.slice(0, 3).join(' | '));

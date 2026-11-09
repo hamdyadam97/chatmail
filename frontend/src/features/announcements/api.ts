@@ -1,7 +1,7 @@
 /** `/api/v1/announcements/*` — التعاميم. المحتوى محفوظ مشفّرًا على الخادم ويُعاد للناشر والمستلمين. */
 import { apiFetch } from '../../shared/api';
 
-export type TargetType = 'users' | 'department' | 'branch' | 'institute' | 'all';
+export type TargetType = 'users' | 'department' | 'branch' | 'branches' | 'institute' | 'all';
 export type AnnouncementPriority = 'normal' | 'high' | 'urgent';
 
 export interface UserRef {
@@ -60,6 +60,14 @@ export interface AudienceTarget {
   target_type: TargetType;
   target_id: string | null;
   user_ids: string[];
+  branch_ids?: string[];
+}
+
+/** أين يحق لي النشر: الكل، ومعاهد، وفروع (حسب دوري). */
+export interface PublishTargets {
+  all: boolean;
+  institutes: Array<{ id: string; name: string; code: string }>;
+  branches: Array<{ id: string; name: string; code: string; institute: string }>;
 }
 
 export interface PublishBody extends AudienceTarget {
@@ -92,6 +100,7 @@ export const announcementsApi = {
   compliance: (id: string) => apiFetch<Compliance>(`/announcements/${id}/compliance/`),
   remind: (id: string) => apiFetch<{ reminded: number }>(`/announcements/${id}/remind/`, { method: 'POST' }),
   withdraw: (id: string) => apiFetch<Announcement>(`/announcements/${id}/withdraw/`, { method: 'POST' }),
+  targets: () => apiFetch<PublishTargets>('/announcements/targets/'),
   institutes: () => apiFetch<OrgUnit[]>('/org/institutes/'),
   branches: () => apiFetch<OrgUnit[]>('/org/branches/'),
   departments: () => apiFetch<OrgUnit[]>('/org/departments/'),
@@ -101,6 +110,7 @@ export const TARGET_LABELS: Record<TargetType, string> = {
   users: 'موظفون محددون',
   department: 'قسم',
   branch: 'فرع',
+  branches: 'عدة فروع',
   institute: 'معهد',
   all: 'جميع المعاهد',
 };

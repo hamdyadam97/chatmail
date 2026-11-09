@@ -60,10 +60,10 @@ def test_report_access_is_scoped(api_client, user_factory, activity, branch_a, b
     exe = make_employee(user_factory, "rep_exec", branch_a)
     assign_role(exe, "executive")  # central reports.view_metadata
     assert _report(api_client, auth(api_client, "rep_exec"), "all").status_code == 200
-    # sys_admin manages the system but holds no reports permission
+    # the admin controls everything, reports included (aggregates only)
     admin = user_factory("rep_admin", membership_unit=branch_a)
     assign_role(admin, "sys_admin")
-    assert _report(api_client, auth(api_client, "rep_admin"), "all").status_code == 403
+    assert _report(api_client, auth(api_client, "rep_admin"), "all").status_code == 200
 
 
 def test_units_selector_lists_only_permitted_units(api_client, activity, branch_a):
@@ -135,8 +135,8 @@ def test_full_audit_log_needs_central_audit_view(api_client, user_factory, activ
     for headers in (activity["h_mgr"], activity["h_s"]):
         assert api_client.get(AUDIT_URL, **headers).status_code == 403
     admin = user_factory("aud_admin", membership_unit=branch_a)
-    assign_role(admin, "sys_admin")
-    assert api_client.get(AUDIT_URL, **auth(api_client, "aud_admin")).status_code == 403
+    assign_role(admin, "sys_admin")  # the admin reads the audit log too (user decision 2026-11-08)
+    assert api_client.get(AUDIT_URL, **auth(api_client, "aud_admin")).status_code == 200
 
 
 def test_my_security_events(api_client, user_factory, branch_a):

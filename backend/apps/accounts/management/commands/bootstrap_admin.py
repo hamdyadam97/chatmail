@@ -1,12 +1,12 @@
 """Create the first administrator(s) on a fresh production install.
 
     manage.py bootstrap_admin --username it.admin --first-name محمد --last-name الأحمد \
-        --institute AHL [--branch RYD] --role sys_admin [--role security_auditor]
+        --institute AHL [--branch RYD] --role sys_admin
 
 Prints a temporary password ONCE (must be changed at first login). Unlike
-seed_demo there are no known passwords. Separation of duties (docs/phase1/05
-§5.5): one person may not hold both roles.manage and accounts.manage_users
-unless --allow-combined-duties is given explicitly.
+seed_demo there are no known passwords. sys_admin controls accounts, structure
+and roles (user decision 2026-11-08 — the earlier duty separation is dropped;
+--allow-combined-duties is accepted and ignored for old scripts).
 
 Login administration only — no crypto material is created or touched here
 (the user bootstraps their own device identity at first login, SEC-08).
@@ -50,12 +50,6 @@ class Command(BaseCommand):
         missing = set(o["role"]) - {r.code for r in roles}
         if missing:
             raise CommandError(f"unknown role(s): {', '.join(sorted(missing))}")
-        perms = {rp.permission.code for r in roles for rp in r.role_permissions.all()}
-        if {"roles.manage", "accounts.manage_users"} <= perms and not o["allow_combined_duties"]:
-            raise CommandError(
-                "roles.manage and accounts.manage_users on the same person breaks separation of duties; "
-                "create two administrators, or pass --allow-combined-duties deliberately."
-            )
 
         temp = generate_temp_password(o["username"])
         with transaction.atomic():

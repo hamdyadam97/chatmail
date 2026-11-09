@@ -34,6 +34,7 @@ class Announcement(models.Model):
         ("users", "موظفون محددون"),
         ("department", "قسم"),
         ("branch", "فرع"),
+        ("branches", "عدة فروع"),
         ("institute", "معهد"),
         ("all", "جميع المعاهد"),
     ]
@@ -62,6 +63,8 @@ class Announcement(models.Model):
     target_department = models.ForeignKey(
         "org.Department", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )
+    # target_type "branches": the chosen branch ids (a regional manager's branches).
+    target_branch_ids = models.JSONField(default=list, blank=True)
     thread = models.OneToOneField("messaging.Conversation", on_delete=models.PROTECT, related_name="announcement")
     content_message = models.OneToOneField(
         "messaging.Message", on_delete=models.PROTECT, null=True, blank=True, related_name="announcement"

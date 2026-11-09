@@ -153,18 +153,21 @@ def test_membership_must_be_consistent(api_client, staff):
     assert resp.status_code == 400
 
 
-def test_branch_manager_moves_staff_within_branch_only(api_client, staff):
+def test_only_the_admin_moves_staff_within_their_scope(api_client, staff):
     url = f"{USERS}{staff['emp'].id}/transfer/"
     dept = staff["department_a"]
-    ok = api_client.post(url, {"institute": str(dept.institute_id), "branch": str(dept.branch_id),
-                               "department": str(dept.id), "job_title": "محاسب"}, format="json", **staff["h_mgr"])
+    body = {"institute": str(dept.institute_id), "branch": str(dept.branch_id), "department": str(dept.id),
+            "job_title": "محاسب"}
+    # a branch manager no longer edits the structure (user decision 2026-11-08)
+    assert api_client.post(url, body, format="json", **staff["h_mgr"]).status_code == 403
+    ok = api_client.post(url, body, format="json", **staff["h_scoped"])
     assert ok.status_code == 201, ok.content
     current = EmployeeMembership.objects.get(user=staff["emp"], is_primary=True)
     assert current.department_id == dept.id
     assert EmployeeMembership.objects.filter(user=staff["emp"], ended_on__isnull=False).count() == 1
     # out of the manager's branch → refused (needs structure perm on the destination)
     out = api_client.post(url, {"institute": str(staff["branch_a2"].institute_id), "branch": str(staff["branch_a2"].id)},
-                          format="json", **staff["h_mgr"])
+                          format="json", **staff["h_scoped"])
     assert out.status_code == 403
     assert AuditLog.objects.filter(action="employee_transferred", target_id=staff["emp"].id).count() == 1
 

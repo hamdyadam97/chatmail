@@ -261,16 +261,16 @@ def test_branch_scope_does_not_cover_institute_level_ops(api_client, user_factor
 
 def test_branch_scope_covers_own_departments(api_client, user_factory, role_factory,
                                              institute_a, branch_a):
+    body = {"institute": str(institute_a.id), "branch": str(branch_a.id), "name": "قسم جديد", "code": "D1"}
     manager = user_factory("mgr_e", membership_unit=branch_a)
     role_factory(manager, "branch_manager", institute=institute_a, branch=branch_a)
-    access = _access(api_client, "mgr_e")
-    response = api_client.post(
-        "/api/v1/org/departments/",
-        {"institute": str(institute_a.id), "branch": str(branch_a.id),
-         "name": "قسم جديد", "code": "D1"},
-        format="json",
-        **auth_headers(access),
-    )
+    # a branch manager no longer edits the structure (user decision 2026-11-08)
+    assert api_client.post("/api/v1/org/departments/", body, format="json",
+                           **auth_headers(_access(api_client, "mgr_e"))).status_code == 403
+    admin = user_factory("adm_e", membership_unit=branch_a)
+    role_factory(admin, "sys_admin", institute=institute_a, branch=branch_a)
+    response = api_client.post("/api/v1/org/departments/", body, format="json",
+                               **auth_headers(_access(api_client, "adm_e")))
     assert response.status_code == 201
     assert Department.objects.filter(code="D1").exists()
 

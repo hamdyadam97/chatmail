@@ -83,16 +83,24 @@ export interface UnitChoice {
   department?: string | null;
 }
 
+export type RoleScope = 'institute' | 'branch' | 'branches' | 'central';
+
 export interface RoleInfo {
   code: string;
   name_ar: string;
+  /** الأدوار الخمسة فقط تُسند؛ القديمة تظهر ما دام أحد يحملها. */
+  assignable: boolean;
+  scope: RoleScope | null;
+  holders: number;
   permissions: Array<{ code: string; name_ar: string }>;
 }
 
 export interface Assignment {
   id: string;
   user: string;
+  full_name: string;
   role: string;
+  role_name: string;
   institute: string | null;
   branch: string | null;
   department: string | null;
@@ -173,7 +181,7 @@ export const adminApi = {
   roleCatalog: () => apiFetch<RoleInfo[]>('/roles/catalog/'),
   assignments: (username?: string) =>
     apiFetch<Assignment[]>(`/roles/assignments/${username ? `?user=${encodeURIComponent(username)}` : ''}`),
-  assign: (body: { user_id: string; role_code: string; institute_id?: string | null; branch_id?: string | null; department_id?: string | null; expires_at?: string | null }) =>
+  assign: (body: { user_id: string; role_code: string; institute_id?: string | null; branch_id?: string | null; branch_ids?: string[]; department_id?: string | null; expires_at?: string | null }) =>
     apiFetch<unknown>('/roles/assignments/', { method: 'POST', body }),
   revokeAssignment: (id: string) => apiFetch<null>(`/roles/assignments/${id}/`, { method: 'DELETE' }),
 };

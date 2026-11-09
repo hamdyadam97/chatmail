@@ -18,6 +18,11 @@ def _user_ref(u) -> dict:
 
 
 def _target_label(a) -> dict:
+    if a.target_type == "branches":
+        from apps.org.models import Branch
+
+        names = list(Branch.objects.filter(id__in=a.target_branch_ids).order_by("name").values_list("name", flat=True))
+        return {"type": a.target_type, "id": None, "name": "، ".join(names)}
     unit = a.target_department or a.target_branch or a.target_institute
     return {"type": a.target_type, "id": str(unit.id) if unit else None, "name": unit.name if unit else None}
 
@@ -61,6 +66,7 @@ class PublishSerializer(serializers.Serializer):
     target_type = serializers.ChoiceField(choices=[c for c, _ in Announcement.TARGETS])
     target_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list, max_length=1000)
+    branch_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list, max_length=500)
     priority = serializers.ChoiceField(choices=[c for c, _ in Announcement.PRIORITIES], default="normal")
     requires_ack = serializers.BooleanField(default=True)
     ack_due_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
@@ -111,6 +117,7 @@ class AnnouncementListCreateView(APIView):
             target_type=d["target_type"],
             target_id=d["target_id"],
             user_ids=d["user_ids"],
+            branch_ids=d["branch_ids"],
             priority=d["priority"],
             requires_ack=d["requires_ack"],
             ack_due_at=d["ack_due_at"],
@@ -139,6 +146,25 @@ class AudiencePreviewSerializer(serializers.Serializer):
     target_type = serializers.ChoiceField(choices=[c for c, _ in Announcement.TARGETS])
     target_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list, max_length=1000)
+    branch_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list, max_length=500)
+
+
+class TargetsView(APIView):
+    """GET: where the caller may publish (the composer offers only these)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        t = services.publish_targets(request.user)
+
+        def unit(u):
+            return {"id": str(u.id), "name": u.name, "code": u.code}
+
+        return Response({
+            "all": t["all"],
+            "institutes": [unit(i) for i in t["institutes"]],
+            "branches": [{**unit(b), "institute": b.institute.name} for b in t["branches"]],
+        })
 
 
 class AudiencePreviewView(APIView):

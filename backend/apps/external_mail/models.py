@@ -15,7 +15,8 @@ from django.db import models
 
 class ExternalMailbox(models.Model):
     """Per-user external address settings. Without a row the address is the
-    username, receiving is on and sending is off."""
+    username, and receiving and sending are both on (user decision: everyone
+    sends externally by default; the admin can turn it off per employee)."""
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, primary_key=True, related_name="external_mailbox"
@@ -23,7 +24,7 @@ class ExternalMailbox(models.Model):
     # Overrides the default local part (= username) so login names need not be public.
     local_part = models.CharField(max_length=64, null=True, blank=True, unique=True)
     receiving_enabled = models.BooleanField(default=True)
-    sending_enabled = models.BooleanField(default=False)
+    sending_enabled = models.BooleanField(default=True)
     # Senders (verified addresses) whose remote images the owner chose to always load.
     image_senders = models.JSONField(default=list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)

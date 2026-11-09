@@ -61,7 +61,13 @@ def _membership_unit(m):
     return m.department or m.branch or m.institute
 
 
-def resolve_target(target_type, target_id):
+def resolve_target(target_type, target_id, branch_ids=None):
+    if target_type == "branches":
+        ids = list(dict.fromkeys(str(b) for b in branch_ids or []))
+        branches = list(Branch.objects.filter(id__in=ids).select_related("institute"))
+        if not ids or len(branches) != len(ids):
+            raise ValidationError({"branch_ids": "اختر فرعًا واحدًا على الأقل من فروع معروفة."})
+        return branches
     model = {"department": Department, "branch": Branch, "institute": Institute}.get(target_type)
     if model is None:
         return None
@@ -87,6 +93,8 @@ def resolve_audience(*, publisher, target_type, unit, user_ids) -> list[str]:
         audience = memberships.filter(department=unit).values_list("user_id", flat=True)
     elif target_type == "branch":
         audience = memberships.filter(branch=unit).values_list("user_id", flat=True)
+    elif target_type == "branches":
+        audience = memberships.filter(branch__in=unit).values_list("user_id", flat=True)
     elif target_type == "institute":
         audience = memberships.filter(institute=unit).values_list("user_id", flat=True)
     elif target_type == "all":
@@ -117,8 +125,31 @@ def require_publish_permission(publisher, target_type, unit, audience) -> None:
             ):
                 raise PermissionDenied("announcements.publish is not granted over every selected employee.")
         return
+    if target_type == "branches":
+        if not all(has_permission(publisher, "announcements.publish", unit=b) for b in unit):
+            raise PermissionDenied("announcements.publish is not granted in every selected branch.")
+        return
     if not has_permission(publisher, "announcements.publish", unit=unit):
         raise PermissionDenied("announcements.publish is not granted in the target unit.")
+
+
+def publish_targets(user) -> dict:
+    """Where `user` may publish: everyone, and which institutes/branches —
+    computed once from their assignments (same rule as has_permission)."""
+    from apps.authorization.services import active_assignments
+
+    grants = list(active_assignments(user).filter(
+        role__role_permissions__permission__code="announcements.publish"
+    ).values_list("institute_id", "branch_id", "department_id"))
+    central = any(i is None and b is None and d is None for i, b, d in grants)
+    inst_ids = {i for i, b, d in grants if i is not None and b is None and d is None}
+    branch_ids = {b for i, b, d in grants if b is not None and d is None}
+    institutes = [i for i in Institute.objects.filter(is_active=True).order_by("name") if central or i.id in inst_ids]
+    branches = [
+        b for b in Branch.objects.filter(is_active=True).select_related("institute").order_by("institute__name", "name")
+        if central or b.institute_id in inst_ids or b.id in branch_ids
+    ]
+    return {"all": central, "institutes": institutes, "branches": branches}
 
 
 # --- visibility ------------------------------------------------------------------------
@@ -145,6 +176,9 @@ def _tracking_unit(announcement):
 def can_track(user, announcement) -> bool:
     if announcement.publisher_id == user.id:
         return True
+    if announcement.target_type == "branches":
+        branches = list(Branch.objects.filter(id__in=announcement.target_branch_ids))
+        return bool(branches) and all(has_permission(user, "announcements.track_ack", unit=b) for b in branches)
     return has_permission(user, "announcements.track_ack", unit=_tracking_unit(announcement))
 
 
@@ -175,16 +209,16 @@ def get_trackable(user, announcement_id) -> Announcement:
 
 # --- publish ------------------------------------------------------------------------------
 
-def preview_audience(*, publisher, target_type, target_id, user_ids) -> list[User]:
+def preview_audience(*, publisher, target_type, target_id, user_ids, branch_ids=None) -> list[User]:
     """Who would receive it (the publisher confirms before publishing)."""
-    unit = resolve_target(target_type, target_id)
+    unit = resolve_target(target_type, target_id, branch_ids)
     audience = resolve_audience(publisher=publisher, target_type=target_type, unit=unit, user_ids=user_ids)
     require_publish_permission(publisher, target_type, unit, audience)
     return list(User.objects.filter(id__in=audience).order_by("full_name", "username"))
 
 
 def publish(*, publisher, target_type, target_id, user_ids, priority, requires_ack, ack_due_at,
-            membership_id, client_ref, title, body) -> tuple[Announcement, bool]:
+            membership_id, client_ref, title, body, branch_ids=None) -> tuple[Announcement, bool]:
     """Resolve the audience, seal {title, body}, issue the number, notify."""
     existing = Announcement.objects.filter(publisher=publisher, client_ref=client_ref).first()
     if existing is not None:
@@ -197,7 +231,7 @@ def publish(*, publisher, target_type, target_id, user_ids, priority, requires_a
     if ack_due_at is not None and (not requires_ack or ack_due_at <= timezone.now()):
         raise ValidationError({"ack_due_at": "الموعد النهائي يتطلب طلب إقرار ويجب أن يكون في المستقبل."})
     membership = resolve_sender_membership(publisher, membership_id)
-    unit = resolve_target(target_type, target_id)
+    unit = resolve_target(target_type, target_id, branch_ids)
     audience = resolve_audience(publisher=publisher, target_type=target_type, unit=unit, user_ids=user_ids)
     require_publish_permission(publisher, target_type, unit, audience)
     content = {"title": title, "body": body or ""}
@@ -220,6 +254,7 @@ def publish(*, publisher, target_type, target_id, user_ids, priority, requires_a
             target_institute=unit if isinstance(unit, Institute) else getattr(unit, "institute", None),
             target_branch=unit if isinstance(unit, Branch) else getattr(unit, "branch", None),
             target_department=unit if isinstance(unit, Department) else None,
+            target_branch_ids=[str(b.id) for b in unit] if target_type == "branches" else [],
             thread=thread,
             content_message=result.message,
             # Which version a recipient acknowledged (integrity evidence).

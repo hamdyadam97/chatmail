@@ -163,8 +163,15 @@ def test_non_recipients_cannot_open(api_client, user_factory, org, who):
     else:
         assign_role(boss, "branch_manager", branch=org["branch_a2"])
     h = auth(api_client, "a_boss")
-    for path in ("", "audience/", "compliance/"):
+    for path in ("", "audience/"):
         assert api_client.get(f"{ANN_URL}{ann['id']}/{path}", **h).status_code == 403
+    # Who read it (metadata, never the content): the admin follows every
+    # announcement (user decision 2026-11-08); another branch's manager does not.
+    compliance = api_client.get(f"{ANN_URL}{ann['id']}/compliance/", **h)
+    if who == "sys_admin":
+        assert compliance.status_code == 200 and "title" not in compliance.content.decode() and "body" not in compliance.json()
+    else:
+        assert compliance.status_code == 403
     thread_id = Announcement.objects.get(id=ann["id"]).thread_id
     assert api_client.get(f"{CONV_URL}{thread_id}/messages/", **h).status_code == 403
 
@@ -228,3 +235,42 @@ def test_audience_preview_matches_publish_and_permission(api_client, org):
     assert {u["username"] for u in r.json()["recipients"]} == {"a_e1", "a_e2", "a_e3"}
     assert not Announcement.objects.exists()  # nothing created
     assert api_client.post(url, body, format="json", **org["h_e1"]).status_code == 403
+
+
+# --- the five roles: who announces where (user decision 2026-11-08) -----------------------
+
+def test_publish_targets_follow_the_role(api_client, user_factory, org, branch_b):
+    t = api_client.get(f"{ANN_URL}targets/", **org["h_pub"]).json()  # branch manager of branch_a
+    assert not t["all"] and t["institutes"] == [] and [b["id"] for b in t["branches"]] == [str(org["branch_a"].id)]
+    assert api_client.get(f"{ANN_URL}targets/", **org["h_e1"]).json() == {"all": False, "institutes": [], "branches": []}
+    exe = make_employee(user_factory, "a_exec", org["branch_a"])
+    assign_role(exe, "executive")
+    t = api_client.get(f"{ANN_URL}targets/", **auth(api_client, "a_exec")).json()
+    assert t["all"] and str(branch_b.id) in {b["id"] for b in t["branches"]}
+    # the executive announces to everyone; a branch manager cannot
+    assert prepare(api_client, auth(api_client, "a_exec"), "all").status_code == 201
+    assert prepare(api_client, org["h_pub"], "all").status_code == 403
+    assert prepare(api_client, org["h_pub"], "branch", org["branch_a2"].id).status_code == 403
+
+
+def test_regional_manager_announces_to_their_branches_together(api_client, user_factory, org, branch_b):
+    rm = make_employee(user_factory, "a_regional", org["branch_a"])
+    for b in (org["branch_a"], branch_b):
+        assign_role(rm, "regional_manager", institute=b.institute, branch=b)
+    h = auth(api_client, "a_regional")
+    t = api_client.get(f"{ANN_URL}targets/", **h).json()
+    assert {b["id"] for b in t["branches"]} == {str(org["branch_a"].id), str(branch_b.id)} and not t["all"]
+
+    resp = prepare(api_client, h, "branches", branch_ids=[str(org["branch_a"].id), str(branch_b.id)])
+    assert resp.status_code == 201, resp.content
+    ann = Announcement.objects.get(id=resp.json()["id"])
+    assert set(ann.recipients.values_list("user__username", flat=True)) == {
+        "a_pub", "a_e1", "a_e2", "a_e3", "a_foreign"}  # not a_other (branch_a2)
+    assert resp.json()["target"]["type"] == "branches" and org["branch_a"].name in resp.json()["target"]["name"]
+    assert api_client.get(f"{ANN_URL}{ann.id}/compliance/", **h).status_code == 200
+    # a branch outside their region spoils the whole request
+    assert prepare(api_client, h, "branches",
+                   branch_ids=[str(org["branch_a"].id), str(org["branch_a2"].id)]).status_code == 403
+    assert prepare(api_client, h, "branches", branch_ids=[]).status_code == 400
+    # one of their branches alone is fine too
+    assert prepare(api_client, h, "branch", branch_b.id).status_code == 201
