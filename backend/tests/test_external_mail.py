@@ -200,6 +200,21 @@ def test_postfix_command_exit_codes(ahmed, monkeypatch):
     assert run(mail(), f"ghost@{DOMAIN}") == 67
 
 
+def test_unexpected_failure_is_retried_and_logs_no_content(ahmed, monkeypatch, capsys):
+    """A crash must never become a permanent bounce: one hard bounce makes the
+    sender's provider block the address for good (seen 2026-11-11)."""
+    def boom(*a, **kw):
+        raise RuntimeError(CANARY)
+
+    monkeypatch.setattr(services, "ingest", boom)
+    monkeypatch.setattr(sys, "stdin", type("S", (), {"buffer": io.BytesIO(mail())})())
+    with pytest.raises(SystemExit) as exc:
+        call_command("ingest_external_mail", "--recipient", f"ahmed@{DOMAIN}")
+    assert exc.value.code == 75
+    err = capsys.readouterr().err
+    assert "RuntimeError" in err and "test_external_mail.py" in err and CANARY not in err
+
+
 def test_recipient_map(ahmed, user_factory, tmp_path):
     user_factory("sara")
     off = user_factory("old")

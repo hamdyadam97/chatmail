@@ -7,6 +7,7 @@ Exit codes follow sysexits(3) so Postfix does the right thing: 0 delivered,
 67 unknown user (bounce), 75 temporary failure (queue and retry), 65 bad data.
 Nothing about the content is printed or logged.
 """
+import os
 import sys
 
 from django.core.management.base import BaseCommand
@@ -34,6 +35,14 @@ class Command(BaseCommand):
             sys.exit(EX_TEMPFAIL)
         except ValidationError:
             sys.exit(EX_DATAERR)
-        except Exception:  # database down etc.: let Postfix retry
+        except Exception as exc:  # database down etc.: let Postfix retry
+            # Postfix writes this line to the mail log. Only the error type and
+            # where it happened — never the exception text, which could quote
+            # the message.
+            tb = exc.__traceback__
+            while tb is not None and tb.tb_next is not None:
+                tb = tb.tb_next
+            where = f"{os.path.basename(tb.tb_frame.f_code.co_filename)}:{tb.tb_lineno}" if tb else "?"
+            sys.stderr.write(f"ingest: temporary failure ({type(exc).__name__} at {where}), will retry\n")
             sys.exit(EX_TEMPFAIL)
         sys.exit(EX_OK)
