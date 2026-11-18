@@ -10,6 +10,8 @@ from rest_framework.views import APIView
 import base64
 
 from .. import services
+from apps.org.labels import with_units
+
 from ..models import Announcement, AnnouncementRecipient
 
 
@@ -177,7 +179,7 @@ class AudiencePreviewView(APIView):
         s = AudiencePreviewSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         users = services.preview_audience(publisher=request.user, **s.validated_data)
-        return Response({"recipients": [_user_ref(u) for u in users]})
+        return Response({"recipients": with_units([_user_ref(u) for u in users])})
 
 
 class AudienceView(APIView):
@@ -189,7 +191,7 @@ class AudienceView(APIView):
         a = services.get_viewable(request.user, announcement_id)
         rows = a.recipients.select_related("user").order_by("user__full_name")
         return Response(
-            {"publisher": _user_ref(a.publisher), "recipients": [_user_ref(r.user) for r in rows]}
+            {"publisher": _user_ref(a.publisher), "recipients": with_units([_user_ref(r.user) for r in rows])}
         )
 
 

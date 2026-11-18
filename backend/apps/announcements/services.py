@@ -361,8 +361,11 @@ def acknowledge(*, user, announcement) -> AnnouncementRecipient:
 # --- compliance + reminders ------------------------------------------------------------------
 
 def compliance(announcement) -> dict:
+    from apps.org.labels import primary_units
+
     now = timezone.now()
     rows = list(announcement.recipients.select_related("user").order_by("user__full_name"))
+    units = primary_units(r.user_id for r in rows)
     overdue = bool(announcement.requires_ack and announcement.ack_due_at and announcement.ack_due_at < now)
     return {
         "total": len(rows),
@@ -372,7 +375,13 @@ def compliance(announcement) -> dict:
         "overdue": sum(1 for r in rows if overdue and not r.acknowledged_at),
         "rows": [
             {
-                "user": {"id": str(r.user_id), "full_name": r.user.full_name, "username": r.user.username},
+                "user": {
+                    "id": str(r.user_id),
+                    "full_name": r.user.full_name,
+                    "username": r.user.username,
+                    "branch": units.get(str(r.user_id), {}).get("branch"),
+                    "institute": units.get(str(r.user_id), {}).get("institute"),
+                },
                 "delivered_at": r.delivered_at.isoformat() if r.delivered_at else None,
                 "read_at": r.read_at.isoformat() if r.read_at else None,
                 "acknowledged_at": r.acknowledged_at.isoformat() if r.acknowledged_at else None,

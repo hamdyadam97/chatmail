@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserMinus, UserPlus } from 'lucide-react';
 import { Button, Label } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
+import { unitLabel } from '../../shared/lib/userUnit';
 import { useAuth } from '../auth/AuthContext';
 import { chatApi, type Conversation } from './api';
 
@@ -68,7 +69,10 @@ export function MemberManager({ conversation }: MemberManagerProps) {
             const known = directory?.find((u) => String(u.id) === String(id));
             return (
               <li key={String(id)} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm">
-                <span>{known?.full_name ?? known?.username ?? `مستخدم ${id}`}</span>
+                <span>
+                  {known?.full_name ?? known?.username ?? `مستخدم ${id}`}
+                  {unitLabel(known) && <span className="text-xs text-gray-500"> — {unitLabel(known)}</span>}
+                </span>
                 {confirmRemove === id ? (
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-red-600">تأكيد الإزالة من المحادثة؟</span>
@@ -109,7 +113,10 @@ export function MemberManager({ conversation }: MemberManagerProps) {
                 className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-sm text-gray-700 hover:bg-gray-50"
                 onClick={() => addMutation.mutate([candidate.id])}
               >
-                <span>{candidate.full_name ?? candidate.username ?? `مستخدم ${candidate.id}`}</span>
+                <span>
+                  {candidate.full_name ?? candidate.username ?? `مستخدم ${candidate.id}`}
+                  {unitLabel(candidate) && <span className="text-xs text-gray-500"> — {unitLabel(candidate)}</span>}
+                </span>
                 <UserPlus className="h-4 w-4 text-primary-600" />
               </button>
             ))}

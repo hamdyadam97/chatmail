@@ -35,6 +35,7 @@ export interface DirectoryUser {
   id: number | string;
   full_name?: string;
   username?: string;
+  primary_membership?: { institute: string; branch: string | null; department: string | null } | null;
 }
 
 export const chatApi = {

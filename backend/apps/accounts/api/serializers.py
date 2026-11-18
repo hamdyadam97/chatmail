@@ -56,11 +56,9 @@ class DirectoryUserSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_primary_membership(self, obj):
-        membership = (
-            obj.memberships.filter(is_primary=True)
-            .select_related("institute", "branch", "department")
-            .first()
-        )
+        # memberships are prefetched by the directory view; filtering in Python
+        # keeps it one query for the whole list.
+        membership = next((m for m in obj.memberships.all() if m.is_primary), None)
         if membership is None:
             return None
         return {

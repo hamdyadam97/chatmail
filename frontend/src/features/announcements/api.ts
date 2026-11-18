@@ -8,6 +8,9 @@ export interface UserRef {
   id: string;
   full_name: string;
   username: string;
+  /** فرع الموظف الرئيسي ومعهده (في التقرير وقوائم الجمهور). */
+  branch?: string | null;
+  institute?: string | null;
 }
 
 export interface Announcement {

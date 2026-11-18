@@ -397,7 +397,9 @@ async function main() {
     check('رسالة جديدة في لوحة القراءة والقائمة باقية', listStays && (await ahmed.page.locator('#subject').isVisible()));
     if (process.env.SHOTS) console.log(`    لقطة الإنشاء: ${await shot(ahmed, 'compose')}`);
     await ahmed.page.fill('#to', 'محمد');
-    await ahmed.page.locator('[role="listbox"] [role="option"]:has-text("محمد الشهري")').first().click();
+    const option = ahmed.page.locator('[role="listbox"] [role="option"]:has-text("محمد الشهري")').first();
+    check('اقتراح المستلم يعرض الاسم الكامل مع الفرع', (await option.innerText().catch(() => '')).includes('فرع الرياض'));
+    await option.click();
     await ahmed.page.fill('#subject', subject);
     await ahmed.page.fill('#body', body);
     await ahmed.page.getByRole('button', { name: 'إرسال', exact: true }).click();

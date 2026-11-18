@@ -190,6 +190,11 @@ def test_compliance_visible_to_publisher_and_trackers_only(api_client, user_fact
     api_client.get(f"{ANN_URL}{ann['id']}/", **org["h_e1"])  # delivered
     rep = api_client.get(f"{ANN_URL}{ann['id']}/compliance/", **org["h_pub"]).json()
     assert (rep["total"], rep["delivered"], rep["acknowledged"]) == (3, 1, 0)
+    # each row names the employee's branch (department members: their branch too)
+    assert {r["user"]["branch"] for r in rep["rows"]} == {org["branch_a"].name}
+    assert {r["user"]["institute"] for r in rep["rows"]} == {org["branch_a"].institute.name}
+    audience = api_client.get(f"{ANN_URL}{ann['id']}/audience/", **org["h_e1"]).json()
+    assert {r["branch"] for r in audience["recipients"]} == {org["branch_a"].name}
     assert api_client.get(f"{ANN_URL}{ann['id']}/compliance/", **org["h_e1"]).status_code == 403
     head = make_employee(user_factory, "a_head", org["branch_a"])
     assign_role(head, "dept_head", branch=org["branch_a"])  # holds announcements.track_ack

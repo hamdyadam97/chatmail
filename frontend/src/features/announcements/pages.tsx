@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BellRing, CheckCircle2, Megaphone, Plus, Users } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
+import { nameWithUnit, unitLabel } from '../../shared/lib/userUnit';
 import { toUserMessage } from '../../shared/api';
 import { PrivacyNote, RecipientPicker, formatDate } from '../correspondence/components';
 import {
@@ -262,7 +263,7 @@ function ComposeForm() {
             لكل المستلمين.
           </p>
           <div className="max-h-72 overflow-y-auto rounded-lg border border-gray-200 p-3 text-sm text-gray-700">
-            {review.recipients.map((u) => u.full_name).join('، ')}
+            {review.recipients.map((u) => nameWithUnit(u)).join('، ')}
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex justify-end gap-2">
@@ -456,6 +457,7 @@ function ComplianceCard({ a }: { a: Announcement }) {
           <thead className="sticky top-0 bg-white text-xs text-gray-500">
             <tr>
               <th className="py-2 text-start font-medium">الموظف</th>
+              <th className="py-2 text-start font-medium">الفرع</th>
               <th className="py-2 text-start font-medium">الاستلام</th>
               <th className="py-2 text-start font-medium">الاطلاع</th>
               <th className="py-2 text-start font-medium">الإقرار</th>
@@ -466,6 +468,7 @@ function ComplianceCard({ a }: { a: Announcement }) {
             {data.rows.map((r) => (
               <tr key={r.user.id} className={cn('border-t border-gray-100', r.overdue && 'bg-red-50/50')}>
                 <td className="py-2">{r.user.full_name}</td>
+                <td className="py-2 text-xs text-gray-600">{unitLabel(r.user) || '—'}</td>
                 <td className="py-2 text-xs text-gray-600">{formatDate(r.delivered_at)}</td>
                 <td className="py-2 text-xs text-gray-600">{formatDate(r.read_at)}</td>
                 <td className={cn('py-2 text-xs', r.acknowledged_at ? 'text-emerald-700' : r.overdue ? 'text-red-600' : 'text-gray-400')}>

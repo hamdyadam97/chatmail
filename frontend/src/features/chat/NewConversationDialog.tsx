@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { Button, Input, Label, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
+import { unitLabel } from '../../shared/lib/userUnit';
 import { useAuth } from '../auth/AuthContext';
 import { chatApi, type Conversation } from './api';
 
@@ -113,6 +114,7 @@ export function NewConversationDialog({ type, onClose, onCreated }: NewConversat
                 className="h-4 w-4 accent-primary-600"
               />
               <span>{candidate.full_name ?? candidate.username ?? `مستخدم ${candidate.id}`}</span>
+              {unitLabel(candidate) && <span className="text-xs text-gray-500">— {unitLabel(candidate)}</span>}
               {candidate.full_name && candidate.username && (
                 <span className="text-xs text-gray-400">({candidate.username})</span>
               )}

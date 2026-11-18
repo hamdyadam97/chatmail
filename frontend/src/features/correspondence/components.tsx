@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Lock, X } from 'lucide-react';
 import { Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
+import { unitLabel } from '../../shared/lib/userUnit';
 import { useAuth } from '../auth/AuthContext';
 import { chatApi } from '../chat/api';
 import {
@@ -43,7 +44,8 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id, inli
         (u) =>
           !q ||
           (u.full_name ?? '').toLowerCase().includes(q) ||
-          (u.username ?? '').toLowerCase().includes(q),
+          (u.username ?? '').toLowerCase().includes(q) ||
+          unitLabel(u).toLowerCase().includes(q),
       )
       .slice(0, 8);
   }, [users, hidden, query]);
@@ -70,6 +72,7 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id, inli
           return (
             <span key={uid} className="flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-xs text-primary-700">
               {u?.full_name ?? u?.username ?? uid}
+              {unitLabel(u) && <span className="text-primary-400">— {unitLabel(u)}</span>}
               <button
                 type="button"
                 aria-label="إزالة"
@@ -116,10 +119,15 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id, inli
                 onChange([...value, String(u.id)]);
                 setQuery('');
               }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm text-gray-700 hover:bg-gray-50"
+              className="flex w-full items-start gap-2 px-3 py-2 text-start text-sm text-gray-700 hover:bg-gray-50"
             >
-              <span>{u.full_name ?? u.username}</span>
-              {u.full_name && u.username && <span className="text-xs text-gray-400">({u.username})</span>}
+              <span className="min-w-0 flex-1">
+                <span className="block break-words">{u.full_name ?? u.username}</span>
+                <span className="block text-xs text-gray-500">
+                  {unitLabel(u) || 'بلا فرع'}
+                  {u.full_name && u.username && <span className="text-gray-400"> · {u.username}</span>}
+                </span>
+              </span>
             </button>
           ))}
         </div>
