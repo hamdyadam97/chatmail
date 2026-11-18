@@ -176,6 +176,23 @@ class UserDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        if "first_name" in data or "last_name" in data:
+            first = data.get("first_name", target.first_name)
+            last = data.get("last_name", target.last_name)
+            if (first, last) != (target.first_name, target.last_name):
+                target.first_name, target.last_name = first, last
+                # The name everyone sees: first + family.
+                target.full_name = target.get_full_name() or target.username
+                target.save(update_fields=["first_name", "last_name", "full_name", "updated_at"])
+                log(
+                    actor=request.user,
+                    action="user_renamed",
+                    target_type="user",
+                    target_id=target.id,
+                    org_scope=primary_org_scope(request.user),
+                    **request_context(request),
+                )
+
         if "is_active" in data and data["is_active"] != target.is_active:
             if data["is_active"]:
                 target.is_active = True

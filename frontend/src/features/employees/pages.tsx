@@ -222,6 +222,43 @@ function ExternalMailboxSection({ userId }: { userId: string }) {
   );
 }
 
+/** الاسم الأول + اسم العائلة = الاسم الذي يراه الجميع (مع الفرع). */
+function NameEditor({ user, onSaved, onError }: { user: ManagedUser; onSaved: () => void; onError: (e: unknown) => void }) {
+  const [first, setFirst] = useState(user.first_name || '');
+  const [last, setLast] = useState(user.last_name || '');
+  const changed = first.trim() !== (user.first_name || '') || last.trim() !== (user.last_name || '');
+  const save = useMutation({
+    mutationFn: () => adminApi.rename(user.id, first.trim(), last.trim()),
+    onSuccess: onSaved,
+    onError,
+  });
+  const preview = [first.trim(), last.trim()].filter(Boolean).join(' ');
+  return (
+    <form
+      className="grid grid-cols-1 items-end gap-3 rounded-lg border border-gray-200 p-3 md:grid-cols-[1fr_1fr_auto]"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (first.trim()) save.mutate();
+      }}
+    >
+      <div>
+        <Label htmlFor="edit-first">الاسم الأول</Label>
+        <Input id="edit-first" value={first} onChange={(e) => setFirst(e.target.value)} />
+      </div>
+      <div>
+        <Label htmlFor="edit-last">اسم العائلة</Label>
+        <Input id="edit-last" value={last} onChange={(e) => setLast(e.target.value)} />
+      </div>
+      <Button type="submit" size="sm" disabled={!changed || !first.trim()} loading={save.isPending}>
+        حفظ الاسم
+      </Button>
+      <p className="text-xs text-gray-500 md:col-span-3">
+        يظهر للناس: <strong className="text-gray-800">{preview || user.username}</strong>
+      </p>
+    </form>
+  );
+}
+
 function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClose: () => void; onChanged: () => void }) {
   const queryClient = useQueryClient();
   const { data: memberships } = useQuery({ queryKey: ['admin', 'memberships', user.id], queryFn: () => adminApi.memberships(user.id) });
@@ -291,6 +328,15 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
           <p><span className="text-gray-500">التحقق الثنائي: </span>{user.mfa_enabled ? 'مفعّل' : 'غير مفعّل'}</p>
           <p><span className="text-gray-500">جلسات نشطة: </span>{user.active_sessions ?? '—'}</p>
         </div>
+        <NameEditor
+          user={user}
+          onSaved={() => {
+            setMessage({ tone: 'ok', text: 'حُفظ الاسم — يظهر للجميع بهذا الشكل مع فرعه.' });
+            refresh();
+            void queryClient.invalidateQueries({ queryKey: ['directory-users'] });
+          }}
+          onError={fail}
+        />
         <p className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
           إدارة الحساب لا تمنح أي اطلاع على مراسلات الموظف أو محادثاته أو مفاتيحه — لا توجد هذه القدرة في النظام.
         </p>
@@ -576,7 +622,7 @@ export function Employees() {
       {selected && (
         <EmployeeDetail
           key={selected.id}
-          user={selected}
+          user={data?.results.find((u) => u.id === selected.id) ?? selected}
           onClose={() => setSelected(null)}
           onChanged={() => {
             void refresh();

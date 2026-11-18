@@ -177,6 +177,29 @@ def test_deactivate_revokes_sessions_and_blocks_login(api_client, user_factory, 
     assert login(api_client, "to_deactivate").status_code == 200
 
 
+def test_admin_edits_first_and_family_name(api_client, user_factory, role_factory):
+    admin = user_factory("sysadmin_rn")
+    role_factory(admin, "sys_admin")
+    target = user_factory("to_rename")
+    access = _access(api_client, "sysadmin_rn")
+
+    r = api_client.patch(f"{USERS_URL}{target.id}/", {"first_name": " وسام ", "last_name": "أبو  خضر"},
+                         format="json", **auth_headers(access))
+    assert r.status_code == 200
+    assert r.json()["full_name"] == "وسام أبو خضر"  # what everyone sees
+    target.refresh_from_db()
+    assert (target.first_name, target.last_name) == ("وسام", "أبو خضر")
+    assert AuditLog.objects.filter(action="user_renamed").count() == 1
+    # an empty first name is rejected
+    bad = api_client.patch(f"{USERS_URL}{target.id}/", {"first_name": "  "}, format="json", **auth_headers(access))
+    assert bad.status_code == 400
+    # a plain employee cannot rename anyone
+    other = user_factory("plain_rn")
+    h = auth_headers(_access(api_client, "plain_rn"))
+    assert api_client.patch(f"{USERS_URL}{target.id}/", {"first_name": "x"}, format="json", **h).status_code == 403
+    assert other.full_name != "x"
+
+
 # --- org structure CRUD ----------------------------------------------------
 
 def test_org_lists_open_to_authenticated(api_client, user_factory):

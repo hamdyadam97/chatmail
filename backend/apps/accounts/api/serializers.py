@@ -136,7 +136,17 @@ class AdminUserCreateSerializer(serializers.Serializer):
 
 
 class AdminUserUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=128, required=False, allow_blank=True, trim_whitespace=True)
+    last_name = serializers.CharField(max_length=128, required=False, allow_blank=True, trim_whitespace=True)
     is_active = serializers.BooleanField(required=False)
+
+    def validate_first_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("الاسم الأول مطلوب.")
+        return " ".join(value.split())
+
+    def validate_last_name(self, value):
+        return " ".join(value.split())
     deactivation_reason = serializers.CharField(
         max_length=255, required=False, allow_blank=True, default=""
     )

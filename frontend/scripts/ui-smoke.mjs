@@ -386,6 +386,23 @@ async function main() {
     }
     check('الموظفون: تصدير Excel بنفس فلتر الفرع', empXlsxOk);
 
+    // تعديل الاسم الأول واسم العائلة (المستورد انقسم تلقائيًا) — وهو ما يظهر للناس مع الفرع.
+    await rows().filter({ hasText: 'salma.imp' }).first().click({ timeout: 15000 }).catch(() => undefined);
+    const firstIn = admin.page.locator('#edit-first');
+    await firstIn.waitFor({ timeout: 10000 }).catch(() => undefined);
+    const splitOk = (await firstIn.inputValue().catch(() => '')) === 'سلمى' &&
+      (await admin.page.locator('#edit-last').inputValue().catch(() => '')) === 'المستوردة';
+    await admin.page.fill('#edit-last', 'المعدّلة').catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'حفظ الاسم' }).click({ timeout: 10000 }).catch(() => undefined);
+    const renamed = await admin.page.locator('text=حُفظ الاسم').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    await admin.page.locator('[role="dialog"] button[aria-label="إغلاق"]').first().click({ timeout: 5000 }).catch(() => undefined);
+    await ahmed.page.goto(`${UI}/mail/inbox`);
+    await ahmed.page.click('button:has-text("رسالة جديدة")');
+    await ahmed.page.fill('#to', 'سلمى').catch(() => undefined);
+    const salmaOpt = ahmed.page.locator('[role="listbox"] [role="option"]:has-text("سلمى المعدّلة")').first();
+    const shownOk = (await salmaOpt.innerText({ timeout: 10000 }).catch(() => '')).includes('فرع الرياض');
+    check('الموظفون: تعديل الاسم الأول والعائلة يظهر للناس مع الفرع', splitOk && renamed && shownOk);
+
     section('2) مراسلة عبر الواجهة');
     const subject = `اختبار واجهة ${Date.now()}`;
     const body = 'نص سري لا يراه غير أطرافه — سطر ثانٍ للتأكد.';

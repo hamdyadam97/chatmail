@@ -125,6 +125,9 @@ export const adminApi = {
     optional_email?: string | null;
     membership?: { institute_id: string; branch_id?: string | null; department_id?: string | null; job_title?: string; employment_type?: EmploymentType };
   }) => apiFetch<{ id: string; temp_password?: string }>('/users/', { method: 'POST', body }),
+  /** الاسم الذي يراه الجميع = الاسم الأول + اسم العائلة. */
+  rename: (id: string, firstName: string, lastName: string) =>
+    apiFetch<unknown>(`/users/${id}/`, { method: 'PATCH', body: { first_name: firstName, last_name: lastName } }),
   setActive: (id: string, isActive: boolean, reason = '') =>
     apiFetch<unknown>(`/users/${id}/`, { method: 'PATCH', body: { is_active: isActive, deactivation_reason: reason } }),
   /** استيراد موظفين من Excel: معاينة (apply=false) ثم إنشاء بنفس الملف. */

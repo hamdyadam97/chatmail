@@ -195,7 +195,9 @@ def apply(rows, new_branches, *, admin, via, request_ctx=None) -> int:
             if p["status"] not in (CREATE, CREATE_NO_BRANCH):
                 continue
             password, shared = temp_password_for(p["username"])
-            user = User(username=p["username"], first_name=p["name"], full_name=p["name"] or p["username"],
+            parts = (p["name"] or "").split()  # first word + family (the rest)
+            user = User(username=p["username"], first_name=parts[0] if parts else "", last_name=" ".join(parts[1:]),
+                        full_name=p["name"] or p["username"],
                         must_change_password=True, password_changed_at=timezone.now())
             user.set_password(password)
             user.save()
