@@ -5,6 +5,9 @@ correspondence only). There is no role that sees approval requests outside
 that rule.
 """
 
+import base64
+import binascii
+
 from django.db import transaction
 from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -13,9 +16,10 @@ from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
+from apps.audit.services import log
 from apps.authorization.services import has_permission
 from apps.correspondence.models import Correspondence
-from apps.correspondence.services import get_readable
+from apps.correspondence.services import correspondence_content, file_meta, get_readable
 from apps.org.models import Branch, Department, Institute
 
 from .. import services
@@ -64,6 +68,8 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         )
     slot = services.available_slot(viewer, req)
     c = req.correspondence
+    signed_request = services.is_signed_request(req)
+    content = (correspondence_content(c) or {}) if signed_request else {}
     return {
         "id": str(req.id),
         "correspondence": {"id": str(c.id), "reference_number": c.reference_number},
@@ -77,6 +83,13 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         "completed_at": req.completed_at.isoformat() if req.completed_at else None,
         "steps": steps,
         "my_slot": {"slot_user_id": slot[0], "delegated": slot[1] is not None} if slot else None,
+        # Signed requests (طلب صرف، إجازة…): the type, the title and the document.
+        "signable": signed_request,
+        "workflow_name": req.workflow.name if req.workflow_id else None,
+        "title": content.get("subject") if signed_request else None,
+        "source_file": file_meta(req.source_file) if req.source_file_id else None,
+        "signed_file": file_meta(req.signed_file) if req.signed_file_id else None,
+        "signature_count": req.signature_count,
     }
 
 
@@ -143,6 +156,8 @@ class ApprovalDetailView(APIView):
 
 class DecideSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=list(services.DECISIONS))
+    # Approving a signed request stamps the saved signature: current password required.
+    password = serializers.CharField(required=False, allow_blank=True, write_only=True, trim_whitespace=False)
 
 
 class DecideView(APIView):
@@ -153,7 +168,8 @@ class DecideView(APIView):
         serializer = DecideSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         decision = services.decide(
-            user=request.user, request_id=request_id, decision=serializer.validated_data["decision"]
+            user=request.user, request_id=request_id, decision=serializer.validated_data["decision"],
+            password=serializer.validated_data.get("password"),
         )
         return Response(request_dict(decision.request, request.user), status=status.HTTP_201_CREATED)
 
@@ -229,7 +245,7 @@ class _TemplateStep(serializers.Serializer):
         for sel in value:
             if "user" in sel:
                 continue
-            if sel.get("scope") not in ("sender_institute", "sender_branch", "sender_department") or not sel.get("role"):
+            if sel.get("scope") not in ("central", "sender_institute", "sender_branch", "sender_department") or not sel.get("role"):
                 raise serializers.ValidationError("selector: {user} أو {role, scope}.")
         return value
 
@@ -239,6 +255,7 @@ class WorkflowSerializer(serializers.Serializer):
     institute_id = serializers.UUIDField(required=False, allow_null=True)
     branch_id = serializers.UUIDField(required=False, allow_null=True)
     department_id = serializers.UUIDField(required=False, allow_null=True)
+    signable = serializers.BooleanField(default=False)
     steps = _TemplateStep(many=True, allow_empty=False, max_length=services.MAX_STEPS)
 
 
@@ -250,6 +267,7 @@ def _workflow_dict(w) -> dict:
         "institute_id": str(w.institute_id) if w.institute_id else None,
         "branch_id": str(w.branch_id) if w.branch_id else None,
         "department_id": str(w.department_id) if w.department_id else None,
+        "signable": w.signable,
         "steps": [
             {"step_order": s.step_order, "type": s.step_type, "approver_selectors": s.approver_selectors}
             for s in w.steps.order_by("step_order")
@@ -262,6 +280,8 @@ class WorkflowListCreateView(APIView):
 
     def get(self, request):
         qs = ApprovalWorkflow.objects.filter(is_active=True).prefetch_related("steps").order_by("name")
+        if request.query_params.get("signable") in ("0", "1"):
+            qs = qs.filter(signable=request.query_params["signable"] == "1")
         return Response([_workflow_dict(w) for w in qs])
 
     def post(self, request):
@@ -285,6 +305,7 @@ class WorkflowListCreateView(APIView):
                 institute=unit if isinstance(unit, Institute) else getattr(unit, "institute", None),
                 branch=unit if isinstance(unit, Branch) else getattr(unit, "branch", None),
                 department=unit if isinstance(unit, Department) else None,
+                signable=data["signable"],
                 created_by=request.user,
             )
             for i, step in enumerate(data["steps"], start=1):
@@ -292,3 +313,90 @@ class WorkflowListCreateView(APIView):
                     workflow=w, step_order=i, step_type=step["type"], approver_selectors=step["approver_selectors"]
                 )
         return Response(_workflow_dict(w), status=status.HTTP_201_CREATED)
+
+
+def _workflow_unit(w):
+    return w.department or w.branch or w.institute
+
+
+class WorkflowDetailView(APIView):
+    """PATCH {is_active: false}: retire a workflow / request type (approvals.define in its unit)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, workflow_id):
+        w = ApprovalWorkflow.objects.filter(id=workflow_id).first()
+        if w is None or not has_permission(request.user, "approvals.define", unit=_workflow_unit(w)):
+            raise PermissionDenied("approvals.define is not granted in this unit.")
+        if request.data.get("is_active") is False and w.is_active:
+            w.is_active = False
+            w.save(update_fields=["is_active"])
+            log(actor=request.user, action="approval_workflow_retired", target_type="approval_workflow", target_id=w.id)
+        return Response(_workflow_dict(w))
+
+
+# --- signed requests (طلب صرف، إجازة…) ------------------------------------------------------------
+
+class RequestTypesView(APIView):
+    """GET: the signed request types the caller may file."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response([_workflow_dict(w) for w in services.request_types(request.user)])
+
+
+class FileRequestThrottle(SimpleRateThrottle):
+    scope = "approval_file_request"
+    rate = "20/hour"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": str(request.user.pk)}
+
+
+class FileRequestView(APIView):
+    """POST multipart {workflow_id, title, note, file}: «طلب جديد»."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [FileRequestThrottle]
+
+    def post(self, request):
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"file": "أرفق ملف الطلب."})
+        if upload.size > services.MAX_REQUEST_FILE_BYTES:
+            raise ValidationError({"file": "الملف أكبر من 15 م.ب."})
+        req = services.file_request(
+            requester=request.user,
+            workflow_id=request.data.get("workflow_id"),
+            title=request.data.get("title") or "",
+            note=request.data.get("note") or "",
+            data=upload.read(),
+            filename=upload.name or "",
+        )
+        return Response(request_dict(req, request.user), status=status.HTTP_201_CREATED)
+
+
+class SignatureView(APIView):
+    """The caller's own saved signature: GET (PNG as base64), PUT {image}, DELETE."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        png = services.signature_png(request.user)
+        return Response({"has_signature": png is not None, "image": base64.b64encode(png).decode() if png else None})
+
+    def put(self, request):
+        raw = str(request.data.get("image") or "")
+        if raw.startswith("data:"):
+            raw = raw.split(",", 1)[-1]
+        try:
+            data = base64.b64decode(raw, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValidationError({"image": "صورة غير صالحة."})
+        services.save_signature(request.user, data)
+        return self.get(request)
+
+    def delete(self, request):
+        services.delete_signature(request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)

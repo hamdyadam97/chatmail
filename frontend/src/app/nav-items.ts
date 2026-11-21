@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu, UserRound } from 'lucide-react';
+import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu, UserRound, FileSignature } from 'lucide-react';
 
 export interface RailItem {
   to: string;
@@ -12,7 +12,7 @@ export interface RailItem {
 }
 
 /** مسارات قسم الإدارة — لا تُفتح لغير مدير النظام والمدير التنفيذي. */
-export const ADMIN_PATHS = ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/reports', '/audit-logs', '/login-approvals'];
+export const ADMIN_PATHS = ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/request-types', '/reports', '/audit-logs', '/login-approvals'];
 /** الأرشيف ضمن القسم في الشريط، لكن رابطه يبقى لضابط الأرشيف (الخادم لا يعرضه إلا للضباط). */
 const ADMIN_MATCH = [...ADMIN_PATHS, '/archive'];
 
@@ -67,6 +67,7 @@ export const ADMIN_ITEMS: HubItem[] = [
   { to: '/branches', label: 'الفروع', description: 'فروع كل معهد', icon: Network },
   { to: '/departments', label: 'الأقسام', description: 'شجرة الأقسام', icon: FolderTree },
   { to: '/roles', label: 'الأدوار والصلاحيات', description: 'ما يمنحه كل دور والإسنادات', icon: Lock },
+  { to: '/request-types', label: 'أنواع الطلبات', description: 'طلب صرف، إجازة… ومن يوقّع كل نوع', icon: FileSignature },
   { to: '/reports', label: 'التقارير', description: 'أعداد وأزمنة مجمّعة وحالة الخدمات', icon: BarChart3 },
   { to: '/login-approvals', label: 'طلبات الدخول', description: 'أكواد الدخول من الأجهزة الجديدة', icon: KeyRound },
   { to: '/audit-logs', label: 'سجل التدقيق', description: 'لمراقب الأمن المعلن', icon: ScrollText },

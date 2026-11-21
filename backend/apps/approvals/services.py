@@ -87,13 +87,20 @@ def _participant_ids(correspondence) -> set[str]:
 # --- step specs --------------------------------------------------------------------
 
 def _resolve_selector(selector: dict, correspondence) -> list[str]:
+    return _resolve_for_membership(selector, correspondence.sender_membership)
+
+
+def _resolve_for_membership(selector: dict, membership) -> list[str]:
+    """Approver ids for one selector, relative to the requester's unit.
+    scope "central" = a centrally assigned role (the executive, the admin)."""
     if "user" in selector:
         return [str(selector["user"])]
     role = selector.get("role")
     scope = selector.get("scope")
-    membership = correspondence.sender_membership
-    filters = {"role__code": role}
-    if scope == "sender_institute":
+    filters = {"role__code": role, "user__is_active": True}
+    if scope == "central":
+        filters.update(institute__isnull=True, branch__isnull=True, department__isnull=True)
+    elif scope == "sender_institute":
         filters.update(institute_id=membership.institute_id, branch__isnull=True, department__isnull=True)
     elif scope == "sender_branch" and membership.branch_id:
         filters.update(branch_id=membership.branch_id, department__isnull=True)
@@ -282,10 +289,21 @@ def available_slot(user, req, step=None):
 DECISIONS = ("approved", "rejected", "returned")
 
 
-def decide(*, user, request_id, decision: str) -> ApprovalDecision:
+def is_signed_request(req) -> bool:
+    return bool(req.source_file_id and req.workflow_id and req.workflow.signable)
+
+
+def decide(*, user, request_id, decision: str, password: str | None = None) -> ApprovalDecision:
     req = get_viewable(user, request_id)
     if decision not in DECISIONS:
         raise ValidationError({"decision": "قرار غير معروف."})
+    signing = decision == "approved" and is_signed_request(req)
+    if signing:
+        # Approving a signed request stamps the saved signature: confirm it is the approver.
+        if not user.check_password(password or ""):
+            raise ValidationError({"password": "كلمة المرور غير صحيحة."})
+        if signature_png(user) is None:
+            raise ValidationError({"signature": "احفظ توقيعك أولًا."})
     with transaction.atomic():
         req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
         if req.status != "pending":
@@ -308,6 +326,8 @@ def decide(*, user, request_id, decision: str) -> ApprovalDecision:
                 )
         except IntegrityError:
             raise Conflict("سبق اتخاذ قرار في هذه الخانة.")
+        if signing:
+            _sign(req, user, delegation)
         _advance(req, step, row)
 
     log(
@@ -319,9 +339,143 @@ def decide(*, user, request_id, decision: str) -> ApprovalDecision:
             "decision": row.decision,
             "step_order": step.step_order,
             "delegated": delegation is not None,
+            "signed": signing,
         },
     )
     return row
+
+
+# --- signed requests (user decision 2026-11-21) -----------------------------------------------
+
+ROLE_PRIORITY = ["executive", "sys_admin", "regional_manager", "branch_manager"]
+
+
+def _role_label(user) -> str:
+    from apps.authorization.services import active_assignments
+
+    roles = {a.role.code: a.role.name_ar for a in active_assignments(user)}
+    for code in ROLE_PRIORITY:
+        if code in roles:
+            return roles[code]
+    return next(iter(roles.values()), "")
+
+
+def signature_png(user) -> bytes | None:
+    from apps import vault
+
+    from .models import UserSignature
+
+    row = UserSignature.objects.filter(user=user).first()
+    if row is None:
+        return None
+    try:
+        return vault.open_(bytes(row.image_enc), purpose="signature", owner=user.id)
+    except vault.VaultError:
+        return None
+
+
+def save_signature(user, data: bytes) -> None:
+    from apps import vault
+
+    from . import signing
+    from .models import UserSignature
+
+    png = signing.clean_signature(data)
+    UserSignature.objects.update_or_create(
+        user=user, defaults={"image_enc": vault.seal(png, purpose="signature", owner=user.id)}
+    )
+    log(actor=user, action="signature_saved", target_type="user", target_id=user.id)
+
+
+def delete_signature(user) -> None:
+    from .models import UserSignature
+
+    if UserSignature.objects.filter(user=user).delete()[0]:
+        log(actor=user, action="signature_deleted", target_type="user", target_id=user.id)
+
+
+def _sign(req, user, delegation) -> None:
+    """Stamp `user`'s signature on the request's document (inside decide())."""
+    from apps.correspondence.services import read_blob, store_blob
+
+    from . import signing
+
+    base = req.signed_file or req.source_file
+    role = _role_label(user)
+    if delegation is not None:
+        role = f"بالتفويض عن {delegation.delegator.full_name}"
+    when = timezone.localtime().strftime("%Y-%m-%d %H:%M")
+    reference = req.correspondence.reference_number or ""
+    pdf = signing.stamp(
+        read_blob(base), signature_png=signature_png(user), name=user.full_name or user.username,
+        role=role, when=when, reference=reference, slot=req.signature_count,
+    )
+    stored = store_blob(user, pdf, name=f"{reference or 'طلب'} - موقّع.pdf", mime="application/pdf")
+    req.signed_file = stored
+    req.signature_count += 1
+    req.save(update_fields=["signed_file", "signature_count"])
+
+
+MAX_REQUEST_FILE_BYTES = 15 * 1024 * 1024
+
+
+def request_types(user) -> list[ApprovalWorkflow]:
+    """Signed request types the user may file (global, or of their own unit)."""
+    from apps.correspondence.services import resolve_sender_membership
+
+    try:
+        m = resolve_sender_membership(user, None)
+    except Exception:
+        return []
+    return [
+        w for w in ApprovalWorkflow.objects.filter(is_active=True, signable=True).prefetch_related("steps").order_by("name")
+        if (w.institute_id in (None, m.institute_id)) and (w.branch_id in (None, m.branch_id))
+        and (w.department_id in (None, m.department_id))
+    ]
+
+
+def file_request(*, requester, workflow_id, title: str, note: str, data: bytes, filename: str) -> ApprovalRequest:
+    """«طلب جديد»: the document goes as a correspondence to every approver of
+    the request type (so they can read it), then the approval runs on it."""
+    import uuid as _uuid
+
+    from apps.correspondence.models import Correspondence
+    from apps.correspondence.services import create_correspondence, resolve_sender_membership, store_blob
+
+    from . import signing
+
+    workflow = next((w for w in request_types(requester) if str(w.id) == str(workflow_id)), None)
+    if workflow is None:
+        raise ValidationError({"workflow_id": "نوع طلب غير متاح لك."})
+    title = " ".join((title or "").split())[:200]
+    if not title:
+        raise ValidationError({"title": "اكتب عنوان الطلب."})
+    if not data or len(data) > MAX_REQUEST_FILE_BYTES:
+        raise ValidationError({"file": "أرفق ملف الطلب (حتى 15 م.ب)."})
+    membership = resolve_sender_membership(requester, None)
+    approvers: list[str] = []
+    for tpl in workflow.steps.order_by("step_order"):
+        ids = [i for sel in tpl.approver_selectors for i in _resolve_for_membership(sel, membership)]
+        if not ids:
+            raise ValidationError({"workflow_id": f"لا يوجد معتمد للخطوة {tpl.step_order} لفرعك — راجع مدير النظام."})
+        approvers.extend(i for i in ids if i not in approvers)
+    if str(requester.id) in approvers:
+        raise ValidationError({"workflow_id": "أنت من معتمدي هذا الطلب — لا يعتمد أحد طلبه بنفسه."})
+
+    pdf = signing.to_pdf(data)
+    base_name = (filename or "طلب").rsplit(".", 1)[0][:150]
+    stored = store_blob(requester, pdf, name=f"{base_name}.pdf", mime="application/pdf")
+    with transaction.atomic():
+        result = create_correspondence(
+            requester=requester, to_ids=approvers, cc_ids=[], bcc_ids=[], priority="normal",
+            classification="normal", due_date=None, membership_id=membership.id, client_ref=_uuid.uuid4(),
+            subject=f"{workflow.name}: {title}", body=note or "", attachment_ids=[str(stored.id)], send=True,
+        )
+        corr = Correspondence.objects.select_related("content_message", "sender_membership").get(pk=result.correspondence.pk)
+        req = create_request(requester=requester, correspondence=corr, workflow_id=workflow.id)
+        req.source_file = stored
+        req.save(update_fields=["source_file"])
+    return req
 
 
 def _advance(req, step, decision) -> None:

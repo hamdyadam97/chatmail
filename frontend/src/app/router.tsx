@@ -18,6 +18,7 @@ import { AuditPages } from '../features/audit/pages';
 import { SearchPage } from '../features/search/pages';
 import { AdminHub, MoreHub, SettingsHub } from '../features/hub/pages';
 import { ProfilePage } from '../features/profile/ProfilePage';
+import { RequestTypesPage } from '../features/approvals/RequestTypesPage';
 
 /** تحويل يحافظ على ?query (روابط المسودات/الإحالة/البحث القديمة). */
 function Redirect({ to }: { to: string }) {
@@ -72,6 +73,7 @@ export const router = createBrowserRouter([
       { path: 'branches', element: <OrgPages.Branches /> },
       { path: 'departments', element: <OrgPages.Departments /> },
       { path: 'roles', element: <RolesPages.Roles /> },
+      { path: 'request-types', element: <RequestTypesPage /> },
       { path: 'reports', element: <ReportsPages.Reports /> },
       { path: 'audit-logs', element: <AuditPages.AuditLogs /> },
 

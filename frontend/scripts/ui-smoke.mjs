@@ -921,6 +921,68 @@ async function main() {
     ).then(() => true).catch(() => false);
     check('حسابي: حفظ البريد وتغيير كلمة المرور من الصفحة', emailSaved && pwChanged && newWorks, `email=${emailSaved} pw=${pwChanged} db=${newWorks}`);
 
+    section('8ج) طلب بتوقيع (صرف)');
+    // المسؤول يعرّف النوع: مدير الفرع ثم مدير النظام.
+    await admin.page.goto(`${UI}/request-types`);
+    await admin.page.fill('#rt-name', 'طلب صرف').catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'إضافة توقيع' }).click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.selectOption('#rt-role-1', 'sys_admin').catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'حفظ النوع' }).click({ timeout: 10000 }).catch(() => undefined);
+    const typeSaved = await admin.page.locator('[data-testid="request-type-row"]:has-text("طلب صرف")').waitFor({ timeout: 15000 })
+      .then(() => true).catch(() => false);
+    check('أنواع الطلبات: المسؤول يعرّف «طلب صرف» (مدير الفرع ← مدير النظام)', typeSaved);
+
+    // أحمد يرفع ملف الطلب.
+    const reqPdf = path.join(work, 'expense.pdf');
+    await runPython(`from PIL import Image; Image.new("RGB", (1240, 1754), "white").save(${JSON.stringify(reqPdf)}, "PDF")`);
+    await ahmed.page.goto(`${UI}/approvals`);
+    await ahmed.page.getByRole('button', { name: 'طلب جديد' }).click({ timeout: 15000 }).catch(() => undefined);
+    await ahmed.page.selectOption('#req-type', { label: 'طلب صرف' }).catch(() => undefined);
+    await ahmed.page.fill('#req-title', 'مستلزمات مكتبية').catch(() => undefined);
+    await ahmed.page.setInputFiles('#req-file', reqPdf).catch(() => undefined);
+    await ahmed.page.getByRole('button', { name: 'تقديم الطلب' }).click({ timeout: 10000 }).catch(() => undefined);
+    const filed = await ahmed.page.waitForURL(/\/approvals\/[0-9a-f-]{36}$/, { timeout: 20000 }).then(() => true).catch(() => false);
+    const requestUrl = ahmed.page.url();
+    const filesShown = await ahmed.page.locator('[data-testid="request-files"]').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    check('طلب جديد: أحمد يرفع ملف طلب الصرف', filed && filesShown, `filed=${filed} files=${filesShown}`);
+
+    // كل معتمد: اعتماد ← يرسم توقيعه مرة ← كلمة المرور ← توقيع واعتماد.
+    const signAs = async (dev, password, expectedCount) => {
+      await dev.page.goto(requestUrl);
+      await dev.page.getByRole('button', { name: 'اعتماد', exact: true }).click({ timeout: 15000 }).catch(() => undefined);
+      const pad = dev.page.locator('[data-testid="signature-pad"]');
+      if (await pad.waitFor({ timeout: 8000 }).then(() => true).catch(() => false)) {
+        const box = await pad.boundingBox();
+        await dev.page.mouse.move(box.x + 30, box.y + 100);
+        await dev.page.mouse.down();
+        for (const [dx, dy] of [[90, 40], [160, 110], [260, 50], [340, 90]]) await dev.page.mouse.move(box.x + dx, box.y + dy, { steps: 6 });
+        await dev.page.mouse.up();
+        await dev.page.getByRole('button', { name: 'حفظ التوقيع' }).click().catch(() => undefined);
+      }
+      await dev.page.fill('#sign-password', password, { timeout: 10000 }).catch(() => undefined);
+      await dev.page.getByRole('button', { name: 'توقيع واعتماد' }).click({ timeout: 10000 }).catch(() => undefined);
+      return dev.page.locator(`button:has-text("النسخة الموقّعة (${expectedCount} توقيع)")`).waitFor({ timeout: 20000 })
+        .then(() => true).catch(() => false);
+    };
+    const bmSigned = await signAs(manager, 'Riyadh#Branch2026', 1);
+    const adminSigned = await signAs(admin, 'Admin@12345', 2);
+    const reqId = requestUrl.split('/').pop();
+    const pdfOk = await runPython(
+      'import io; from pypdf import PdfReader; from apps.approvals.models import ApprovalRequest as R; ' +
+        'from apps.correspondence.services import read_blob; ' +
+        `r = R.objects.get(id=${JSON.stringify(reqId)}); t = PdfReader(io.BytesIO(read_blob(r.signed_file))).pages[-1].extract_text(); ` +
+        'assert r.status == "approved" and r.signature_count == 2 and t.count(r.correspondence.reference_number) == 2',
+    ).then(() => true).catch(() => false);
+    check('التوقيع: مدير الفرع ثم مدير النظام يوقّعان، والـPDF فيه التوقيعان والطلب معتمد', bmSigned && adminSigned && pdfOk,
+      `bm=${bmSigned} admin=${adminSigned} pdf=${pdfOk}`);
+    await ahmed.page.goto(requestUrl);
+    const [signedDl] = await Promise.all([
+      ahmed.page.waitForEvent('download', { timeout: 20000 }).catch(() => null),
+      ahmed.page.locator('button:has-text("النسخة الموقّعة")').click({ timeout: 15000 }).catch(() => undefined),
+    ]);
+    check('أحمد ينزّل النسخة الموقّعة', Boolean(signedDl) && signedDl.suggestedFilename().endsWith('.pdf'));
+    if (process.env.SHOTS) console.log(`    لقطة الطلب الموقّع: ${await shot(ahmed, 'signed-request')}`);
+
     section('9) أخطاء الـConsole');
     for (const dev of [ahmed, mohamed2, manager, archivist, sara]) {
       check(`${dev.username}: لا أخطاء JavaScript`, dev.page.errors.length === 0, dev.page.errors.slice(0, 3).join(' | '));

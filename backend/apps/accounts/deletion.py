@@ -24,7 +24,7 @@ DISPOSABLE = {
     "accounts.usersession", "accounts.trusteddevice", "accounts.loginintent", "accounts.loginapproval",
     "org.employeemembership", "authorization.userroleassignment",
     "notifications.notification", "notifications.pushsubscription", "notifications.notificationpreference",
-    "external_mail.externalmailbox",
+    "external_mail.externalmailbox", "approvals.usersignature",
 }
 
 
@@ -71,6 +71,7 @@ def purge(user: User) -> dict:
     from django.db import transaction
     from django.utils import timezone
 
+    from apps.approvals.models import UserSignature
     from apps.authorization.models import UserRoleAssignment
     from apps.correspondence.models import Correspondence, EncryptedAttachment, StoredFile
     from apps.correspondence.services import blob_storage, discard_draft
@@ -113,6 +114,7 @@ def purge(user: User) -> dict:
         Notification.objects.filter(user=user).delete()
         PushSubscription.objects.filter(user=user).delete()
         NotificationPreference.objects.filter(user=user).delete()
+        UserSignature.objects.filter(user=user).delete()
         # Memberships stay as history (sent mail names the sender's unit) but end.
         EmployeeMembership.objects.filter(user=user, ended_on__isnull=True).update(ended_on=timezone.localdate())
         EmployeeMembership.objects.filter(user=user, is_primary=True).update(is_primary=False)

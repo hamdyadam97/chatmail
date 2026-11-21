@@ -1,7 +1,8 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Globe, KeyRound, Mail, Phone, ShieldCheck, UserRound } from 'lucide-react';
+import { Globe, KeyRound, Mail, PenLine, Phone, ShieldCheck, UserRound } from 'lucide-react';
+import { SignatureManager } from '../approvals/SignaturePad';
 import { apiFetch, toUserMessage } from '../../shared/api';
 import { Avatar, Button, Card, Input, Label, Spinner } from '../../shared/ui';
 import { useAuth } from '../auth/AuthContext';
@@ -214,6 +215,10 @@ export function ProfilePage() {
 
       <Section icon={Mail} title="بيانات التواصل">
         <ContactForm profile={p} />
+      </Section>
+
+      <Section icon={PenLine} title="توقيعي">
+        <SignatureManager />
       </Section>
 
       <Section icon={KeyRound} title="كلمة المرور">

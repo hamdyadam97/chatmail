@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCheck, FileSignature, Lock } from 'lucide-react';
+import { CheckCheck, Download, FilePlus2, FileSignature, Lock, PenLine } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
 import { useAuth } from '../auth/AuthContext';
 import { correspondenceApi } from '../correspondence/api';
 import { RecipientPicker } from '../correspondence/components';
-import { approvalsApi, DECISION_LABELS, type ApprovalRequest, type Decision } from './api';
+import { approvalsApi, DECISION_LABELS, type ApprovalRequest, type Decision, type FileRef } from './api';
+import { SignatureManager } from './SignaturePad';
+import { saveBlob } from '../../shared/lib/download';
 import { StatusBadge, StepsView, formatDate } from './components';
 
 type Tab = 'pending_mine' | 'requested_by_me' | 'delegations';
@@ -22,7 +24,16 @@ function RequestRow({ r }: { r: ApprovalRequest }) {
       <span dir="ltr" className="w-48 shrink-0 font-mono text-xs text-gray-600">
         {r.correspondence.reference_number}
       </span>
-      <span className="flex-1 text-gray-800">مقدّم الطلب: {r.requested_by.full_name}</span>
+      <span className="min-w-0 flex-1 text-gray-800">
+        {r.signable && (
+          <span className="me-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">
+            <PenLine className="h-3 w-3" />
+            {r.workflow_name}
+          </span>
+        )}
+        {r.signable && r.title ? <span className="font-medium">{r.title.replace(`${r.workflow_name}: `, '')} — </span> : null}
+        مقدّم الطلب: {r.requested_by.full_name}
+      </span>
       <span className="text-xs text-gray-500">
         الخطوة {r.current_step_order}/{r.steps.length}
       </span>
@@ -156,8 +167,78 @@ function Delegations() {
   );
 }
 
+/** «طلب جديد»: نوع ثابت يحدده المسؤول (صرف، إجازة…) + ملف الطلب. */
+function NewRequest({ onDone, onCancel }: { onDone: (id: string) => void; onCancel: () => void }) {
+  const { data: types } = useQuery({ queryKey: ['approvals', 'request-types'], queryFn: approvalsApi.requestTypes });
+  const [typeId, setTypeId] = useState('');
+  const [title, setTitle] = useState('');
+  const [note, setNote] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const submit = useMutation({
+    mutationFn: () => approvalsApi.fileRequest({ workflow_id: typeId, title, note, file: file! }),
+    onSuccess: (r) => onDone(r.id),
+    onError: (err) => setError(toUserMessage(err, 'تعذر تقديم الطلب')),
+  });
+  const chosen = types?.find((t) => t.id === typeId);
+  return (
+    <Card className="space-y-3 p-5" data-testid="new-request">
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+        <FilePlus2 className="h-4 w-4" />
+        طلب جديد
+      </h3>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div>
+          <Label htmlFor="req-type">نوع الطلب</Label>
+          <select id="req-type" value={typeId} onChange={(e) => setTypeId(e.target.value)} className="h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm">
+            <option value="">اختر…</option>
+            {(types ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label htmlFor="req-title">عنوان الطلب</Label>
+          <Input id="req-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="مثال: صرف مستلزمات مكتبية" />
+        </div>
+      </div>
+      {chosen && (
+        <p className="text-xs text-gray-500">يمر الطلب على {chosen.steps.length} خطوة اعتماد، وكل معتمد يوقّع على الملف.</p>
+      )}
+      <div>
+        <Label htmlFor="req-file">ملف الطلب (PDF أو صورة)</Label>
+        <input
+          id="req-file"
+          type="file"
+          accept="application/pdf,image/png,image/jpeg"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className="block w-full text-sm text-gray-700 file:me-3 file:rounded-md file:border-0 file:bg-primary-50 file:px-3 file:py-1.5 file:text-primary-700"
+        />
+      </div>
+      <div>
+        <Label htmlFor="req-note">ملاحظة (اختياري)</Label>
+        <textarea id="req-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="w-full rounded-lg border border-gray-300 p-2 text-sm" />
+      </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={onCancel}>
+          إلغاء
+        </Button>
+        <Button size="sm" disabled={!typeId || !title.trim() || !file} loading={submit.isPending} onClick={() => submit.mutate()}>
+          تقديم الطلب
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 export function Approvals() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('pending_mine');
+  const [creating, setCreating] = useState(false);
+  const { data: types } = useQuery({ queryKey: ['approvals', 'request-types'], queryFn: approvalsApi.requestTypes });
   const tabs: Array<[Tab, string]> = [
     ['pending_mine', 'بانتظار قراري'],
     ['requested_by_me', 'طلباتي'],
@@ -166,7 +247,16 @@ export function Approvals() {
   return (
     <>
       <div className="mx-auto max-w-5xl space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">الموافقات</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-gray-900">الموافقات</h2>
+          {(types?.length ?? 0) > 0 && !creating && (
+            <Button size="sm" onClick={() => setCreating(true)}>
+              <FilePlus2 className="h-4 w-4" />
+              طلب جديد
+            </Button>
+          )}
+        </div>
+        {creating && <NewRequest onCancel={() => setCreating(false)} onDone={(id) => navigate(`/approvals/${id}`)} />}
         <div className="flex gap-1 border-b border-gray-200">
           {tabs.map(([key, label]) => (
             <button
@@ -202,12 +292,21 @@ function ApprovalDetail({ id }: { id: string }) {
   });
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<Decision | null>(null);
+  const [password, setPassword] = useState('');
+  const { data: mySignature } = useQuery({
+    queryKey: ['my-signature'],
+    queryFn: approvalsApi.signature,
+    enabled: Boolean(request?.signable && request.my_slot),
+  });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['approvals'] });
   const decide = useMutation({
-    mutationFn: (decision: Decision) => approvalsApi.decide(id, decision),
+    mutationFn: (decision: Decision) =>
+      approvalsApi.decide(id, decision, decision === 'approved' && request?.signable ? password : undefined),
     onSuccess: () => {
       setConfirming(null);
+      setPassword('');
+      setActionError(null);
       void refresh();
     },
     onError: (err) => {
@@ -275,6 +374,18 @@ function ApprovalDetail({ id }: { id: string }) {
           )}
         </div>
 
+        {request.signable && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3 text-sm" data-testid="request-files">
+            <PenLine className="h-4 w-4 text-indigo-700" />
+            <span className="font-medium text-indigo-900">{request.workflow_name}</span>
+            <span className="text-gray-500">—</span>
+            {request.source_file && <FileButton file={request.source_file} label="الملف الأصلي" />}
+            {request.signed_file && (
+              <FileButton file={request.signed_file} label={`النسخة الموقّعة (${request.signature_count} توقيع)`} primary />
+            )}
+          </div>
+        )}
+
         <StepsView request={request} />
 
         {request.my_slot && (
@@ -283,7 +394,36 @@ function ApprovalDetail({ id }: { id: string }) {
               {request.my_slot.delegated ? 'تتخذ القرار بالتفويض نيابة عن معتمد آخر.' : 'دورك في اتخاذ القرار.'} يُسجَّل القرار
               باسمك ووقته ونسخة المراسلة التي اطلعت عليها. هذا سجل داخل النظام وليس توقيعًا إلكترونيًا نظاميًا معتمدًا قانونيًا.
             </p>
-            {confirming ? (
+            {confirming === 'approved' && request.signable ? (
+              <div className="space-y-3 rounded-lg border border-indigo-200 bg-white p-3" data-testid="sign-panel">
+                <p className="text-sm font-medium text-gray-900">التوقيع على الطلب</p>
+                <SignatureManager compact />
+                {mySignature?.has_signature && (
+                  <>
+                    <div className="md:w-1/2">
+                      <Label htmlFor="sign-password">كلمة المرور للتأكيد</Label>
+                      <Input
+                        id="sign-password"
+                        type="password"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500">يُختم توقيعك واسمك ووقت الاعتماد أسفل آخر صفحة من الملف.</p>
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={!password} loading={decide.isPending} onClick={() => decide.mutate('approved')}>
+                        <PenLine className="h-4 w-4" />
+                        توقيع واعتماد
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
+                        تراجع
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : confirming ? (
               <div className="flex items-center gap-2">
                 <span className="text-sm">تأكيد «{DECISION_LABELS[confirming]}»؟ لا يمكن التراجع عن القرار.</span>
                 <Button size="sm" loading={decide.isPending} onClick={() => decide.mutate(confirming)}>
@@ -327,6 +467,28 @@ function ApprovalDetail({ id }: { id: string }) {
         )}
       </Card>
     </div>
+  );
+}
+
+function FileButton({ file, label, primary = false }: { file: FileRef; label: string; primary?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant={primary ? 'primary' : 'outline'}
+      loading={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          saveBlob(await correspondenceApi.download(file.id), file.name);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <Download className="h-4 w-4" />
+      {label}
+    </Button>
   );
 }
 

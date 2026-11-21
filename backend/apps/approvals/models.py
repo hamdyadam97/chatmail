@@ -31,6 +31,9 @@ class ApprovalWorkflow(models.Model):
     department = models.ForeignKey("org.Department", on_delete=models.PROTECT, null=True, blank=True)
     version = models.IntegerField(default=1)
     is_active = models.BooleanField(default=True)
+    # A request type (expense, leave…): employees file it with a document from
+    # «طلب جديد», and every approval stamps the approver's signature on it.
+    signable = models.BooleanField(default=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="approval_workflows"
     )
@@ -89,6 +92,14 @@ class ApprovalRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     decided_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    # Signed requests: the uploaded document (as PDF) and its latest signed copy.
+    source_file = models.ForeignKey(
+        "correspondence.StoredFile", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    signed_file = models.ForeignKey(
+        "correspondence.StoredFile", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    signature_count = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         db_table = "approval_requests"
@@ -200,3 +211,17 @@ class ApprovalDelegation(models.Model):
             models.CheckConstraint(condition=Q(ends_at__gt=F("starts_at")), name="ck_delegation_window"),
             models.CheckConstraint(condition=~Q(delegator=F("delegate")), name="ck_delegation_not_self"),
         ]
+
+
+class UserSignature(models.Model):
+    """An approver's handwritten signature, drawn once and reused for signed
+    requests. Sealed (apps.vault, purpose "signature", bound to the user)."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, primary_key=True, related_name="signature"
+    )
+    image_enc = models.BinaryField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "user_signatures"

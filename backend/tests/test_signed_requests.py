@@ -1,0 +1,144 @@
+"""Signed requests (user decision 2026-11-21): an employee files a request
+document of a fixed type; each approver approves with password and their
+saved signature, which is stamped on the PDF's last page."""
+import base64
+import io
+
+import pytest
+from pypdf import PdfReader
+
+from apps.approvals.models import ApprovalRequest, UserSignature
+from apps.audit.models import AuditLog
+
+from .conftest import DEFAULT_PASSWORD, assign_role
+from .correspondence_utils import _blob_root, make_employee  # noqa: F401  (autouse blob dir)
+from .messaging_utils import auth
+
+pytestmark = pytest.mark.django_db
+
+API = "/api/v1/approvals/"
+
+
+def _png(size=(600, 200), line=True) -> bytes:
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGBA", size, (0, 0, 0, 0))
+    if line:
+        ImageDraw.Draw(img).line([(20, 150), (200, 40), (580, 120)], fill=(0, 0, 120, 255), width=8)
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
+def _scan() -> bytes:
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (1240, 1754), "white").save(out, "JPEG")
+    return out.getvalue()
+
+
+@pytest.fixture
+def org(api_client, user_factory, branch_a, branch_b):
+    admin = user_factory("sr_admin", membership_unit=branch_a)
+    assign_role(admin, "sys_admin")
+    emp = make_employee(user_factory, "sr_emp", branch_a)
+    bm = make_employee(user_factory, "sr_bm", branch_a)
+    assign_role(bm, "branch_manager", institute=branch_a.institute, branch=branch_a)
+    ex = make_employee(user_factory, "sr_exec", branch_a)
+    assign_role(ex, "executive")
+    outsider = make_employee(user_factory, "sr_out", branch_b)
+    h = {n: auth(api_client, n) for n in ("sr_admin", "sr_emp", "sr_bm", "sr_exec", "sr_out")}
+    wf = api_client.post(f"{API}workflows/", {
+        "name": "طلب صرف", "signable": True,
+        "steps": [
+            {"type": "any", "approver_selectors": [{"role": "branch_manager", "scope": "sender_branch"}]},
+            {"type": "any", "approver_selectors": [{"role": "executive", "scope": "central"}]},
+        ],
+    }, format="json", **h["sr_admin"])
+    assert wf.status_code == 201, wf.content
+    return {"emp": emp, "bm": bm, "ex": ex, "out": outsider, "h": h, "wf": wf.json()}
+
+
+def _file(api_client, org, data=None, name="expense.jpg"):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    return api_client.post(f"{API}file-request/", {
+        "workflow_id": org["wf"]["id"], "title": "صرف مستلزمات", "note": "مرفق الطلب",
+        "file": SimpleUploadedFile(name, data or _scan(), content_type="image/jpeg"),
+    }, format="multipart", **org["h"]["sr_emp"])
+
+
+def _download(api_client, headers, file_id):
+    return api_client.get(f"/api/v1/attachments/{file_id}/", **headers)
+
+
+def test_file_sign_and_download(api_client, org):
+    h = org["h"]
+    types = api_client.get(f"{API}request-types/", **h["sr_emp"]).json()
+    assert [t["name"] for t in types] == ["طلب صرف"] and types[0]["signable"]
+
+    r = _file(api_client, org)
+    assert r.status_code == 201, r.content
+    req = r.json()
+    assert req["signable"] and req["title"] == "طلب صرف: صرف مستلزمات" and req["source_file"]["name"] == "expense.pdf"
+    assert req["signed_file"] is None and req["signature_count"] == 0
+    rid = req["id"]
+
+    # the branch manager: no saved signature → refused; wrong password → refused
+    decide = lambda who, **b: api_client.post(f"{API}{rid}/decide/", {"decision": "approved", **b}, format="json", **h[who])
+    assert decide("sr_bm", password=DEFAULT_PASSWORD).status_code == 400
+    sig = api_client.put(f"{API}signature/", {"image": base64.b64encode(_png()).decode()}, format="json", **h["sr_bm"])
+    assert sig.status_code == 200 and sig.json()["has_signature"]
+    assert decide("sr_bm", password="wrong").status_code == 400
+    first = decide("sr_bm", password=DEFAULT_PASSWORD)
+    assert first.status_code == 201, first.content
+    assert first.json()["signature_count"] == 1 and first.json()["status"] == "pending"
+
+    api_client.put(f"{API}signature/", {"image": "data:image/png;base64," + base64.b64encode(_png()).decode()},
+                   format="json", **h["sr_exec"])
+    second = decide("sr_exec", password=DEFAULT_PASSWORD)
+    assert second.status_code == 201, second.content
+    done = second.json()
+    assert done["status"] == "approved" and done["signature_count"] == 2
+
+    # the signed PDF: one page, both signatures, readable by the requester and approvers only
+    pdf = _download(api_client, h["sr_emp"], done["signed_file"]["id"])
+    assert pdf.status_code == 200
+    reader = PdfReader(io.BytesIO(b"".join(pdf.streaming_content) if hasattr(pdf, "streaming_content") else pdf.content))
+    assert len(reader.pages) == 1
+    text = reader.pages[0].extract_text()
+    assert text.count(ApprovalRequest.objects.get(id=rid).correspondence.reference_number) == 2
+    assert _download(api_client, h["sr_exec"], done["signed_file"]["id"]).status_code == 200
+    assert _download(api_client, h["sr_out"], done["signed_file"]["id"]).status_code == 403
+    assert AuditLog.objects.filter(action="approval_decided", metadata__signed=True).count() == 2
+
+
+def test_reject_needs_no_signature_and_types_are_admin_defined(api_client, org):
+    h = org["h"]
+    rid = _file(api_client, org).json()["id"]
+    r = api_client.post(f"{API}{rid}/decide/", {"decision": "rejected"}, format="json", **h["sr_bm"])
+    assert r.status_code == 201 and r.json()["status"] == "rejected" and r.json()["signed_file"] is None
+    # an employee cannot define request types
+    bad = api_client.post(f"{API}workflows/", {"name": "x", "signable": True, "steps": [
+        {"type": "any", "approver_selectors": [{"role": "executive", "scope": "central"}]}]}, format="json", **h["sr_emp"])
+    assert bad.status_code == 403
+    # retired types disappear from «طلب جديد»
+    assert api_client.patch(f"{API}workflows/{org['wf']['id']}/", {"is_active": False}, format="json",
+                            **h["sr_admin"]).status_code == 200
+    assert api_client.get(f"{API}request-types/", **h["sr_emp"]).json() == []
+
+
+def test_bad_files_and_signatures_are_refused(api_client, org):
+    h = org["h"]
+    assert _file(api_client, org, data=b"not a pdf at all", name="x.docx").status_code == 400
+    assert api_client.put(f"{API}signature/", {"image": base64.b64encode(_png(line=False)).decode()},
+                          format="json", **h["sr_bm"]).status_code == 400  # empty drawing
+    assert api_client.put(f"{API}signature/", {"image": "@@@"}, format="json", **h["sr_bm"]).status_code == 400
+    api_client.put(f"{API}signature/", {"image": base64.b64encode(_png()).decode()}, format="json", **h["sr_bm"])
+    # the signature is sealed at rest and private
+    row = UserSignature.objects.get(user=org["bm"])
+    assert bytes(row.image_enc)[:8] != _png()[:8]
+    assert api_client.get(f"{API}signature/", **h["sr_emp"]).json()["has_signature"] is False
+    assert api_client.delete(f"{API}signature/", **h["sr_bm"]).status_code == 204
+    assert not UserSignature.objects.filter(user=org["bm"]).exists()
