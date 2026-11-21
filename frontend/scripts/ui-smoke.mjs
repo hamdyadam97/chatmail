@@ -865,6 +865,30 @@ async function main() {
       bmTargets[0] === 'فرع' && !bmTargets.includes('جميع المعاهد') && bmUnits.filter((u) => u !== 'اختر…').length === 1 && publishedOk,
       `targets=${bmTargets.join('|')} units=${bmUnits.join('|')} published=${publishedOk}`);
 
+    section('8ب) حسابي');
+    await manager.page.goto(`${UI}/mail/inbox`);
+    await manager.page.getByRole('link', { name: 'حسابي' }).first().click({ timeout: 15000 }).catch(() => undefined);
+    const profile = manager.page.locator('[data-testid="profile-page"]');
+    await profile.waitFor({ timeout: 15000 }).catch(() => undefined);
+    const profileText = await profile.innerText().catch(() => '');
+    check('حسابي: الضغط على الاسم يعرض البيانات (المستخدم، الفرع، الدور، البريد الخارجي)',
+      profileText.includes('manager') && profileText.includes('فرع الرياض') && profileText.includes('مدير فرع')
+        && profileText.includes(`manager@${MAIL_DOMAIN}`), profileText.slice(0, 200));
+    await manager.page.fill('#me-email', 'khaled@example.com');
+    await manager.page.fill('#me-current', 'Manager@12345');
+    await profile.getByRole('button', { name: 'حفظ', exact: true }).click();
+    const emailSaved = await manager.page.locator('text=حُفظت بيانات التواصل').waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+    await manager.page.fill('#pw-old', 'Manager@12345');
+    await manager.page.fill('#pw-new', 'Riyadh#Branch2026');
+    await manager.page.fill('#pw-confirm', 'Riyadh#Branch2026');
+    await profile.getByRole('button', { name: 'تغيير كلمة المرور' }).click();
+    const pwChanged = await manager.page.locator('text=تم تغيير كلمة المرور').waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+    const newWorks = await runPython(
+      'from apps.accounts.models import User; u = User.objects.get(username="manager"); ' +
+        'assert u.check_password("Riyadh#Branch2026") and u.optional_email == "khaled@example.com"',
+    ).then(() => true).catch(() => false);
+    check('حسابي: حفظ البريد وتغيير كلمة المرور من الصفحة', emailSaved && pwChanged && newWorks, `email=${emailSaved} pw=${pwChanged} db=${newWorks}`);
+
     section('9) أخطاء الـConsole');
     for (const dev of [ahmed, mohamed2, manager, archivist, sara]) {
       check(`${dev.username}: لا أخطاء JavaScript`, dev.page.errors.length === 0, dev.page.errors.slice(0, 3).join(' | '));

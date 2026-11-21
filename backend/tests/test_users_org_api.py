@@ -6,7 +6,7 @@ from apps.accounts.models import User
 from apps.audit.models import AuditLog
 from apps.org.models import Department
 
-from .conftest import auth_headers, login
+from .conftest import DEFAULT_PASSWORD, auth_headers, login
 
 pytestmark = pytest.mark.django_db
 
@@ -229,6 +229,32 @@ def test_me_carries_own_primary_institute(api_client, user_factory, branch_a):
     user_factory("me_inst", membership_unit=branch_a)
     me = api_client.get("/api/v1/users/me/", **auth_headers(_access(api_client, "me_inst"))).json()
     assert me["institute"] == {"code": branch_a.institute.code, "name": branch_a.institute.name}
+
+
+def test_my_profile_shows_own_details_and_edits_contact_with_password(api_client, user_factory, role_factory, branch_a):
+    me_user = user_factory("hamdy.adam", membership_unit=branch_a)
+    role_factory(me_user, "sys_admin")
+    h = auth_headers(_access(api_client, "hamdy.adam"))
+    p = api_client.get("/api/v1/users/me/profile/", **h).json()
+    assert p["username"] == "hamdy.adam" and p["membership"]["branch"] == branch_a.name
+    assert {"code": "sys_admin", "name": "مدير النظام", "scope": "مركزي"} in p["roles"]
+
+    url = "/api/v1/users/me/profile/"
+    body = {"optional_email": "Hamdy@Example.com", "phone": "0500000000"}
+    assert api_client.patch(url, {**body, "current_password": "wrong"}, format="json", **h).status_code == 400
+    r = api_client.patch(url, {**body, "current_password": DEFAULT_PASSWORD}, format="json", **h)
+    assert r.status_code == 200, r.content
+    assert (r.json()["optional_email"], r.json()["phone"]) == ("hamdy@example.com", "0500000000")
+    assert AuditLog.objects.filter(action="profile_updated").count() == 1
+    # the e-mail belongs to one account only
+    user_factory("other.one")
+    h2 = auth_headers(_access(api_client, "other.one"))
+    taken = api_client.patch(url, {"optional_email": "hamdy@example.com", "current_password": DEFAULT_PASSWORD},
+                             format="json", **h2)
+    assert taken.status_code == 400
+    # name and roles are not self-service
+    api_client.patch(url, {"first_name": "x", "current_password": DEFAULT_PASSWORD}, format="json", **h2)
+    assert User.objects.get(username="other.one").first_name != "x"
 
 
 def test_admin_section_only_for_system_admin_and_executive(api_client, user_factory, role_factory, branch_a):

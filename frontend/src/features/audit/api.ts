@@ -47,6 +47,7 @@ export const ACTION_LABELS: Record<string, string> = {
   account_deleted: 'حذف حساب لم يُستخدم',
   employees_exported: 'تصدير قائمة الموظفين',
   user_renamed: 'تعديل اسم موظف',
+  profile_updated: 'تعديل بيانات التواصل الشخصية',
   mfa_setup: 'بدء إعداد التحقق الثنائي',
   mfa_enabled: 'تفعيل التحقق الثنائي',
   mfa_disabled: 'تعطيل التحقق الثنائي',

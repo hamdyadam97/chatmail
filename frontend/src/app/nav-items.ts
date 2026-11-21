@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu } from 'lucide-react';
+import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu, UserRound } from 'lucide-react';
 
 export interface RailItem {
   to: string;
@@ -33,7 +33,7 @@ export const RAIL_ITEMS: RailItem[] = [
 ];
 
 export const RAIL_BOTTOM: RailItem[] = [
-  { to: '/settings', label: 'الإعدادات', icon: Settings, match: ['/settings', '/devices', '/security', '/recovery', '/notifications'] },
+  { to: '/settings', label: 'الإعدادات', icon: Settings, match: ['/settings', '/profile', '/devices', '/security', '/recovery', '/notifications'] },
 ];
 
 /** شريط الموبايل السفلي: أهم أربعة أقسام + «المزيد» (البحث والإدارة والإعدادات). */
@@ -74,6 +74,7 @@ export const ADMIN_ITEMS: HubItem[] = [
 ];
 
 export const SETTINGS_ITEMS: HubItem[] = [
+  { to: '/profile', label: 'حسابي', description: 'بياناتي وبريدي وتغيير كلمة المرور', icon: UserRound },
   { to: '/security', label: 'الأمان', description: 'نشاط حسابي والأجهزة التي دخلت منها', icon: ShieldCheck },
   { to: '/notifications', label: 'الإشعارات', description: 'كل الإشعارات', icon: Bell },
 ];

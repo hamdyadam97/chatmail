@@ -5,6 +5,7 @@ from . import admin_views, user_views
 
 urlpatterns = [
     path("me/", user_views.MeView.as_view(), name="users-me"),
+    path("me/profile/", user_views.MyProfileView.as_view(), name="users-me-profile"),
     path("", user_views.UserDirectoryView.as_view(), name="users-directory"),
     path("managed/", admin_views.ManagedUsersView.as_view(), name="users-managed"),
     path("managed/export/", admin_views.ManagedUsersExportView.as_view(), name="users-managed-export"),

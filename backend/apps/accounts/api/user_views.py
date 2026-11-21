@@ -84,6 +84,88 @@ class MeView(APIView):
         return Response(data)
 
 
+class MyProfileView(APIView):
+    """GET: the caller's own account details (any user, own row only).
+    PATCH: the caller changes their own phone / e-mail — current password
+    required. Name, branch and roles stay with the administrator."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _data(self, user):
+        from apps.authorization.services import active_assignments
+        from apps.external_mail.services import address_for
+
+        membership = (
+            user.memberships.filter(is_primary=True).select_related("institute", "branch", "department").first()
+        )
+        roles = []
+        for a in active_assignments(user):
+            unit = a.department or a.branch or a.institute
+            roles.append({"code": a.role.code, "name": a.role.name_ar, "scope": unit.name if unit else "مركزي"})
+        return {
+            "id": str(user.id),
+            "username": user.username,
+            "full_name": user.full_name,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "phone": user.phone,
+            "optional_email": user.optional_email,
+            "external_address": address_for(user),
+            "membership": {
+                "institute": membership.institute.name,
+                "branch": membership.branch.name if membership.branch_id else None,
+                "department": membership.department.name if membership.department_id else None,
+                "job_title": membership.job_title,
+            } if membership else None,
+            "roles": roles,
+            "mfa_enabled": user.mfa_enabled,
+            "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+            "password_changed_at": user.password_changed_at.isoformat() if user.password_changed_at else None,
+        }
+
+    def get(self, request):
+        return Response(self._data(request.user))
+
+    def patch(self, request):
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        user = request.user
+        body = request.data if isinstance(request.data, dict) else {}
+        if not user.check_password(str(body.get("current_password") or "")):
+            raise ValidationError({"current_password": "كلمة المرور الحالية غير صحيحة."})
+        changed = []
+        if "phone" in body:
+            phone = " ".join(str(body.get("phone") or "").split())[:32]
+            if phone != user.phone:
+                user.phone = phone
+                changed.append("phone")
+        if "optional_email" in body:
+            email = str(body.get("optional_email") or "").strip().lower() or None
+            if email:
+                try:
+                    validate_email(email)
+                except DjangoValidationError:
+                    raise ValidationError({"optional_email": "بريد إلكتروني غير صالح."})
+                if User.objects.filter(optional_email__iexact=email).exclude(id=user.id).exists():
+                    raise ValidationError({"optional_email": "هذا البريد مسجّل لحساب آخر."})
+            if email != user.optional_email:
+                user.optional_email = email
+                changed.append("optional_email")
+        if changed:
+            user.save(update_fields=[*changed, "updated_at"])
+            log(
+                actor=user,
+                action="profile_updated",
+                target_type="user",
+                target_id=user.id,
+                org_scope=primary_org_scope(user),
+                **request_context(request),
+                metadata={"fields": changed},
+            )
+        return Response(self._data(user))
+
+
 class UserDirectoryView(APIView):
     """GET: every authenticated user sees the basic directory.
     POST: accounts.manage_users (scoped) creates an employee."""

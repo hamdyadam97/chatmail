@@ -150,10 +150,15 @@ export function AppShell() {
                 className="hidden h-8 max-w-[7rem] border-e border-gray-200 pe-3 md:block"
               />
             )}
-            <span className="flex items-center gap-2">
+            <Link
+              to="/profile"
+              className="flex items-center gap-2 rounded-lg p-0.5 hover:bg-gray-100 md:pe-2"
+              aria-label="حسابي"
+              title="حسابي — بياناتك وكلمة المرور"
+            >
               <Avatar name={user?.full_name || user?.username || '؟'} size="sm" />
               <span className="hidden text-sm text-gray-700 md:inline">{user?.full_name}</span>
-            </span>
+            </Link>
             <button
               type="button"
               onClick={handleLogout}
