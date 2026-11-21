@@ -871,11 +871,14 @@ async function main() {
     await boxes.nth(0).check().catch(() => undefined);
     await boxes.nth(1).check().catch(() => undefined);
     await admin.page.locator('[role="dialog"] button[type="submit"]:has-text("إسناد")').click({ timeout: 10000 }).catch(() => undefined);
-    const rmRows = admin.page.locator('tbody tr', { hasText: 'مدير إقليمي' });
-    await rmRows.nth(1).waitFor({ timeout: 15000 }).catch(() => undefined);
+    // صف واحد لمحمد، فيه دور «مدير إقليمي» مرتين (فرعان) بجانب دوره كموظف.
+    const mohamedRow = admin.page.locator('[data-testid="assignment-user-row"]', { hasText: 'محمد الشهري' });
+    const rmChips = mohamedRow.locator('button[aria-label="سحب دور مدير إقليمي"]');
+    await rmChips.nth(1).waitFor({ timeout: 15000 }).catch(() => undefined);
     const fiveRoles = ['موظف', 'مدير فرع', 'مدير إقليمي', 'مدير تنفيذي', 'مدير النظام'].every((n) => roleOptions.includes(n));
-    check('الأدوار: خمسة أدوار فقط، والإقليمي يُسند على عدة فروع', fiveRoles && roleOptions.length === 6 && (await rmRows.count()) === 2,
-      `options=${roleOptions.join('|')} rows=${await rmRows.count()}`);
+    check('الأدوار: خمسة أدوار فقط، والإقليمي يُسند على عدة فروع — في صف الموظف نفسه',
+      fiveRoles && roleOptions.length === 6 && (await mohamedRow.count()) === 1 && (await rmChips.count()) === 2,
+      `options=${roleOptions.join('|')} rows=${await mohamedRow.count()} chips=${await rmChips.count()}`);
 
     // المدير الإقليمي: «كل فروعي» متاحة ولا «جميع المعاهد».
     await mohamed2.page.goto(`${UI}/announcements/new`);

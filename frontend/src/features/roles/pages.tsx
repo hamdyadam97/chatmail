@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Lock, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Lock, Plus, ShieldCheck, X } from 'lucide-react';
 import { Button, Card, Input, Label, Spinner } from '../../shared/ui';
 import { ApiError, toUserMessage } from '../../shared/api';
 import { RecipientPicker } from '../correspondence/components';
@@ -185,6 +185,13 @@ function Assignments() {
     return (id: string | null) => (id ? m.get(id) ?? id : null);
   }, [institutes, branches, departments]);
 
+  // صف واحد لكل موظف وأدواره بجانب اسمه.
+  const byUser = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof data>>();
+    for (const a of data ?? []) m.set(a.user, [...(m.get(a.user) ?? []), a]);
+    return [...m.entries()].sort((x, y) => (x[1][0].full_name || x[0]).localeCompare(y[1][0].full_name || y[0], 'ar'));
+  }, [data]);
+
   if (error instanceof ApiError && error.status === 403) {
     return (
       <p className="flex items-center gap-2 text-sm text-gray-500">
@@ -197,7 +204,7 @@ function Assignments() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); setQuery(filter.trim()); }}>
-          <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="اسم المستخدم" dir="ltr" className="w-56" aria-label="تصفية باسم المستخدم" />
+          <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="اسم الموظف أو الدور" dir="auto" className="w-56" aria-label="تصفية باسم المستخدم" />
           <Button type="submit" variant="outline">تصفية</Button>
         </form>
         <Button className="ms-auto" onClick={() => setOpen(true)}>
@@ -212,28 +219,39 @@ function Assignments() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-500">
               <tr>
-                <th className="px-4 py-2 text-start font-medium">المستخدم</th>
-                <th className="px-4 py-2 text-start font-medium">الدور</th>
-                <th className="px-4 py-2 text-start font-medium">النطاق</th>
-                <th className="px-4 py-2 text-start font-medium">منذ</th>
-                <th className="px-4 py-2 text-start font-medium">ينتهي</th>
-                <th />
+                <th className="w-64 px-4 py-2 text-start font-medium">الموظف</th>
+                <th className="px-4 py-2 text-start font-medium">أدواره</th>
               </tr>
             </thead>
             <tbody>
-              {(data ?? []).map((a) => (
-                <tr key={a.id} className="border-t border-gray-100">
-                  <td className="px-4 py-2">
-                    {a.full_name || a.user} <span className="text-xs text-gray-400" dir="ltr">{a.user}</span>
+              {byUser.map(([username, rows]) => (
+                <tr key={username} className="border-t border-gray-100 align-top" data-testid="assignment-user-row">
+                  <td className="px-4 py-2.5">
+                    <span className="block font-medium text-gray-900">{rows[0].full_name || username}</span>
+                    <span className="text-xs text-gray-400" dir="ltr">{username}</span>
                   </td>
-                  <td className="px-4 py-2">{a.role_name}</td>
-                  <td className="px-4 py-2 text-gray-700">{unitName(a.department) ?? unitName(a.branch) ?? unitName(a.institute) ?? 'مركزي'}</td>
-                  <td className="px-4 py-2 text-xs text-gray-500">{formatDate(a.granted_at)}</td>
-                  <td className="px-4 py-2 text-xs text-gray-500">{formatDate(a.expires_at)}</td>
-                  <td className="px-4 py-2 text-end">
-                    <Button variant="ghost" size="sm" onClick={() => revoke.mutate(a.id)} aria-label="سحب الدور">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                  <td className="px-4 py-2">
+                    <span className="flex flex-wrap gap-1.5">
+                      {rows.map((a) => (
+                        <span
+                          key={a.id}
+                          title={`منذ ${formatDate(a.granted_at)}${a.expires_at ? ` — ينتهي ${formatDate(a.expires_at)}` : ''}`}
+                          className="inline-flex items-center gap-1 rounded-full bg-primary-50 py-0.5 pe-1 ps-2.5 text-xs text-primary-800"
+                        >
+                          {a.role_name}
+                          <span className="text-primary-500">· {unitName(a.department) ?? unitName(a.branch) ?? unitName(a.institute) ?? 'مركزي'}</span>
+                          {a.expires_at && <span className="text-amber-700">· حتى {formatDate(a.expires_at)}</span>}
+                          <button
+                            type="button"
+                            onClick={() => revoke.mutate(a.id)}
+                            aria-label={`سحب دور ${a.role_name}`}
+                            className="rounded-full p-0.5 text-primary-400 hover:bg-red-50 hover:text-red-600"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </span>
+                      ))}
+                    </span>
                   </td>
                 </tr>
               ))}
