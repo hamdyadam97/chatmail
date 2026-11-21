@@ -129,6 +129,42 @@ def test_reject_needs_no_signature_and_types_are_admin_defined(api_client, org):
     assert api_client.get(f"{API}request-types/", **h["sr_emp"]).json() == []
 
 
+def test_type_signed_by_a_named_employee_goes_to_that_person_only(api_client, user_factory, org):
+    from apps.accounts.models import User
+
+    h = org["h"]
+    # a second executive exists — a role step would ask both; a named step asks one
+    other = make_employee(user_factory, "sr_exec2", org["emp"].memberships.first().branch)
+    assign_role(other, "executive")
+    User.objects.filter(id=org["ex"].id).update(full_name="وسام أبوخضر")
+    wf = api_client.post(f"{API}workflows/", {"name": "طلب إجازة", "signable": True, "steps": [
+        {"type": "any", "approver_selectors": [{"user": str(org["ex"].id)}]}]}, format="json", **h["sr_admin"])
+    assert wf.status_code == 201, wf.content
+    assert wf.json()["steps"][0]["approver_selectors"] == [{"user": str(org["ex"].id), "name": "وسام أبوخضر"}]
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    r = api_client.post(f"{API}file-request/", {
+        "workflow_id": wf.json()["id"], "title": "إجازة",
+        "file": SimpleUploadedFile("leave.jpg", _scan(), content_type="image/jpeg")}, format="multipart", **h["sr_emp"])
+    assert r.status_code == 201, r.content
+    approvers = [a["user"]["id"] for a in r.json()["steps"][0]["approvers"]]
+    assert approvers == [str(org["ex"].id)]
+    # an unknown or bad id is refused
+    bad = api_client.post(f"{API}workflows/", {"name": "x", "signable": True, "steps": [
+        {"type": "any", "approver_selectors": [{"user": "nope"}]}]}, format="json", **h["sr_admin"])
+    assert bad.status_code == 400
+
+
+def test_role_assignments_search_by_arabic_name(api_client, org):
+    from apps.accounts.models import User
+
+    User.objects.filter(id=org["ex"].id).update(full_name="صقر الغامدي")
+    rows = api_client.get("/api/v1/roles/assignments/?user=صقر", **org["h"]["sr_admin"]).json()
+    assert {r["user"] for r in rows} == {"sr_exec"}
+    by_role = api_client.get("/api/v1/roles/assignments/?user=مدير تنفيذي", **org["h"]["sr_admin"]).json()
+    assert "sr_exec" in {r["user"] for r in by_role}
+
+
 def test_bad_files_and_signatures_are_refused(api_client, org):
     h = org["h"]
     assert _file(api_client, org, data=b"not a pdf at all", name="x.docx").status_code == 400

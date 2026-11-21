@@ -101,7 +101,7 @@ export const approvalsApi = {
   createType: (body: {
     name: string;
     signable: true;
-    steps: Array<{ type: 'all' | 'any'; approver_selectors: Array<{ role: string; scope: SelectorScope }> }>;
+    steps: Array<{ type: 'all' | 'any'; approver_selectors: Array<{ role: string; scope: SelectorScope } | { user: string }> }>;
   }) => apiFetch<WorkflowTemplate>('/approvals/workflows/', { method: 'POST', body }),
   retireType: (id: string) => apiFetch<WorkflowTemplate>(`/approvals/workflows/${id}/`, { method: 'PATCH', body: { is_active: false } }),
   /** الأنواع التي يستطيع المستخدم تقديمها من «طلب جديد». */

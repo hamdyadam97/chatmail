@@ -931,6 +931,17 @@ async function main() {
     const typeSaved = await admin.page.locator('[data-testid="request-type-row"]:has-text("طلب صرف")').waitFor({ timeout: 15000 })
       .then(() => true).catch(() => false);
     check('أنواع الطلبات: المسؤول يعرّف «طلب صرف» (مدير الفرع ← مدير النظام)', typeSaved);
+    // نوع يوقّعه موظف محدد بالاسم (لا كل حاملي الدور).
+    await admin.page.fill('#rt-name', 'طلب إجازة').catch(() => undefined);
+    await admin.page.selectOption('#rt-role-0', '__user').catch(() => undefined);
+    await admin.page.fill('#rt-user-0', 'خالد').catch(() => undefined);
+    await admin.page.locator('[role="listbox"] [role="option"]:has-text("خالد الدوسري")').first().click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.locator('h2:has-text("أنواع الطلبات بتوقيع")').click().catch(() => undefined);  // يغلق قائمة الاقتراحات
+    await admin.page.getByRole('button', { name: 'حفظ النوع' }).click({ timeout: 10000 }).catch(() => undefined);
+    const namedSaved = await admin.page.locator('[data-testid="request-type-row"]:has-text("طلب إجازة"):has-text("خالد الدوسري")')
+      .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    if (!namedSaved) console.log(`    لقطة: ${await shot(admin, 'named-type')}`);
+    check('أنواع الطلبات: «موظف محدد» بالاسم بدل الدور', namedSaved);
 
     // أحمد يرفع ملف الطلب.
     const reqPdf = path.join(work, 'expense.pdf');

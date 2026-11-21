@@ -3,19 +3,26 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FileSignature, Plus, Trash2 } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
+import { RecipientPicker } from '../correspondence/components';
 import { approvalsApi, ROLE_OPTIONS, SCOPE_OPTIONS, type SelectorScope, type WorkflowTemplate } from './api';
+
+/** role = USER_PICK: موظف محدد بالاسم بدل الدور. */
+const USER_PICK = '__user';
 
 interface DraftStep {
   role: string;
   scope: SelectorScope;
+  userIds: string[];
 }
+
+const NEW_STEP = (role = 'branch_manager', scope: SelectorScope = 'sender_branch'): DraftStep => ({ role, scope, userIds: [] });
 
 const roleLabel = (code: string) => ROLE_OPTIONS.find((r) => r.code === code)?.label ?? code;
 const scopeLabel = (code: string) => SCOPE_OPTIONS.find((s) => s.code === code)?.label ?? code;
 
 function describe(t: WorkflowTemplate): string {
   return t.steps
-    .map((s) => s.approver_selectors.map((sel) => (sel.role ? roleLabel(sel.role) : 'موظف محدد')).join(' أو '))
+    .map((s) => s.approver_selectors.map((sel) => (sel.role ? roleLabel(sel.role) : sel.name ?? 'موظف محدد')).join(' أو '))
     .join(' ← ');
 }
 
@@ -24,7 +31,7 @@ export function RequestTypesPage() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ['approvals', 'signable-types'], queryFn: approvalsApi.signableTypes });
   const [name, setName] = useState('');
-  const [steps, setSteps] = useState<DraftStep[]>([{ role: 'branch_manager', scope: 'sender_branch' }]);
+  const [steps, setSteps] = useState<DraftStep[]>([NEW_STEP()]);
   const [error, setError] = useState<string | null>(null);
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['approvals', 'signable-types'] });
@@ -35,11 +42,14 @@ export function RequestTypesPage() {
       approvalsApi.createType({
         name: name.trim(),
         signable: true,
-        steps: steps.map((s) => ({ type: 'any', approver_selectors: [{ role: s.role, scope: s.scope }] })),
+        steps: steps.map((s) => ({
+          type: 'any' as const,
+          approver_selectors: s.role === USER_PICK ? s.userIds.map((id) => ({ user: id })) : [{ role: s.role, scope: s.scope }],
+        })),
       }),
     onSuccess: () => {
       setName('');
-      setSteps([{ role: 'branch_manager', scope: 'sender_branch' }]);
+      setSteps([NEW_STEP()]);
       setError(null);
       refresh();
     },
@@ -76,8 +86,19 @@ export function RequestTypesPage() {
                       {r.label}
                     </option>
                   ))}
+                  <option value={USER_PICK}>موظف محدد…</option>
                 </select>
               </div>
+              {s.role === USER_PICK ? (
+                <div className="min-w-[16rem] flex-1">
+                  <RecipientPicker
+                    id={`rt-user-${i}`}
+                    label="الموظف"
+                    value={s.userIds}
+                    onChange={(ids) => setStep(i, { userIds: ids.slice(-1) })}
+                  />
+                </div>
+              ) : (
               <div>
                 <Label htmlFor={`rt-scope-${i}`}>النطاق</Label>
                 <select id={`rt-scope-${i}`} value={s.scope} onChange={(e) => setStep(i, { scope: e.target.value as SelectorScope })} className="h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm">
@@ -88,6 +109,7 @@ export function RequestTypesPage() {
                   ))}
                 </select>
               </div>
+              )}
               {steps.length > 1 && (
                 <Button size="sm" variant="ghost" aria-label="حذف الخطوة" onClick={() => setSteps((all) => all.filter((_, j) => j !== i))}>
                   <Trash2 className="h-4 w-4" />
@@ -96,18 +118,24 @@ export function RequestTypesPage() {
             </div>
           ))}
           {steps.length < 5 && (
-            <Button size="sm" variant="outline" onClick={() => setSteps((all) => [...all, { role: 'executive', scope: 'central' }])}>
+            <Button size="sm" variant="outline" onClick={() => setSteps((all) => [...all, NEW_STEP('executive', 'central')])}>
               <Plus className="h-4 w-4" />
               إضافة توقيع
             </Button>
           )}
         </div>
         <p className="text-xs text-gray-500">
-          المدير التنفيذي ومدير النظام دورهما على مستوى النظام كله؛ مدير الفرع والإقليمي «في فرع مقدّم الطلب».
+          المدير التنفيذي ومدير النظام دورهما على مستوى النظام كله؛ مدير الفرع والإقليمي «في فرع مقدّم الطلب». الدور يرسل
+          الطلب لكل من يحمله؛ لشخص واحد بعينه اختر «موظف محدد».
         </p>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <div className="flex justify-end">
-          <Button size="sm" disabled={!name.trim()} loading={create.isPending} onClick={() => create.mutate()}>
+          <Button
+            size="sm"
+            disabled={!name.trim() || steps.some((s) => s.role === USER_PICK && s.userIds.length === 0)}
+            loading={create.isPending}
+            onClick={() => create.mutate()}
+          >
             حفظ النوع
           </Button>
         </div>
@@ -127,7 +155,7 @@ export function RequestTypesPage() {
                 <span className="font-medium text-gray-900">{t.name}</span>
                 <span className="ms-2 text-gray-500">{describe(t)}</span>
                 <span className="ms-2 text-xs text-gray-400">
-                  ({t.steps.map((s) => scopeLabel(s.approver_selectors[0]?.scope ?? '')).join('، ')})
+                  ({t.steps.map((s) => (s.approver_selectors[0]?.scope ? scopeLabel(s.approver_selectors[0].scope) : 'بالاسم')).join('، ')})
                 </span>
               </span>
               <Button size="sm" variant="ghost" loading={retire.isPending && retire.variables === t.id} onClick={() => retire.mutate(t.id)}>

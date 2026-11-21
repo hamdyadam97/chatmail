@@ -117,9 +117,14 @@ class AssignmentListCreateView(APIView):
         qs = UserRoleAssignment.objects.select_related(
             "user", "role", "institute", "branch", "department", "granted_by"
         ).order_by("-granted_at")
-        username = request.query_params.get("user")
-        if username:
-            qs = qs.filter(user__username=username)
+        # Search by login name, full name (Arabic) or role name — any part.
+        term = (request.query_params.get("user") or "").strip()
+        if term:
+            from django.db.models import Q
+
+            qs = qs.filter(
+                Q(user__username__icontains=term) | Q(user__full_name__icontains=term) | Q(role__name_ar__icontains=term)
+            )
         return Response(AssignmentReadSerializer(qs, many=True).data)
 
     def post(self, request):

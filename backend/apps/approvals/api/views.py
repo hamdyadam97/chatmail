@@ -7,6 +7,7 @@ that rule.
 
 import base64
 import binascii
+import uuid
 
 from django.db import transaction
 from rest_framework import serializers, status
@@ -242,12 +243,23 @@ class _TemplateStep(serializers.Serializer):
     approver_selectors = serializers.ListField(child=serializers.DictField(), allow_empty=False, max_length=20)
 
     def validate_approver_selectors(self, value):
+        from apps.accounts.models import User
+
+        out = []
         for sel in value:
             if "user" in sel:
+                try:
+                    uuid.UUID(str(sel["user"]))
+                except ValueError:
+                    raise serializers.ValidationError("موظف غير صالح.")
+                if not User.objects.filter(id=str(sel["user"]), is_active=True).exists():
+                    raise serializers.ValidationError("الموظف المحدد غير موجود أو مؤرشف.")
+                out.append({"user": str(sel["user"])})
                 continue
             if sel.get("scope") not in ("central", "sender_institute", "sender_branch", "sender_department") or not sel.get("role"):
                 raise serializers.ValidationError("selector: {user} أو {role, scope}.")
-        return value
+            out.append({"role": sel["role"], "scope": sel["scope"]})
+        return out
 
 
 class WorkflowSerializer(serializers.Serializer):
@@ -257,6 +269,16 @@ class WorkflowSerializer(serializers.Serializer):
     department_id = serializers.UUIDField(required=False, allow_null=True)
     signable = serializers.BooleanField(default=False)
     steps = _TemplateStep(many=True, allow_empty=False, max_length=services.MAX_STEPS)
+
+
+def _named(selector: dict) -> dict:
+    """A {user} selector with that employee's name, for display."""
+    if "user" not in selector:
+        return selector
+    from apps.accounts.models import User
+
+    u = User.objects.filter(id=selector["user"]).only("full_name", "username").first()
+    return {**selector, "name": (u.full_name or u.username) if u else "موظف غير موجود"}
 
 
 def _workflow_dict(w) -> dict:
@@ -269,7 +291,7 @@ def _workflow_dict(w) -> dict:
         "department_id": str(w.department_id) if w.department_id else None,
         "signable": w.signable,
         "steps": [
-            {"step_order": s.step_order, "type": s.step_type, "approver_selectors": s.approver_selectors}
+            {"step_order": s.step_order, "type": s.step_type, "approver_selectors": [_named(sel) for sel in s.approver_selectors]}
             for s in w.steps.order_by("step_order")
         ],
     }
