@@ -39,6 +39,26 @@ def active_assignments(user):
     )
 
 
+def system_admin(username: str | None = None):
+    """The administrator a management command acts as: `username` if given,
+    else the active holder of a central sys_admin assignment (first by
+    username). None if there is none — no account name is hard-coded."""
+    from apps.accounts.models import User
+
+    if username:
+        return User.objects.filter(username=username).first()
+    now = timezone.now()
+    holders = (
+        UserRoleAssignment.objects.filter(
+            role__code="sys_admin", user__is_active=True,
+            institute__isnull=True, branch__isnull=True, department__isnull=True,
+        )
+        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+        .values_list("user_id", flat=True)
+    )
+    return User.objects.filter(id__in=holders).order_by("username").first()
+
+
 DEFAULT_ROLE = "employee"
 
 

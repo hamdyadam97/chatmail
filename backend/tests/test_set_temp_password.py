@@ -12,8 +12,19 @@ SECRET = "Maahad@2026x"
 
 
 def test_one_temporary_password_for_new_accounts_only(user_factory, monkeypatch):
-    admin = user_factory("it.admin")
+    from django.core.management.base import CommandError
+
+    from .conftest import assign_role
+
     new = user_factory("new.one")
+    with pytest.raises(CommandError):  # no system admin yet, and no account name is assumed
+        call_command("set_temp_password")
+    # the command acts as whoever holds the central sys_admin role
+    admin = user_factory("hamdy.adam")
+    assign_role(admin, "sys_admin")
+    old = user_factory("it.admin")
+    assign_role(old, "sys_admin")
+    User.objects.filter(id=old.id).update(is_active=False)  # deactivated: never chosen
     User.objects.filter(id=new.id).update(must_change_password=True)
     used = user_factory("old.hand")
     User.objects.filter(id=used.id).update(must_change_password=True, last_login_at=timezone.now())
@@ -30,3 +41,4 @@ def test_one_temporary_password_for_new_accounts_only(user_factory, monkeypatch)
         assert not User.objects.get(id=other.id).check_password(SECRET)
     entry = AuditLog.objects.get(action="password_reset", target_id=str(new.id))
     assert SECRET not in str(entry.metadata)
+    assert entry.actor_id == admin.id

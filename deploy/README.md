@@ -98,7 +98,7 @@ sudo DOMAIN=mail.example.org bash deploy/scripts/deploy.sh          # RUN_TESTS=
 ```bash
 sudo bash -c 'set -a; . /etc/correspondence/correspondence.env; set +a; cd /opt/correspondence/backend; \
   runuser -u correspondence -- /opt/correspondence/.venv/bin/python manage.py bootstrap_admin \
-  --username it.admin --first-name ... --last-name ... --institute AHL --role sys_admin'
+  --username hamdy.adam --first-name ... --last-name ... --institute AHL --role sys_admin'
 ```
 
 تُطبع كلمة مرور مؤقتة **مرة واحدة**. للفصل بين الواجبات: مسؤول ثانٍ بدور `hr_admin` (إسناد الأدوار) ومراقب أمن بدور `security_auditor` — الأمر يرفض جمع `roles.manage` و`accounts.manage_users` لشخص واحد إلا بخيار صريح. **لا تشغّل `seed_demo` في الإنتاج** (كلمات مروره معروفة).

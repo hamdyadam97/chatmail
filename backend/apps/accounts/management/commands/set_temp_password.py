@@ -27,12 +27,15 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--apply", action="store_true", help="really set the password")
-        parser.add_argument("--by", default="it.admin", help="administrator recorded in the audit log")
+        parser.add_argument("--by", default=None,
+                            help="administrator recorded in the audit log (default: the system admin)")
 
     def handle(self, *args, **opts):
-        admin = User.objects.filter(username=opts["by"]).first()
+        from apps.authorization.services import system_admin
+
+        admin = system_admin(opts["by"])
         if admin is None:
-            raise CommandError(f"no user {opts['by']!r} (use --by)")
+            raise CommandError(f"no user {opts['by']!r}" if opts["by"] else "no active system admin (use --by)")
         users = list(
             User.objects.filter(is_active=True, last_login_at__isnull=True, must_change_password=True)
             .exclude(id=admin.id).order_by("username")

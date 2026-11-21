@@ -1,6 +1,6 @@
 """Create the first administrator(s) on a fresh production install.
 
-    manage.py bootstrap_admin --username it.admin --first-name محمد --last-name الأحمد \
+    manage.py bootstrap_admin --username hamdy.adam --first-name محمد --last-name الأحمد \
         --institute AHL [--branch RYD] --role sys_admin
 
 Prints a temporary password ONCE (must be changed at first login). Unlike

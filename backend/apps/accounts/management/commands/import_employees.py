@@ -25,15 +25,18 @@ class Command(BaseCommand):
         parser.add_argument("file")
         parser.add_argument("--apply", action="store_true", help="really create the accounts")
         parser.add_argument("--out", default="", help="xlsx report with the temporary passwords")
-        parser.add_argument("--by", default="it.admin", help="administrator recorded as the creator")
+        parser.add_argument("--by", default=None,
+                            help="administrator recorded as the creator (default: the system admin)")
         parser.add_argument("--include-test", action="store_true", help="also import rows marked as test accounts")
         parser.add_argument("--create-branches", action="store_true",
                             help="create missing branches under the row's institute (code from the city)")
 
     def handle(self, *args, **opts):
-        admin = User.objects.filter(username=opts["by"]).first()
+        from apps.authorization.services import system_admin
+
+        admin = system_admin(opts["by"])
         if admin is None:
-            raise CommandError(f"no user {opts['by']!r} (use --by)")
+            raise CommandError(f"no user {opts['by']!r}" if opts["by"] else "no active system admin (use --by)")
         if opts["apply"] and not opts["out"]:
             raise CommandError("--apply needs --out (the temporary passwords go there)")
         try:
