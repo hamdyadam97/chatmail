@@ -36,6 +36,35 @@ interface Address {
   address: string;
 }
 
+export interface ExternalContact {
+  address: string;
+  name: string;
+  use_count: number;
+  last_used_at: string | null;
+}
+
+/** مستلم خارجي في المحرر. */
+export interface ExternalRecipient {
+  address: string;
+  name: string;
+}
+
+const EMAIL_RE = /^[^@\s<>"']{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$/;
+
+/** «الاسم <a@b.com>» أو «a@b.com» ← مستلم؛ وإلا null. */
+export function parseRecipient(text: string): ExternalRecipient | null {
+  const t = text.trim().replace(/[,;]+$/, '');
+  const m = t.match(/^(.*?)\s*<\s*([^<>\s]+)\s*>$/);
+  const address = (m ? m[2] : t).trim();
+  if (!EMAIL_RE.test(address)) return null;
+  return { address, name: m ? m[1].replace(/^["']|["']$/g, '').trim() : '' };
+}
+
+/** {عنوان: اسم} للعناوين التي لها اسم. */
+export function namesOf(list: ExternalRecipient[]): Record<string, string> {
+  return Object.fromEntries(list.filter((r) => r.name).map((r) => [r.address.toLowerCase(), r.name]));
+}
+
 export interface ExternalContent {
   v: 1;
   kind: 'external';
@@ -84,7 +113,13 @@ export const externalApi = {
     body: string;
     attachments: Array<{ name: string; mime: string; data: string }>;
     reply_to_id: string | null;
+    /** اسم العرض لكل عنوان (يُحفظ في دفتر العناوين). */
+    names?: Record<string, string>;
   }) => apiFetch<ExternalSummary>('/external-mail/send/', { method: 'POST', body }),
+  /** دفتر العناوين: كل عنوان أرسلتَ إليه يُحفظ تلقائيًا. */
+  contacts: () => apiFetch<ExternalContact[]>('/external-mail/contacts/'),
+  forgetContact: (address: string) =>
+    apiFetch<null>(`/external-mail/contacts/?address=${encodeURIComponent(address)}`, { method: 'DELETE' }),
   mailbox: (userId: string) => apiFetch<MailboxInfo>(`/external-mail/mailboxes/${userId}/`),
   updateMailbox: (userId: string, body: Partial<Pick<MailboxInfo, 'local_part' | 'receiving_enabled' | 'sending_enabled'>>) =>
     apiFetch<MailboxInfo>(`/external-mail/mailboxes/${userId}/`, { method: 'PATCH', body }),

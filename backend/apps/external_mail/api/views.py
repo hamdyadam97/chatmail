@@ -135,8 +135,23 @@ class SendView(APIView):
             body=body.get("body") or "",
             attachments=_decode_attachments(body.get("attachments")),
             reply_to_id=body.get("reply_to_id") or None,
+            names=body.get("names") if isinstance(body.get("names"), dict) else None,
         )
         return Response(services.summary(message), status=HTTP_201_CREATED)
+
+
+class ContactsView(APIView):
+    """The caller's own address book (filled automatically on each send)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(services.contacts(request.user))
+
+    def delete(self, request):
+        if not services.forget_contact(request.user, request.query_params.get("address") or ""):
+            raise NotFound("العنوان غير محفوظ.")
+        return Response(status=204)
 
 
 class MailboxAdminView(APIView):

@@ -10,5 +10,6 @@ urlpatterns = [
     path("messages/<uuid:message_id>/read/", views.MessageReadView.as_view(), name="external-mail-read"),
     path("image-senders/", views.ImageSenderView.as_view(), name="external-mail-image-senders"),
     path("send/", views.SendView.as_view(), name="external-mail-send"),
+    path("contacts/", views.ContactsView.as_view(), name="external-mail-contacts"),
     path("mailboxes/<uuid:user_id>/", views.MailboxAdminView.as_view(), name="external-mailbox"),
 ]

@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Lock, X } from 'lucide-react';
+import { Globe, Lock, X } from 'lucide-react';
 import { Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { unitLabel } from '../../shared/lib/userUnit';
 import { useAuth } from '../auth/AuthContext';
 import { chatApi } from '../chat/api';
+import { externalApi, parseRecipient, type ExternalRecipient } from '../external/service';
 import {
   CLASSIFICATION_LABELS,
   PRIORITY_LABELS,
@@ -17,6 +18,11 @@ export function useDirectory() {
   return useQuery({ queryKey: ['directory-users'], queryFn: chatApi.listUsers, staleTime: 60_000 });
 }
 
+/** دفتر العناوين الخارجية (المحفوظ تلقائيًا عند كل إرسال). */
+export function useExternalContacts(enabled = true) {
+  return useQuery({ queryKey: ['external-contacts'], queryFn: externalApi.contacts, staleTime: 60_000, enabled, retry: false });
+}
+
 interface RecipientPickerProps {
   label: string;
   value: string[];
@@ -26,13 +32,46 @@ interface RecipientPickerProps {
   id: string;
   /** سطر واحد بلا إطار والعنوان في بدايته (أسلوب محرر Outlook). */
   inline?: boolean;
+  /**
+   * عناوين بريد خارجية في نفس الحقل: تُكتب (أو «الاسم <عنوان>») أو تُختار من دفتر
+   * العناوين. `exclude` = العناوين المختارة في الحقل الآخر.
+   */
+  external?: { value: ExternalRecipient[]; onChange: (v: ExternalRecipient[]) => void; exclude?: string[] };
 }
 
-export function RecipientPicker({ label, value, onChange, exclude = [], id, inline = false }: RecipientPickerProps) {
+export function RecipientPicker({ label, value, onChange, exclude = [], id, inline = false, external }: RecipientPickerProps) {
   const { user } = useAuth();
   const { data: users, isLoading } = useDirectory();
+  const { data: contacts } = useExternalContacts(Boolean(external));
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+
+  const takenExt = useMemo(
+    () => new Set([...(external?.value ?? []).map((r) => r.address.toLowerCase()), ...(external?.exclude ?? []).map((a) => a.toLowerCase())]),
+    [external],
+  );
+  const typed = external ? parseRecipient(query) : null;
+  const extMatches = useMemo(() => {
+    if (!external) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return (contacts ?? [])
+      .filter((c) => !takenExt.has(c.address))
+      .filter((c) => c.address.includes(q) || c.name.toLowerCase().includes(q))
+      .slice(0, 6);
+  }, [external, contacts, takenExt, query]);
+  const addExternal = (r: ExternalRecipient) => {
+    if (!external) return;
+    if (!takenExt.has(r.address.toLowerCase())) {
+      const known = (contacts ?? []).find((c) => c.address === r.address.toLowerCase());
+      external.onChange([...external.value, { address: r.address, name: r.name || known?.name || '' }]);
+    }
+    setQuery('');
+  };
+  /** يحوّل ما كُتب إلى مستلم خارجي إن كان عنوانًا صالحًا. */
+  const commitTyped = () => {
+    if (typed) addExternal(typed);
+  };
 
   const byId = useMemo(() => new Map((users ?? []).map((u) => [String(u.id), u])), [users]);
   const hidden = useMemo(() => new Set([String(user?.id), ...exclude, ...value]), [user, exclude, value]);
@@ -84,16 +123,62 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id, inli
             </span>
           );
         })}
+        {external?.value.map((r) => (
+          <span
+            key={r.address}
+            data-testid="external-chip"
+            title={r.address}
+            className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-800 ring-1 ring-amber-200"
+          >
+            <Globe className="h-3 w-3" />
+            {r.name ? (
+              <>
+                {r.name} <span dir="ltr" className="text-amber-600">&lt;{r.address}&gt;</span>
+              </>
+            ) : (
+              <span dir="ltr">{r.address}</span>
+            )}
+            <button
+              type="button"
+              aria-label="إزالة"
+              onClick={() => external.onChange(external.value.filter((x) => x.address !== r.address))}
+              className="text-amber-500 hover:text-amber-800"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
         <input
           id={id}
           value={query}
           onChange={(e) => {
-            setQuery(e.target.value);
+            const v = e.target.value;
+            // فاصلة أو فاصلة منقوطة بعد عنوان كامل = أضفه.
+            if (external && /[,;]$/.test(v) && parseRecipient(v)) {
+              addExternal(parseRecipient(v)!);
+              return;
+            }
+            setQuery(v);
             setOpen(true);
           }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && typed) {
+              e.preventDefault();
+              commitTyped();
+            }
+          }}
           onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder={value.length === 0 ? 'ابحث بالاسم أو اسم المستخدم' : ''}
+          onBlur={() => {
+            commitTyped();
+            setTimeout(() => setOpen(false), 150);
+          }}
+          placeholder={
+            value.length === 0 && !external?.value.length
+              ? external
+                ? 'ابحث باسم الموظف، أو اكتب بريدًا خارجيًا'
+                : 'ابحث بالاسم أو اسم المستخدم'
+              : ''
+          }
           autoComplete="off"
           className="min-w-[8rem] flex-1 border-0 bg-transparent py-1 text-sm outline-none"
         />
@@ -105,8 +190,10 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id, inli
               <Spinner size="sm" />
             </div>
           )}
-          {!isLoading && matches.length === 0 && (
-            <p className="px-3 py-2 text-sm text-gray-400">لا نتائج</p>
+          {!isLoading && matches.length === 0 && extMatches.length === 0 && !typed && (
+            <p className="px-3 py-2 text-sm text-gray-400">
+              لا نتائج{external ? ' — لعنوان خارجي اكتبه كاملًا (name@example.com)' : ''}
+            </p>
           )}
           {matches.map((u) => (
             <button
@@ -130,6 +217,39 @@ export function RecipientPicker({ label, value, onChange, exclude = [], id, inli
               </span>
             </button>
           ))}
+          {extMatches.map((c) => (
+            <button
+              key={c.address}
+              type="button"
+              role="option"
+              aria-selected={false}
+              data-testid="external-suggestion"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => addExternal({ address: c.address, name: c.name })}
+              className="flex w-full items-start gap-2 px-3 py-2 text-start text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <Globe className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <span className="min-w-0 flex-1">
+                <span className="block break-words">{c.name || c.address}</span>
+                <span className="block text-xs text-gray-500">
+                  خارجي{c.name && <span dir="ltr"> · {c.address}</span>}
+                </span>
+              </span>
+            </button>
+          ))}
+          {typed && !takenExt.has(typed.address.toLowerCase()) && !extMatches.some((c) => c.address === typed.address.toLowerCase()) && (
+            <button
+              type="button"
+              role="option"
+              aria-selected={false}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => addExternal(typed)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm text-amber-800 hover:bg-amber-50"
+            >
+              <Globe className="h-4 w-4 shrink-0" />
+              إضافة بريد خارجي: <span dir="ltr" className="font-mono text-xs">{typed.address}</span>
+            </button>
+          )}
         </div>
       )}
     </div>

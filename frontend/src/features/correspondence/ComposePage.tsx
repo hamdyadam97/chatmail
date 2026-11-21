@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { Paperclip, Save, Send, Trash2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Globe, Paperclip, Save, Send, Trash2 } from 'lucide-react';
+import { externalApi, fileToBase64, namesOf, type ExternalRecipient } from '../external/service';
 import { Button, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
@@ -33,6 +34,14 @@ export function ComposeForm({ embedded = false, onCancel }: { embedded?: boolean
   const clientRef = useRef(crypto.randomUUID());
   const [to, setTo] = useState<string[]>([]);
   const [cc, setCc] = useState<string[]>([]);
+  // عناوين خارجية في نفس الرسالة: تخرج عبر البريد الخارجي بنفس العنوان والنص والمرفقات.
+  const [toExt, setToExt] = useState<ExternalRecipient[]>([]);
+  const [ccExt, setCcExt] = useState<ExternalRecipient[]>([]);
+  const { data: mailbox } = useQuery({ queryKey: ['external-mailbox'], queryFn: externalApi.me, staleTime: 30_000, retry: false });
+  const canExternal = Boolean(mailbox?.sending_enabled && mailbox.sending_configured) && !forwardParam;
+  // إعادة المحاولة بعد فشل جزئي لا تكرر الجزء الذي خرج.
+  const internalSent = useRef<string | null>(null);
+  const externalSent = useRef<string | null>(null);
   const [priority, setPriority] = useState<Priority>('normal');
   const [classification, setClassification] = useState<Classification>('normal');
   const [dueDate, setDueDate] = useState('');
@@ -116,7 +125,11 @@ export function ComposeForm({ embedded = false, onCancel }: { embedded?: boolean
       setSaved(draft.content?.attachments ?? []);
       setFiles([]);
       await queryClient.invalidateQueries({ queryKey: ['correspondences'] });
-      setNotice('حُفظت المسودة — تجدها في «المسودات» من أي جهاز.');
+      setNotice(
+        toExt.length + ccExt.length > 0
+          ? 'حُفظت المسودة للموظفين — العناوين الخارجية لا تُحفظ في المسودة، أضفها عند الإرسال.'
+          : 'حُفظت المسودة — تجدها في «المسودات» من أي جهاز.',
+      );
     } catch (err) {
       setError(toUserMessage(err, 'تعذر حفظ المسودة'));
     } finally {
@@ -128,17 +141,55 @@ export function ComposeForm({ embedded = false, onCancel }: { embedded?: boolean
     e.preventDefault();
     setError(null);
     setNotice(null);
-    if (to.length === 0) return setError('حدد مستلمًا واحدًا على الأقل في «إلى»');
+    const hasInternal = to.length + cc.length > 0;
+    const hasExternal = toExt.length + ccExt.length > 0;
+    if (to.length === 0 && toExt.length === 0) return setError('حدد مستلمًا واحدًا على الأقل في «إلى»');
     if (!subject.trim()) return setError('العنوان مطلوب');
     setSending(true);
+    let stage: 'internal' | 'external' = 'internal';
     try {
-      const sent = draftId.current
-        ? await saveDraft(draftId.current, input(), true)
-        : await sendCorrespondence(input(), { forwardOfId: forwardOf?.id, clientRef: clientRef.current });
-      await queryClient.invalidateQueries({ queryKey: ['correspondences'] });
-      navigate(`/mail/sent/${sent.id}`, { replace: true });
+      if (hasInternal && !internalSent.current) {
+        // «إلى» الداخلي فارغ والموظفون في «نسخة» فقط: يصيرون في «إلى».
+        const base = to.length ? input() : { ...input(), to: cc, cc: [] };
+        const sent = draftId.current
+          ? await saveDraft(draftId.current, base, true)
+          : await sendCorrespondence(base, { forwardOfId: forwardOf?.id, clientRef: clientRef.current });
+        internalSent.current = sent.id;
+        await queryClient.invalidateQueries({ queryKey: ['correspondences'] });
+      }
+      stage = 'external';
+      if (hasExternal && !externalSent.current) {
+        const extTo = toExt.length ? toExt : ccExt;
+        const extCc = toExt.length ? ccExt : [];
+        const savedFiles = await Promise.all(
+          saved.map(async (a) => new File([await correspondenceApi.download(a.id)], a.name, { type: a.mime })),
+        );
+        const out = await externalApi.send({
+          to: extTo.map((r) => r.address),
+          cc: extCc.map((r) => r.address),
+          subject: subject.trim(),
+          body,
+          attachments: await Promise.all(
+            [...savedFiles, ...files].map(async (f) => ({ name: f.name, mime: f.type || 'application/octet-stream', data: await fileToBase64(f) })),
+          ),
+          reply_to_id: null,
+          names: namesOf([...extTo, ...extCc]),
+        });
+        externalSent.current = out.id;
+        void queryClient.invalidateQueries({ queryKey: ['external-messages'] });
+        void queryClient.invalidateQueries({ queryKey: ['external-contacts'] });
+      }
+      navigate(internalSent.current ? `/mail/sent/${internalSent.current}` : `/mail/external/${externalSent.current}`, {
+        replace: true,
+      });
     } catch (err) {
-      setError(toUserMessage(err, 'تعذر إرسال المراسلة'));
+      if (stage === 'external' && internalSent.current) {
+        setError(
+          `وصلت الرسالة للموظفين، لكن تعذر إرسالها للعناوين الخارجية: ${toUserMessage(err, 'خطأ في الإرسال')} — اضغط «إرسال» لإعادة المحاولة للخارج فقط.`,
+        );
+      } else {
+        setError(toUserMessage(err, stage === 'external' ? 'تعذر الإرسال الخارجي' : 'تعذر إرسال المراسلة'));
+      }
     } finally {
       setSending(false);
     }
@@ -186,10 +237,26 @@ export function ComposeForm({ embedded = false, onCancel }: { embedded?: boolean
 
       <div className="divide-y divide-gray-200 border-b border-gray-200 px-4">
         <div className="py-1.5">
-          <RecipientPicker id="to" label="إلى" value={to} onChange={setTo} exclude={cc} inline />
+          <RecipientPicker
+            id="to"
+            label="إلى"
+            value={to}
+            onChange={setTo}
+            exclude={cc}
+            inline
+            external={canExternal ? { value: toExt, onChange: setToExt, exclude: ccExt.map((r) => r.address) } : undefined}
+          />
         </div>
         <div className="py-1.5">
-          <RecipientPicker id="cc" label="نسخة" value={cc} onChange={setCc} exclude={to} inline />
+          <RecipientPicker
+            id="cc"
+            label="نسخة"
+            value={cc}
+            onChange={setCc}
+            exclude={to}
+            inline
+            external={canExternal ? { value: ccExt, onChange: setCcExt, exclude: toExt.map((r) => r.address) } : undefined}
+          />
         </div>
         <div className="py-1">
           <input
@@ -235,6 +302,17 @@ export function ComposeForm({ embedded = false, onCancel }: { embedded?: boolean
           </label>
         </div>
       </div>
+
+      {toExt.length + ccExt.length > 0 && (
+        <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200" data-testid="external-notice">
+          <Globe className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            ستخرج نسخة من هذه الرسالة إلى {toExt.length + ccExt.length} عنوان خارجي عبر الإنترنت من بريدك{' '}
+            <span dir="ltr" className="font-mono">{mailbox?.address}</span>
+            {to.length + cc.length > 0 ? '، وتصل للموظفين كمراسلة داخلية كالمعتاد' : ''}. لا ترسل معلومات سرية للخارج.
+          </span>
+        </div>
+      )}
 
       {classification === 'institutional_archive_eligible' && (
         <div className="mx-4 mt-3">

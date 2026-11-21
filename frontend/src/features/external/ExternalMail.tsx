@@ -27,7 +27,7 @@ import {
 import { Avatar, Button, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
-import { formatDate } from '../correspondence/components';
+import { formatDate, useExternalContacts } from '../correspondence/components';
 import { AttachmentRow } from '../correspondence/DetailsPage';
 import { correspondenceApi, type AttachmentMeta } from '../correspondence/api';
 import { downloadAttachment, formatBytes } from '../correspondence/content';
@@ -503,6 +503,75 @@ function splitAddresses(text: string): string[] {
     .filter(Boolean);
 }
 
+/** حقل عناوين نصي (مفصول بفواصل) يقترح من دفتر العناوين للعنوان الجاري كتابته. */
+function AddressInput({ id, value, onChange, placeholder, label, className, required }: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  label: string;
+  className: string;
+  required?: boolean;
+}) {
+  const { data: contacts } = useExternalContacts();
+  const [open, setOpen] = useState(false);
+  const parts = value.split(/([,;]\s*)/);
+  const current = (parts[parts.length - 1] ?? '').trim().toLowerCase();
+  // العناوين المكتملة قبل الجاري كتابته لا تُقترح مرة ثانية.
+  const chosen = new Set(splitAddresses(parts.slice(0, -1).join('')).map((a) => a.toLowerCase()));
+  const matches = current
+    ? (contacts ?? [])
+        .filter((c) => !chosen.has(c.address) && c.address !== current)
+        .filter((c) => c.address.includes(current) || c.name.toLowerCase().includes(current))
+        .slice(0, 6)
+    : [];
+  const pick = (address: string) => {
+    parts[parts.length - 1] = address;
+    onChange(`${parts.join('')}, `);
+  };
+  return (
+    <div className="relative">
+      <input
+        id={id}
+        dir="ltr"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={placeholder}
+        className={className}
+        aria-label={label}
+        autoComplete="off"
+        required={required}
+      />
+      {open && matches.length > 0 && (
+        <div role="listbox" aria-label={`اقتراحات ${label}`} className="absolute inset-x-0 top-full z-20 mt-1 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+          {matches.map((c) => (
+            <button
+              key={c.address}
+              type="button"
+              role="option"
+              aria-selected={false}
+              data-testid="external-suggestion"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => pick(c.address)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <span className="min-w-0 flex-1">
+                {c.name && <span className="block">{c.name}</span>}
+                <span dir="ltr" className="block text-xs text-gray-500">{c.address}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -516,6 +585,8 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
   const [body, setBody] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // اسم المرسل الأصلي عند الرد يُحفظ معه في دفتر العناوين.
+  const [names, setNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const sourceId = replyId ?? forwardId;
@@ -540,6 +611,9 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
       }
       const mine = (mailbox.address ?? '').toLowerCase();
       setTo(c.from.address);
+      setNames(
+        Object.fromEntries([c.from, ...c.to, ...c.cc].filter((a) => a.name).map((a) => [a.address.toLowerCase(), a.name])),
+      );
       if (replyAll) {
         const sender = c.from.address.toLowerCase();
         setCc(
@@ -573,9 +647,11 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
           files.map(async (f) => ({ name: f.name, mime: f.type || 'application/octet-stream', data: await fileToBase64(f) })),
         ),
         reply_to_id: replyId,
+        names,
       }),
     onSuccess: (sent) => {
       void queryClient.invalidateQueries({ queryKey: ['external-messages'] });
+      void queryClient.invalidateQueries({ queryKey: ['external-contacts'] });
       navigate(`/mail/external/${sent.id}`);
     },
     onError: (err) => setError(toUserMessage(err, 'تعذر الإرسال')),
@@ -613,8 +689,8 @@ function ExternalCompose({ mailbox }: { mailbox: MailboxInfo }) {
         <p className="text-xs text-gray-500">
           من: <span dir="ltr" className="font-mono">{mailbox.address}</span>
         </p>
-        <input id="ext-to" dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} placeholder="إلى: name@example.com" className={field} aria-label="إلى" required />
-        <input id="ext-cc" dir="ltr" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="نسخة (اختياري)" className={field} aria-label="نسخة" />
+        <AddressInput id="ext-to" value={to} onChange={setTo} placeholder="إلى: name@example.com" className={field} label="إلى" required />
+        <AddressInput id="ext-cc" value={cc} onChange={setCc} placeholder="نسخة (اختياري)" className={field} label="نسخة" />
         <input id="ext-subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="العنوان" className={cn(field, 'font-medium')} aria-label="العنوان" required />
       </div>
       <textarea

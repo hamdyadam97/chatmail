@@ -26,7 +26,7 @@ from apps.correspondence.services import store_blob
 from apps.notifications.services import notify
 from apps.textsearch import matches
 
-from .models import ExternalAttachment, ExternalMailbox, ExternalMessage
+from .models import ExternalAttachment, ExternalContact, ExternalMailbox, ExternalMessage
 
 logger = logging.getLogger(__name__)
 
@@ -437,7 +437,56 @@ def _clean_recipients(values, field) -> list[str]:
     return out
 
 
-def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_id=None) -> ExternalMessage:
+# --- address book ---------------------------------------------------------------------------
+
+CONTACTS_LIMIT = 500
+MAX_CONTACT_NAME = 200
+
+
+def _clean_name(name) -> str:
+    return " ".join(str(name or "").replace("<", " ").replace(">", " ").split())[:MAX_CONTACT_NAME]
+
+
+def _contact_name(c: ExternalContact) -> str:
+    if not c.name_enc:
+        return ""
+    try:
+        return vault.open_json(c.name_enc, purpose="external-contact", owner=c.id) or ""
+    except vault.VaultError:
+        return ""
+
+
+def remember_contacts(user, addresses, names: dict | None = None) -> None:
+    """Upsert the owner's address book after a send. A name given now
+    replaces the stored one; an address sent without a name keeps its name."""
+    names = {str(k).strip().lower(): _clean_name(v) for k, v in (names or {}).items()}
+    now = timezone.now()
+    for address in {a.strip().lower() for a in addresses if a}:
+        contact, _ = ExternalContact.objects.get_or_create(owner=user, address=address)
+        contact.use_count += 1
+        contact.last_used_at = now
+        fields = ["use_count", "last_used_at"]
+        if names.get(address):
+            contact.name_enc = vault.seal_json(names[address], purpose="external-contact", owner=contact.id)
+            fields.append("name_enc")
+        contact.save(update_fields=fields)
+
+
+def contacts(user) -> list[dict]:
+    rows = ExternalContact.objects.filter(owner=user).order_by("-last_used_at", "address")[:CONTACTS_LIMIT]
+    return [
+        {"address": c.address, "name": _contact_name(c), "use_count": c.use_count,
+         "last_used_at": c.last_used_at.isoformat() if c.last_used_at else None}
+        for c in rows
+    ]
+
+
+def forget_contact(user, address: str) -> bool:
+    deleted, _ = ExternalContact.objects.filter(owner=user, address=(address or "").strip().lower()).delete()
+    return bool(deleted)
+
+
+def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_id=None, names=None) -> ExternalMessage:
     import requests
 
     if not sending_configured():
@@ -467,16 +516,24 @@ def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_i
         if parent is not None and parent.message_id:
             headers = {"In-Reply-To": parent.message_id, "References": parent.message_id}
     message_id = make_msgid(domain=domain())
+    # Display names typed by the sender (or remembered) — {address: name}.
+    known = {c["address"]: c["name"] for c in contacts(user) if c["name"]}
+    given = {str(k).strip().lower(): _clean_name(v) for k, v in (names or {}).items() if _clean_name(v)}
+    name_of = lambda a: given.get(a.lower()) or known.get(a.lower(), "")  # noqa: E731
+
+    def party(a):
+        return {"email": a, **({"name": name_of(a)} if name_of(a) else {})}
+
     payload = {
         "sender": {"name": user.full_name or user.username, "email": address},
         "replyTo": {"email": address, "name": user.full_name or user.username},
-        "to": [{"email": a} for a in to_list],
+        "to": [party(a) for a in to_list],
         "subject": subject,
         "textContent": body or " ",
         "headers": {"Message-ID": message_id, **headers},
     }
     if cc_list:
-        payload["cc"] = [{"email": a} for a in cc_list]
+        payload["cc"] = [party(a) for a in cc_list]
     if files:
         import base64
 
@@ -506,12 +563,13 @@ def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_i
         _seal_content(message, {
             "v": 1, "kind": "external", "direction": "out",
             "from": {"name": user.full_name or user.username, "address": address},
-            "to": [{"name": "", "address": a} for a in to_list],
-            "cc": [{"name": "", "address": a} for a in cc_list],
+            "to": [{"name": name_of(a), "address": a} for a in to_list],
+            "cc": [{"name": name_of(a), "address": a} for a in cc_list],
             "subject": subject, "date": timezone.now().isoformat(), "body": body,
             "html_converted": False, "auth": "pass", "attachments": attachments,
             "removed_infected": [], "virus_scan": "off",
         })
+        remember_contacts(user, to_list + cc_list, given)
     log(actor=user, action="external_mail_sent", target_type="external_message", target_id=message.id,
         metadata={"recipients": len(to_list) + len(cc_list), "attachments": len(files)})
     return message

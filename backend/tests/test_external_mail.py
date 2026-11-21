@@ -268,6 +268,35 @@ def test_send_rejects_internal_and_failures_leave_no_row(ahmed, monkeypatch, api
     assert r.status_code == 502 and not ExternalMessage.objects.filter(direction="out").exists()
 
 
+def test_sent_addresses_are_remembered_with_sealed_names(ahmed, user_factory, monkeypatch, api_client):
+    from apps.external_mail.models import ExternalContact
+
+    calls = []
+    monkeypatch.setattr("requests.post", lambda url, **kw: calls.append(kw["json"]) or FakeResponse())
+    login_and_get_access(api_client, "ahmed")
+    r = api_client.post(f"{API}send/", {"to": ["Ahmed.Salah@ArarHni.com"], "cc": ["boss@gmail.com"], "subject": "s",
+                                        "body": "b", "names": {"ahmed.salah@ararhni.com": "أحمد\nصلاح <x>"}}, format="json")
+    assert r.status_code == 201, r.content
+    assert calls[0]["to"] == [{"email": "Ahmed.Salah@ArarHni.com", "name": "أحمد صلاح x"}]  # no header injection
+    book = api_client.get(f"{API}contacts/").json()
+    assert {c["address"]: c["name"] for c in book} == {"ahmed.salah@ararhni.com": "أحمد صلاح x", "boss@gmail.com": ""}
+    assert "أحمد" not in repr(list(ExternalContact.objects.values("address", "name_enc")))  # name sealed
+
+    # next send without a name: the remembered one is used, and the count grows
+    api_client.post(f"{API}send/", {"to": ["ahmed.salah@ararhni.com"], "subject": "s2", "body": "b"}, format="json")
+    assert calls[1]["to"] == [{"email": "ahmed.salah@ararhni.com", "name": "أحمد صلاح x"}]
+    assert ExternalContact.objects.get(address="ahmed.salah@ararhni.com").use_count == 2
+
+    # private to the owner; forgetting removes it
+    user_factory("mallory")
+    login_and_get_access(api_client, "mallory")
+    assert api_client.get(f"{API}contacts/").json() == []
+    assert api_client.delete(f"{API}contacts/?address=boss@gmail.com").status_code == 404
+    login_and_get_access(api_client, "ahmed")
+    assert api_client.delete(f"{API}contacts/?address=BOSS@gmail.com").status_code == 204
+    assert [c["address"] for c in api_client.get(f"{API}contacts/").json()] == ["ahmed.salah@ararhni.com"]
+
+
 # --- API -----------------------------------------------------------------------------------------
 
 def test_messages_are_private_to_their_owner(ahmed, user_factory, api_client):

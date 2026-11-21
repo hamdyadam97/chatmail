@@ -704,6 +704,42 @@ async function main() {
     check('إعادة توجيه: العنوان Fwd: والنص الأصلي في المحرر', (await ahmed.page.inputValue('#ext-subject').catch(() => '')) === `Fwd: ${htmlSubject}`
       && (await ahmed.page.inputValue('#ext-body').catch(() => '')).includes('رسالة محوّلة')
       && (await ahmed.page.inputValue('#ext-to').catch(() => 'x')) === '');
+
+    // رسالة واحدة لموظف وعنوان خارجي معًا، والعنوان يُحفظ ويُقترح بعد ذلك.
+    const mixedSubject = `داخلي وخارجي ${Date.now()}`;
+    const callsBefore = brevoCalls.filter((c) => c.url === '/v3/smtp/email').length;
+    await ahmed.page.goto(`${UI}/mail/inbox`);
+    await ahmed.page.click('button:has-text("رسالة جديدة")');
+    await ahmed.page.locator('#subject').waitFor({ timeout: 15000 });
+    await ahmed.page.fill('#to', 'محمد');
+    await ahmed.page.locator('[role="listbox"] [role="option"]:has-text("محمد الشهري")').first().click();
+    await ahmed.page.fill('#to', 'أحمد صلاح <ahmed.salah@ararhni.example>');
+    await ahmed.page.press('#to', 'Enter');
+    const chip = await ahmed.page.locator('[data-testid="external-chip"]').first().innerText({ timeout: 10000 }).catch(() => '');
+    const noticeShown = await ahmed.page.locator('[data-testid="external-notice"]').isVisible().catch(() => false);
+    await ahmed.page.fill('#subject', mixedSubject);
+    await ahmed.page.fill('#body', 'نفس الرسالة للزميل وللعنوان الخارجي.');
+    await ahmed.page.getByRole('button', { name: 'إرسال', exact: true }).click();
+    const mixedSent = await ahmed.page.waitForURL(/\/mail\/sent\/[0-9a-f-]{36}$/, { timeout: 20000 }).then(() => true).catch(() => false);
+    const mixedCall = brevoCalls.filter((c) => c.url === '/v3/smtp/email')[callsBefore];
+    check('رسالة واحدة: تصل للموظف داخليًا وتخرج للعنوان الخارجي باسمه', mixedSent && chip.includes('أحمد صلاح') && noticeShown
+      && mixedCall?.json.subject === mixedSubject && mixedCall.json.to[0].email === 'ahmed.salah@ararhni.example'
+      && mixedCall.json.to[0].name === 'أحمد صلاح', JSON.stringify(mixedCall?.json.to ?? null));
+    // متصفح محمد أُغلق سابقًا؛ نتحقق من الخادم أنه مشارك مستلم في المراسلة المرسلة.
+    const sentId = ahmed.page.url().split('/').pop();
+    const mohamedGot = await runPython(
+      `from apps.correspondence.models import Correspondence as C; c = C.objects.get(id=${JSON.stringify(sentId)}); ` +
+        `assert c.status != "draft" and c.participants.filter(user__username="mohamed", kind="to").exists()`,
+    ).then(() => true).catch(() => false);
+    check('mohamed: مستلم نفس الرسالة داخليًا', mohamedGot);
+    await ahmed.page.click('button:has-text("رسالة جديدة")');
+    await ahmed.page.locator('#subject').waitFor({ timeout: 15000 });
+    await ahmed.page.fill('#to', 'صلاح');
+    const remembered = ahmed.page.locator('[data-testid="external-suggestion"]:has-text("أحمد صلاح")').first();
+    const rememberedOk = await remembered.waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+    await remembered.click().catch(() => undefined);
+    const chipAgain = await ahmed.page.locator('[data-testid="external-chip"]').first().innerText({ timeout: 5000 }).catch(() => '');
+    check('دفتر العناوين: كتابة الاسم تقترح العنوان المحفوظ', rememberedOk && chipAgain.includes('ahmed.salah@ararhni.example'));
     brevo.close();
 
     section('7ج) الموبايل (PWA) — شاشة 412×915 لمس');

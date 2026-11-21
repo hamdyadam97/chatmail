@@ -58,6 +58,24 @@ class ExternalMessage(models.Model):
         indexes = [models.Index(fields=["owner", "-created_at"], name="idx_ext_msg_owner_time")]
 
 
+class ExternalContact(models.Model):
+    """The owner's address book: every external address they sent to is
+    remembered so it is suggested next time. The address is routing metadata
+    (kept in clear like ExternalMessage.recipients); the display name is
+    sealed (apps.vault, purpose "external-contact", bound to the row)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="external_contacts")
+    address = models.CharField(max_length=320)  # lower-cased
+    name_enc = models.BinaryField(null=True, blank=True)
+    use_count = models.IntegerField(default=0)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "external_contacts"
+        constraints = [models.UniqueConstraint(fields=["owner", "address"], name="uq_ext_contact_owner_address")]
+
+
 class ExternalAttachment(models.Model):
     message = models.ForeignKey(ExternalMessage, on_delete=models.CASCADE, related_name="attachments")
     stored_file = models.ForeignKey("correspondence.StoredFile", on_delete=models.PROTECT, related_name="+")
