@@ -103,7 +103,8 @@ def filtered_managed_users(request):
     scope = managed_scope_q(request.user)
     if scope is None:
         raise PermissionDenied("لا تملك صلاحية إدارة الحسابات.")
-    qs = User.objects.filter(scope).distinct()
+    # Permanently deleted accounts are only shells kept for others' records.
+    qs = User.objects.filter(scope, purged_at__isnull=True).distinct()
     state = request.query_params.get("status", "all")
     if state == "active":
         qs = qs.filter(is_active=True)

@@ -159,6 +159,9 @@ export const adminApi = {
   resetPassword: (id: string) => apiFetch<{ temp_password: string }>(`/users/${id}/reset-password/`, { method: 'POST' }),
   /** حذف نهائي لحساب لم يُستخدم أبدًا؛ الخادم يرفض (409) ما سواه. */
   deleteUser: (id: string) => apiFetch<null>(`/users/${id}/`, { method: 'DELETE' }),
+  /** حذف نهائي لحساب مستخدَم (مدير النظام فقط): تبقى رسائله عند مستلميها باسم «موظف محذوف». */
+  purgeUser: (id: string, confirmUsername: string) =>
+    apiFetch<{ purged: boolean }>(`/users/${id}/purge/`, { method: 'POST', body: { confirm_username: confirmUsername } }),
   revokeSessions: (id: string) => apiFetch<{ revoked: number }>(`/users/${id}/revoke-sessions/`, { method: 'POST' }),
   memberships: (id: string) => apiFetch<Membership[]>(`/users/${id}/memberships/`),
   addMembership: (id: string, body: UnitChoice & { job_title?: string; employment_type?: EmploymentType; is_primary?: boolean }) =>

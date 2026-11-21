@@ -342,6 +342,42 @@ class UserDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class PurgeUserView(APIView):
+    """POST: permanently delete an employee who USED the system (user decision
+    2026-11-21) — the system administrator only (central roles.manage), with
+    the username typed again. What they sent stays with its recipients as
+    «موظف محذوف»; see accounts.deletion.purge. Cannot be undone."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, user_id):
+        from ..deletion import purge
+
+        target = User.objects.filter(id=user_id).first()
+        if target is None or target.purged_at is not None:
+            raise PermissionDenied("المستخدم غير موجود.")
+        if not has_permission(request.user, "roles.manage"):
+            raise PermissionDenied("الحذف النهائي لمدير النظام فقط.")
+        if target.id == request.user.id:
+            raise PermissionDenied("لا يمكنك حذف حسابك.")
+        body = request.data if isinstance(request.data, dict) else {}
+        if str(body.get("confirm_username") or "").strip() != target.username:
+            raise ValidationError({"confirm_username": "اكتب اسم المستخدم كما هو للتأكيد."})
+        username = target.username
+        with transaction.atomic():
+            counts = purge(target)
+            log(
+                actor=request.user,
+                action="account_purged",
+                target_type="user",
+                target_id=target.id,
+                org_scope=primary_org_scope(request.user),
+                **request_context(request),
+                metadata={"username": username, **counts},
+            )
+        return Response({"purged": True, **counts})
+
+
 class ResetPasswordView(APIView):
     """Login-only password reset (SEC-08).
 

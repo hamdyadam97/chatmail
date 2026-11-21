@@ -94,6 +94,64 @@ def test_delete_only_an_account_never_used(api_client, user_factory, staff):
     assert api_client.delete(f"{USERS}{staff['central'].id}/", **staff["h_central"]).status_code == 403
 
 
+def test_purge_removes_the_employee_but_keeps_what_others_received(api_client, user_factory, staff, settings, tmp_path):
+    """Permanent delete of a used account: own data goes, sent mail stays for
+    its recipients as «موظف محذوف», the audit log is untouched."""
+    from apps.accounts.models import User
+    from apps.authorization.models import UserRoleAssignment
+    from apps.correspondence.models import Correspondence, StoredFile
+    from apps.external_mail import services as ext
+    from apps.external_mail.models import ExternalContact, ExternalMessage
+    from apps.messaging.models import ConversationMember
+
+    from .correspondence_utils import compose, prepare_and_send, upload
+    from .messaging_utils import create_conversation
+
+    settings.ENCRYPTED_BLOB_ROOT = tmp_path / "blobs"
+    leaver, h_leaver = staff["jed"], auth(api_client, "adm_jed")
+    sent = prepare_and_send(api_client, h_leaver, [staff["emp"]], subject="تسليم عهدة")
+    file_id = upload(api_client, h_leaver).json()["id"]
+    draft = compose(api_client, h_leaver, [staff["emp"]], send=False, attachment_ids=[file_id]).json()
+    group = create_conversation(api_client, h_leaver, "group", [staff["emp"].id], title="فريق")
+    assert group.status_code == 201, group.content
+    ExternalMessage.objects.create(owner=leaver, direction="in", mail_from="x@y.com", recipients=["jed@x"])
+    ext.remember_contacts(leaver, ["friend@gmail.com"], {"friend@gmail.com": "صديق"})
+    audit_rows = AuditLog.objects.filter(actor=leaver).count()
+
+    url = f"{USERS}{leaver.id}/purge/"
+    body = {"confirm_username": "adm_jed"}
+    assert api_client.post(url, body, format="json", **staff["h_scoped"]).status_code == 403  # branch admin: no
+    assert api_client.post(url, body, format="json", **staff["h_emp"]).status_code == 403
+    assert api_client.post(url, {"confirm_username": "wrong"}, format="json", **staff["h_central"]).status_code == 400
+    r = api_client.post(url, body, format="json", **staff["h_central"])
+    assert r.status_code == 200, r.content
+    assert r.json()["drafts"] == 1 and r.json()["external_messages"] == 1
+
+    shell = User.objects.get(id=leaver.id)
+    assert shell.full_name == "موظف محذوف" and shell.username != "adm_jed" and shell.purged_at
+    assert not shell.is_active and not shell.has_usable_password() and shell.optional_email is None
+    assert not UserRoleAssignment.objects.filter(user=shell).exists()
+    assert not ExternalMessage.objects.filter(owner=shell).exists() and not ExternalContact.objects.filter(owner=shell).exists()
+    assert not Correspondence.objects.filter(id=draft["id"]).exists()
+    assert StoredFile.objects.get(id=file_id).deleted_at is not None
+    assert not ConversationMember.objects.filter(user=shell, conversation__type="group").exists()
+    assert not User.objects.filter(username="adm_jed").exists()
+    # the recipient still reads it, from «موظف محذوف»
+    got = api_client.get(f"/api/v1/correspondences/{sent['id']}/", **staff["h_emp"])
+    assert got.status_code == 200 and got.json()["sender"]["full_name"] == "موظف محذوف"
+    assert got.json()["content"]["subject"] == "تسليم عهدة"
+    # gone from the admin list; audit history untouched, the purge itself recorded
+    everyone = _usernames(api_client.get(f"{USERS}managed/?page_size=100", **staff["h_central"]))
+    assert shell.username not in everyone
+    assert AuditLog.objects.filter(actor=shell).count() == audit_rows
+    entry = AuditLog.objects.get(action="account_purged")
+    assert entry.metadata["username"] == "adm_jed" and entry.actor_id == staff["central"].id
+    # twice → not found; never oneself
+    assert api_client.post(url, body, format="json", **staff["h_central"]).status_code == 403
+    me = f"{USERS}{staff['central'].id}/purge/"
+    assert api_client.post(me, {"confirm_username": "adm_central"}, format="json", **staff["h_central"]).status_code == 403
+
+
 def test_new_account_gets_the_shared_temp_password_when_configured(api_client, staff, settings):
     from apps.accounts.models import User
 

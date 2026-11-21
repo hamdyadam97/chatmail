@@ -54,6 +54,9 @@ class User(AbstractBaseUser):
     last_login_at = models.DateTimeField(null=True, blank=True)
     deactivated_at = models.DateTimeField(null=True, blank=True)
     deactivation_reason = models.CharField(max_length=255, blank=True, default="")
+    # Permanently deleted (accounts.deletion.purge): an empty shell kept only so
+    # what the employee sent stays readable to its recipients as «موظف محذوف».
+    purged_at = models.DateTimeField(null=True, blank=True)
 
     USERNAME_FIELD = "username"
     REQUIRED_FIELDS: list = []

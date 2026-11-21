@@ -331,21 +331,53 @@ async function main() {
     await admin.page.waitForFunction(() => !document.body.innerText.includes('ahmed'), null, { timeout: 15000 }).catch(() => undefined);
     check('الموظفون: فلتر «فرع الرياض» يعرض أحمد، و«بلا فرع» لا يعرضه', inRyd && !(await listed('ahmed')));
 
-    // حذف نهائي لحساب لم يُستخدم (خطأ استيراد)، والحساب المستخدم لا يُعرض له الزر.
+    // حذف نهائي لحساب لم يُستخدم (خطأ استيراد) — بكتابة اسم المستخدم للتأكيد.
+    const closeDialog = () => admin.page.locator('[role="dialog"] button[aria-label="إغلاق"]').first().click({ timeout: 5000 }).catch(() => undefined);
+    const confirmPurge = async (username) => {
+      await admin.page.getByRole('button', { name: 'حذف نهائي' }).click({ timeout: 10000 }).catch(() => undefined);
+      await admin.page.fill('#purge-confirm', username).catch(() => undefined);
+      await admin.page.getByRole('button', { name: 'تأكيد الحذف النهائي' }).click({ timeout: 10000 }).catch(() => undefined);
+    };
     await runPython("from apps.accounts.models import User; User.objects.create(username='typo.import', full_name='حساب مكرر')");
     await admin.page.reload();
     await branchSelect.selectOption('none').catch(() => undefined);
     await rows().filter({ hasText: 'typo.import' }).first().click({ timeout: 15000 }).catch(() => undefined);
-    await admin.page.getByRole('button', { name: 'حذف نهائي' }).click({ timeout: 10000 }).catch(() => undefined);
-    await admin.page.getByRole('button', { name: 'تأكيد الحذف النهائي' }).click({ timeout: 10000 }).catch(() => undefined);
+    await confirmPurge('typo.import');
     await admin.page.waitForFunction(() => !document.body.innerText.includes('typo.import'), null, { timeout: 15000 }).catch(() => undefined);
-    const gone = !(await listed('typo.import'));
+    const gone = !(await listed('typo.import'))
+      && (await runPython("from apps.accounts.models import User; assert not User.objects.filter(username='typo.import').exists()")
+        .then(() => true).catch(() => false));
+    check('الموظفون: حذف نهائي لحساب لم يُستخدم', gone);
+
+    // أرشفة موظف استُخدم: يختفي من النشطين ويظهر في «المؤرشفون»، ثم حذفه نهائيًا.
+    await runPython(
+      'import datetime; from django.utils import timezone; from apps.accounts.models import User; ' +
+        'from apps.org.models import Branch, EmployeeMembership; b = Branch.objects.get(name="فرع الرياض"); ' +
+        'u = User.objects.create(username="leaver.one", first_name="موظف", last_name="مغادر", full_name="موظف مغادر", last_login_at=timezone.now()); ' +
+        'EmployeeMembership.objects.create(user=u, institute=b.institute, branch=b, is_primary=True, started_on=datetime.date.today())',
+    );
+    await admin.page.reload();
     await branchSelect.selectOption({ label: 'فرع الرياض' }).catch(() => undefined);
-    await rows().filter({ hasText: 'ahmed' }).first().click({ timeout: 15000 }).catch(() => undefined);
-    await admin.page.getByRole('button', { name: 'تعطيل الحساب' }).waitFor({ timeout: 10000 }).catch(() => undefined);
-    const noDeleteForUsed = (await admin.page.getByRole('button', { name: 'حذف نهائي' }).count()) === 0;
-    await admin.page.keyboard.press('Escape');
-    check('الموظفون: حذف نهائي لحساب لم يُستخدم، ولا زر حذف لمن دخل', gone && noDeleteForUsed);
+    await rows().filter({ hasText: 'leaver.one' }).first().click({ timeout: 15000 }).catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'أرشفة الموظف' }).click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'تأكيد الأرشفة' }).click({ timeout: 10000 }).catch(() => undefined);
+    const archivedMsg = await admin.page.locator('text=أُرشف الموظف').waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+    await closeDialog();
+    await admin.page.locator('select[aria-label="الحالة"]').selectOption('inactive').catch(() => undefined);
+    const archivedRow = rows().filter({ hasText: 'leaver.one' }).first();
+    const inArchive = await archivedRow.waitFor({ timeout: 15000 }).then(() => true).catch(() => false)
+      && (await archivedRow.innerText().catch(() => '')).includes('مؤرشف');
+    check('الموظفون: أرشفة موظف — يظهر للمسؤول في «المؤرشفون»', archivedMsg && inArchive);
+
+    await archivedRow.click({ timeout: 10000 }).catch(() => undefined);
+    await confirmPurge('leaver.one');
+    await admin.page.waitForFunction(() => !document.body.innerText.includes('leaver.one'), null, { timeout: 15000 }).catch(() => undefined);
+    const purgedOk = !(await listed('leaver.one')) && (await runPython(
+      'from apps.accounts.models import User; assert not User.objects.filter(username="leaver.one").exists(); ' +
+        'assert User.objects.filter(purged_at__isnull=False, full_name="موظف محذوف").exists()',
+    ).then(() => true).catch(() => false));
+    check('الموظفون: حذف نهائي لموظف استُخدم (يبقى ما أرسله باسم «موظف محذوف»)', purgedOk);
+    await admin.page.locator('select[aria-label="الحالة"]').selectOption('active').catch(() => undefined);
 
     // استيراد من Excel: معاينة لا تنشئ شيئًا، ثم «إنشاء» ينشئ الصالح فقط.
     const sheetPath = path.join(work, 'staff.xlsx');

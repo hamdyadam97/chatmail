@@ -48,6 +48,7 @@ export const ACTION_LABELS: Record<string, string> = {
   employees_exported: 'تصدير قائمة الموظفين',
   user_renamed: 'تعديل اسم موظف',
   username_changed: 'تغيير اسم الدخول',
+  account_purged: 'حذف نهائي لموظف',
   profile_updated: 'تعديل بيانات التواصل الشخصية',
   mfa_setup: 'بدء إعداد التحقق الثنائي',
   mfa_enabled: 'تفعيل التحقق الثنائي',

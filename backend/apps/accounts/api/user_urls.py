@@ -20,6 +20,7 @@ urlpatterns = [
     path("<uuid:user_id>/transfer/", admin_views.TransferView.as_view(), name="user-transfer"),
     path("<uuid:user_id>/revoke-sessions/", admin_views.RevokeSessionsView.as_view(), name="user-revoke-sessions"),
     path("<uuid:user_id>/", user_views.UserDetailView.as_view(), name="user-detail"),
+    path("<uuid:user_id>/purge/", user_views.PurgeUserView.as_view(), name="user-purge"),
     path(
         "<uuid:user_id>/reset-password/",
         user_views.ResetPasswordView.as_view(),

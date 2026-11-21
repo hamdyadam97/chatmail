@@ -15,6 +15,7 @@ import {
   type UnitChoice,
 } from '../admin/api';
 import { Modal, UnitPicker, useOrg } from '../admin/components';
+import { useAuth } from '../auth/AuthContext';
 import { ImportEmployees } from './ImportEmployees';
 
 function formatDate(iso: string | null): string {
@@ -268,12 +269,15 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
   const [unit, setUnit] = useState<UnitChoice | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [reason, setReason] = useState('');
+  const [confirmName, setConfirmName] = useState('');
+  const { user: me } = useAuth();
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['admin', 'memberships', user.id] });
     onChanged();
   };
-  const fail = (err: unknown) => setMessage({ tone: 'err', text: toUserMessage(err, 'تعذرت العملية') });
+  const fail = (err: unknown) =>
+    setMessage({ tone: 'err', text: err instanceof ApiError ? toUserMessage(err, 'تعذرت العملية') : (err as Error).message });
 
   const action = useMutation({
     mutationFn: async (kind: string) => {
@@ -286,15 +290,19 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
         }
         case 'activate':
           await adminApi.setActive(user.id, true);
-          return setMessage({ tone: 'ok', text: 'فُعّل الحساب.' });
+          return setMessage({ tone: 'ok', text: 'أُرجع الموظف من الأرشيف — يدخل ويستقبل من جديد.' });
         case 'deactivate':
           await adminApi.setActive(user.id, false, reason);
           setMode('none');
-          return setMessage({ tone: 'ok', text: 'عُطّل الحساب وأُلغيت جلساته.' });
-        case 'delete':
-          await adminApi.deleteUser(user.id);
+          return setMessage({ tone: 'ok', text: 'أُرشف الموظف: لا يدخل ولا يُراسَل، ورسائله السابقة باقية.' });
+        case 'delete': {
+          if (confirmName.trim() !== user.username) throw new Error('اكتب اسم المستخدم كما هو للتأكيد');
+          // حساب لم يُستخدم يُحذف كله؛ المستخدم يُحذف بالكامل وتبقى رسائله عند مستلميها باسم «موظف محذوف».
+          const unused = !user.last_login_at && (await adminApi.deleteUser(user.id).then(() => true).catch(() => false));
+          if (!unused) await adminApi.purgeUser(user.id, confirmName.trim());
           onChanged();
           return onClose();
+        }
         case 'add':
           if (!unit) throw new Error('حدد الوحدة');
           await adminApi.addMembership(user.id, { ...unit, job_title: jobTitle });
@@ -323,7 +331,7 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
         <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-3">
           <p><span className="text-gray-500">المستخدم: </span><span dir="ltr">{user.username}</span></p>
           <p><span className="text-gray-500">الجوال: </span><span dir="ltr">{user.phone || '—'}</span></p>
-          <p><span className="text-gray-500">الحالة: </span>{user.is_active ? 'نشط' : `معطّل منذ ${formatDate(user.deactivated_at)}`}</p>
+          <p><span className="text-gray-500">الحالة: </span>{user.is_active ? 'نشط' : `مؤرشف منذ ${formatDate(user.deactivated_at)}`}</p>
           <p><span className="text-gray-500">آخر دخول: </span>{formatDate(user.last_login_at)}</p>
           <p><span className="text-gray-500">التحقق الثنائي: </span>{user.mfa_enabled ? 'مفعّل' : 'غير مفعّل'}</p>
           <p><span className="text-gray-500">جلسات نشطة: </span>{user.active_sessions ?? '—'}</p>
@@ -410,15 +418,15 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
           {user.is_active ? (
             <Button size="sm" variant="danger" onClick={() => setMode(mode === 'deactivate' ? 'none' : 'deactivate')}>
               <UserX className="h-4 w-4" />
-              تعطيل الحساب
+              أرشفة الموظف
             </Button>
           ) : (
             <Button size="sm" variant="outline" onClick={() => action.mutate('activate')}>
               <UserCheck className="h-4 w-4" />
-              إعادة التفعيل
+              إرجاع من الأرشيف
             </Button>
           )}
-          {!user.last_login_at && (
+          {(me?.show_admin || !user.last_login_at) && String(me?.id) !== user.id && (
             <Button size="sm" variant="danger" onClick={() => setMode(mode === 'delete' ? 'none' : 'delete')}>
               <Trash2 className="h-4 w-4" />
               حذف نهائي
@@ -426,15 +434,27 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
           )}
         </div>
         {mode === 'delete' && (
-          <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/50 p-3">
-            <p className="text-sm text-gray-800">
-              يُحذف الحساب <span dir="ltr" className="font-mono">{user.username}</span> نهائيًا ولا يمكن استرجاعه.
+          <div className="space-y-2 rounded-lg border border-red-300 bg-red-50 p-3" data-testid="purge-box">
+            <p className="text-sm font-medium text-red-800">
+              حذف <span dir="ltr" className="font-mono">{user.username}</span> نهائيًا — لا يمكن التراجع عنه.
             </p>
-            <p className="text-xs text-gray-600">
-              متاح فقط لحساب لم يُستخدم أبدًا (خطأ استيراد أو حساب مكرر). الحساب الذي له مراسلات أو محادثات أو نشاط يُعطَّل ولا يُحذف.
-            </p>
+            <ul className="list-disc space-y-0.5 ps-5 text-xs text-gray-700">
+              <li>يُحذف حسابه وبياناته وأدواره وبريده الخارجي ومسوداته ودفتر عناوينه، ويخرج من المحادثات الجماعية.</li>
+              <li>ما أرسله لزملائه يبقى في بريدهم باسم «موظف محذوف»، وسجل التدقيق لا يُمس.</li>
+              <li>لإيقافه مع الاحتفاظ بكل شيء استخدم «أرشفة الموظف» بدلًا من ذلك.</li>
+            </ul>
+            <Label htmlFor="purge-confirm">
+              للتأكيد اكتب اسم المستخدم: <span dir="ltr" className="font-mono">{user.username}</span>
+            </Label>
+            <Input id="purge-confirm" dir="ltr" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} autoComplete="off" />
             <div className="flex justify-end">
-              <Button size="sm" variant="danger" loading={action.isPending && action.variables === 'delete'} onClick={() => action.mutate('delete')}>
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={confirmName.trim() !== user.username}
+                loading={action.isPending && action.variables === 'delete'}
+                onClick={() => action.mutate('delete')}
+              >
                 <Trash2 className="h-4 w-4" />
                 تأكيد الحذف النهائي
               </Button>
@@ -442,16 +462,17 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
           </div>
         )}
         {mode === 'deactivate' && (
-          <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/50 p-3">
-            <Label htmlFor="d-reason">سبب التعطيل</Label>
+          <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+            <Label htmlFor="d-reason">سبب الأرشفة</Label>
             <Input id="d-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
             <p className="text-xs text-gray-600">
-              يمنع الدخول ويلغي الجلسات فورًا. لا تُنقل رسائله لأحد.
+              لا يدخل النظام، ولا يظهر للموظفين ولا يُراسَل، وبريده الخارجي يتوقف. رسائله السابقة تبقى كما هي، ويبقى ظاهرًا لك في
+              «المؤرشفون» وتستطيع إرجاعه.
             </p>
             <div className="flex justify-end">
               <Button size="sm" variant="danger" onClick={() => action.mutate('deactivate')}>
                 <ShieldOff className="h-4 w-4" />
-                تأكيد التعطيل
+                تأكيد الأرشفة
               </Button>
             </div>
           </div>
@@ -530,7 +551,7 @@ export function Employees() {
         </div>
         <select value={status} onChange={(e) => { setStatus(e.target.value as typeof status); setPage(1); }} className="h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm" aria-label="الحالة">
           <option value="active">النشطون</option>
-          <option value="inactive">المعطّلون</option>
+          <option value="inactive">المؤرشفون</option>
           <option value="all">الكل</option>
         </select>
         <select value={branch} onChange={(e) => { setBranch(e.target.value); setPage(1); }} className="h-10 max-w-[16rem] rounded-lg border border-gray-300 bg-white px-2 text-sm" aria-label="الفرع">
@@ -596,7 +617,7 @@ export function Employees() {
                     <td className="px-4 py-2 text-xs text-gray-500">{formatDate(u.last_login_at)}</td>
                     <td className="px-4 py-2">
                       <span className={cn('rounded-full px-2 py-0.5 text-xs', u.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500')}>
-                        {u.is_active ? (u.must_change_password ? 'بانتظار تغيير كلمة المرور' : 'نشط') : 'معطّل'}
+                        {u.is_active ? (u.must_change_password ? 'بانتظار تغيير كلمة المرور' : 'نشط') : 'مؤرشف'}
                       </span>
                     </td>
                   </tr>
