@@ -1028,6 +1028,16 @@ async function main() {
       `step=${goneFromStep} blocked=${blocked} list=${notPending}`);
     await ahmed.page.goto(secondUrl);
     await ahmed.page.getByRole('button', { name: 'إلغاء الطلب' }).click({ timeout: 10000 }).catch(() => undefined);
+    await ahmed.page.locator('text=ملغى').first().waitFor({ timeout: 10000 }).catch(() => undefined);
+    // عند المعتمد: الطلب الملغى ظاهر رماديًا ولا يُفتح.
+    await manager.page.goto(`${UI}/approvals`);
+    const greyRow = manager.page.locator('[data-testid="cancelled-request-row"]', { hasText: 'طلب لإزالة معتمد' });
+    const greyShown = await greyRow.waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    const notLink = greyShown && (await greyRow.evaluate((el) => el.tagName !== 'A' && !el.closest('a')));
+    await greyRow.click({ force: true }).catch(() => undefined);
+    const stayed = manager.page.url().endsWith('/approvals');
+    check('طلب ملغى: يبقى ظاهرًا عند المعتمد رماديًا ولا يُفتح', greyShown && notLink && stayed,
+      `shown=${greyShown} notLink=${notLink} stayed=${stayed}`);
     await runPython(
       'from apps.authorization.models import UserRoleAssignment; UserRoleAssignment.objects.filter(user__username="mohamed", role__code="branch_manager").delete()',
     );

@@ -80,7 +80,7 @@ export interface StepSpec {
 }
 
 export const approvalsApi = {
-  list: (box: 'pending_mine' | 'requested_by_me') => apiFetch<ApprovalRequest[]>(`/approvals/?box=${box}`),
+  list: (box: 'pending_mine' | 'cancelled_mine' | 'requested_by_me') => apiFetch<ApprovalRequest[]>(`/approvals/?box=${box}`),
   forCorrespondence: (correspondenceId: string) =>
     apiFetch<ApprovalRequest[]>(`/approvals/?box=correspondence&correspondence_id=${correspondenceId}`),
   get: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/`),

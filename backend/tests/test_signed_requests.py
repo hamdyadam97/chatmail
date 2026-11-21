@@ -193,6 +193,17 @@ def test_requester_removes_an_approver_who_then_no_longer_sees_it(api_client, us
     assert api_client.get(f"{API}?box=pending_mine", **h["sr_exec"]).json()[0]["id"] == req["id"]
 
 
+def test_cancelled_request_stays_listed_for_its_approvers_only(api_client, org):
+    h = org["h"]
+    rid = _file(api_client, org).json()["id"]
+    assert api_client.get(f"{API}?box=cancelled_mine", **h["sr_bm"]).json() == []
+    assert api_client.post(f"{API}{rid}/cancel/", **h["sr_emp"]).status_code == 200
+    listed = api_client.get(f"{API}?box=cancelled_mine", **h["sr_bm"]).json()
+    assert [r["id"] for r in listed] == [rid] and listed[0]["status"] == "cancelled" and listed[0]["my_slot"] is None
+    assert api_client.get(f"{API}?box=pending_mine", **h["sr_bm"]).json() == []
+    assert api_client.get(f"{API}?box=cancelled_mine", **h["sr_out"]).json() == []
+
+
 def test_role_assignments_search_by_arabic_name(api_client, org):
     from apps.accounts.models import User
 

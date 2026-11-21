@@ -123,13 +123,28 @@ class ApprovalListCreateView(APIView):
                 .select_related("correspondence", "requested_by")
                 .order_by("-created_at")[:200]
             )
+        elif box == "cancelled_mine":
+            # Requests that waited for me and were cancelled (last 30 days): shown, not actionable.
+            from datetime import timedelta
+
+            from django.utils import timezone
+
+            from apps.correspondence.services import can_read
+
+            since = timezone.now() - timedelta(days=30)
+            items = [
+                r for r in ApprovalRequest.objects.filter(
+                    status="cancelled", decided_at__gte=since, steps__approvers__user=request.user
+                ).select_related("correspondence", "requested_by", "workflow").distinct().order_by("-decided_at")[:50]
+                if can_read(request.user, r.correspondence)
+            ]
         elif box == "correspondence":
             correspondence = get_readable(request.user, request.query_params.get("correspondence_id"))
             items = list(
                 correspondence.approval_requests.select_related("correspondence", "requested_by").order_by("-created_at")
             )
         else:
-            raise ValidationError({"box": "pending_mine | requested_by_me | correspondence"})
+            raise ValidationError({"box": "pending_mine | cancelled_mine | requested_by_me | correspondence"})
         return Response([request_dict(r, request.user) for r in items])
 
     def post(self, request):

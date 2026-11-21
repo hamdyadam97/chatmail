@@ -15,12 +15,34 @@ import { StatusBadge, StepsView, formatDate } from './components';
 
 type Tab = 'pending_mine' | 'requested_by_me' | 'delegations';
 
-function RequestRow({ r }: { r: ApprovalRequest }) {
+function RequestRow({ r, disabled = false }: { r: ApprovalRequest; disabled?: boolean }) {
+  const body = <RowBody r={r} />;
+  // طلب أُلغي وكان بانتظاري: يبقى ظاهرًا للعلم، ولا يُفتح.
+  if (disabled) {
+    return (
+      <div
+        aria-disabled="true"
+        title="أُلغي هذا الطلب — لا يمكن اعتماده"
+        data-testid="cancelled-request-row"
+        className="flex cursor-not-allowed select-none items-center gap-3 border-b border-gray-100 bg-gray-50/70 px-4 py-3 text-sm text-gray-400 opacity-70 last:border-0"
+      >
+        {body}
+      </div>
+    );
+  }
   return (
     <Link
       to={`/approvals/${r.id}`}
       className="flex items-center gap-3 border-b border-gray-100 px-4 py-3 text-sm last:border-0 hover:bg-gray-50"
     >
+      {body}
+    </Link>
+  );
+}
+
+function RowBody({ r }: { r: ApprovalRequest }) {
+  return (
+    <>
       <span dir="ltr" className="w-48 shrink-0 font-mono text-xs text-gray-600">
         {r.correspondence.reference_number}
       </span>
@@ -40,7 +62,7 @@ function RequestRow({ r }: { r: ApprovalRequest }) {
       {r.my_slot?.delegated && <span className="text-xs text-purple-700">بالتفويض</span>}
       <StatusBadge status={r.status} />
       <span className="w-36 text-end text-xs text-gray-500">{formatDate(r.created_at)}</span>
-    </Link>
+    </>
   );
 }
 
@@ -50,6 +72,11 @@ function RequestList({ box }: { box: 'pending_mine' | 'requested_by_me' }) {
     queryFn: () => approvalsApi.list(box),
     refetchInterval: 60_000,
   });
+  const { data: cancelled } = useQuery({
+    queryKey: ['approvals', 'cancelled_mine'],
+    queryFn: () => approvalsApi.list('cancelled_mine'),
+    enabled: box === 'pending_mine',
+  });
   if (isLoading) {
     return (
       <div className="flex justify-center py-16">
@@ -58,20 +85,32 @@ function RequestList({ box }: { box: 'pending_mine' | 'requested_by_me' }) {
     );
   }
   if (error) return <Card className="p-6 text-sm text-red-600">{toUserMessage(error)}</Card>;
-  if (!data?.length) {
-    return (
-      <EmptyState
-        icon={CheckCheck}
-        title={box === 'pending_mine' ? 'لا طلبات بانتظار قرارك' : 'لم تقدّم طلبات اعتماد'}
-      />
-    );
-  }
+  const greyed = box === 'pending_mine' ? cancelled ?? [] : [];
   return (
-    <Card className="overflow-hidden">
-      {data.map((r) => (
-        <RequestRow key={r.id} r={r} />
-      ))}
-    </Card>
+    <div className="space-y-3">
+      {!data?.length ? (
+        <EmptyState
+          icon={CheckCheck}
+          title={box === 'pending_mine' ? 'لا طلبات بانتظار قرارك' : 'لم تقدّم طلبات اعتماد'}
+        />
+      ) : (
+        <Card className="overflow-hidden">
+          {data.map((r) => (
+            <RequestRow key={r.id} r={r} />
+          ))}
+        </Card>
+      )}
+      {greyed.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-xs text-gray-500">طلبات أُلغيت (آخر 30 يومًا) — للعلم فقط، لا يمكن اعتمادها:</p>
+          <Card className="overflow-hidden">
+            {greyed.map((r) => (
+              <RequestRow key={r.id} r={r} disabled />
+            ))}
+          </Card>
+        </div>
+      )}
+    </div>
   );
 }
 
