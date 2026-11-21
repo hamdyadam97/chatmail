@@ -962,7 +962,8 @@ async function main() {
 
     // كل معتمد: اعتماد ← يرسم توقيعه مرة ← كلمة المرور ← توقيع واعتماد.
     let noPageBlocked = true;
-    const signAs = async (dev, password, expectedCount) => {
+    let placedBoxes = true;
+    const signAs = async (dev, password, expectedCount, spot) => {
       await dev.page.goto(requestUrl);
       await dev.page.getByRole('button', { name: 'اعتماد', exact: true }).click({ timeout: 15000 }).catch(() => undefined);
       const pad = dev.page.locator('[data-testid="signature-pad"]');
@@ -978,21 +979,42 @@ async function main() {
       const signBtn = dev.page.getByRole('button', { name: 'توقيع واعتماد' });
       noPageBlocked = noPageBlocked && (await signBtn.isDisabled().catch(() => false)); // لا توقيع قبل اختيار الصفحة
       await dev.page.selectOption('#sign-page', '1').catch(() => undefined);
+      // الصفحة نفسها تظهر؛ نقرة تضع مربع التوقيع في المكان المختار.
+      const pageCanvas = dev.page.locator('[data-testid="sign-page-canvas"]');
+      if (await pageCanvas.waitFor({ timeout: 20000 }).then(() => true).catch(() => false)) {
+        await dev.page.locator('[data-testid="sign-page-canvas"][data-ready="1"]').waitFor({ timeout: 20000 }).catch(() => undefined);
+        await pageCanvas.scrollIntoViewIfNeeded().catch(() => undefined);
+        const cb = await pageCanvas.boundingBox();
+        await pageCanvas.click({ position: { x: cb.width * spot[0], y: cb.height * spot[1] } }).catch(() => undefined);
+        const boxOk = await dev.page.locator('[data-testid="sign-box"]').isVisible().catch(() => false);
+        if (!boxOk) console.log(`    لقطة المعاينة: ${await shot(dev, `placer-${dev.username}`)} — ready=${await pageCanvas.getAttribute('data-ready')} errors: ${dev.page.errors.slice(-3).join(' | ')}`);
+        placedBoxes = placedBoxes && boxOk;
+        if (process.env.SHOTS && boxOk) {
+          await dev.page.locator('[data-testid="sign-box"]').scrollIntoViewIfNeeded().catch(() => undefined);
+          console.log(`    لقطة اختيار المكان: ${await shot(dev, `placer-${dev.username}`)}`);
+        }
+      } else {
+        placedBoxes = false;
+        console.log(`    لقطة المعاينة: ${await shot(dev, `placer-${dev.username}`)} — errors: ${dev.page.errors.slice(-3).join(' | ')}`);
+      }
       await dev.page.getByRole('button', { name: 'توقيع واعتماد' }).click({ timeout: 10000 }).catch(() => undefined);
       return dev.page.locator(`button:has-text("النسخة الموقّعة (${expectedCount} توقيع)")`).waitFor({ timeout: 20000 })
         .then(() => true).catch(() => false);
     };
-    const bmSigned = await signAs(manager, 'Riyadh#Branch2026', 1);
-    const adminSigned = await signAs(admin, 'Admin@12345', 2);
+    const bmSigned = await signAs(manager, 'Riyadh#Branch2026', 1, [0.3, 0.25]);
+    const adminSigned = await signAs(admin, 'Admin@12345', 2, [0.7, 0.6]);
     const reqId = requestUrl.split('/').pop();
     const pdfOk = await runPython(
       'import io; from pypdf import PdfReader; from apps.approvals.models import ApprovalRequest as R; ' +
         'from apps.correspondence.services import read_blob; ' +
         `r = R.objects.get(id=${JSON.stringify(reqId)}); t = PdfReader(io.BytesIO(read_blob(r.signed_file))).pages[-1].extract_text(); ` +
-        'assert r.status == "approved" and r.signature_count == 2 and t.count(r.correspondence.reference_number) == 2',
+        `open(${JSON.stringify(path.join(work, 'boxes.txt'))}, "w", encoding="utf-8").write(repr((r.status, r.signature_count, t.count(r.correspondence.reference_number), r.signature_boxes))); ` +
+        'assert r.status == "approved" and r.signature_count == 2 and t.count(r.correspondence.reference_number) == 2; ' +
+        'b = r.signature_boxes; assert len(b) == 2 and b[0]["y"] < b[1]["y"] and b[0]["x"] < b[1]["x"]',
     ).then(() => true).catch(() => false);
+    if (!pdfOk) console.log(`    boxes: ${(await import('node:fs')).readFileSync(path.join(work, 'boxes.txt'), 'utf-8')}`);
     check('التوقيع: مدير الفرع ثم مدير النظام يوقّعان على الصفحة التي يختارانها، والـPDF فيه التوقيعان',
-      bmSigned && adminSigned && pdfOk && noPageBlocked, `bm=${bmSigned} admin=${adminSigned} pdf=${pdfOk} pageRequired=${noPageBlocked}`);
+      bmSigned && adminSigned && pdfOk && noPageBlocked && placedBoxes, `bm=${bmSigned} admin=${adminSigned} pdf=${pdfOk} pageRequired=${noPageBlocked} placed=${placedBoxes}`);
     // المدير يجد الطلب بعد توقيعه في «وصلتني» وينزّل النسخة الموقّعة.
     await manager.page.goto(`${UI}/approvals`);
     await manager.page.getByRole('button', { name: 'وصلتني' }).click({ timeout: 10000 }).catch(() => undefined);

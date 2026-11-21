@@ -105,25 +105,54 @@ def page_count(pdf: bytes) -> int:
     return len(PdfReader(io.BytesIO(pdf)).pages)
 
 
-def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, reference: str, slot: int,
-          page: int | None = None, code: str | None = None) -> bytes:
-    """`pdf` with one more signature box at the bottom of page `page`
-    (1-based; default the last). `slot` = signatures already on that page."""
+def page_size(pdf: bytes, page: int) -> tuple[float, float]:
+    from pypdf import PdfReader
+
+    box = PdfReader(io.BytesIO(pdf)).pages[page - 1].mediabox
+    return float(box.width), float(box.height)
+
+
+def _overlaps(a: tuple, b: dict) -> bool:
+    ax, ay = a
+    return not (ax + BOX_W <= b["x"] or b["x"] + b["w"] <= ax or ay + BOX_H <= b["y"] or b["y"] + b["h"] <= ay)
+
+
+def place(width: float, height: float, taken: list[dict], at: tuple[float, float] | None) -> tuple[float, float]:
+    """Top-left of the new box in points. `at` = the approver's choice (must fit
+    on the page and not cover an earlier signature); otherwise the first free
+    slot along the bottom, right to left, 3 per row."""
+    if at is not None:
+        x, y = float(at[0]), float(at[1])
+        if not (0 <= x <= width - BOX_W and 0 <= y <= height - BOX_H):
+            raise ValidationError({"position": "مكان التوقيع خارج حدود الصفحة."})
+        if any(_overlaps((x, y), b) for b in taken):
+            raise ValidationError({"position": "المكان يغطي توقيعًا سابقًا — اختر مكانًا آخر."})
+        return x, y
+    for slot in range(60):
+        col, row = slot % PER_ROW, slot // PER_ROW
+        x = width - MARGIN - (col + 1) * BOX_W - col * GAP
+        y = height - MARGIN - (row + 1) * BOX_H - row * GAP
+        if x < 0 or y < 0:
+            break
+        if not any(_overlaps((x, y), b) for b in taken):
+            return x, y
+    raise ValidationError({"page": "لا مكان لتوقيع إضافي على هذه الصفحة — اختر صفحة أخرى أو مكانًا آخر."})
+
+
+def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, reference: str,
+          page: int, at: tuple[float, float], code: str | None = None) -> bytes:
+    """`pdf` with one more signature box on page `page` (1-based) whose
+    top-left corner is `at` (points from the page's top-left)."""
     from fpdf import FPDF
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(io.BytesIO(pdf))
-    index = (page - 1) if page else len(reader.pages) - 1
+    index = page - 1
     if not 0 <= index < len(reader.pages):
         raise ValidationError({"page": f"اختر صفحة من 1 إلى {len(reader.pages)}."})
     target = reader.pages[index]
     width, height = float(target.mediabox.width), float(target.mediabox.height)
-
-    col, row = slot % PER_ROW, slot // PER_ROW
-    x = width - MARGIN - (col + 1) * BOX_W - col * GAP
-    y_top = height - MARGIN - (row + 1) * BOX_H - row * GAP  # fpdf: y grows downwards
-    if x < 0 or y_top < 0:
-        raise ValidationError({"page": "لا مكان لتوقيع إضافي على هذه الصفحة — اختر صفحة أخرى."})
+    x, y_top = at
 
     overlay = FPDF(unit="pt", format=(width, height))
     overlay.set_auto_page_break(False)
@@ -146,10 +175,10 @@ def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, 
     overlay.cell(BOX_W - 8, 11, f"{when}  ·  {reference}", align="C")
     if code:
         overlay.set_text_color(20, 20, 20)
-        # Label (right) and code (left) as separate runs: the code stays copyable/searchable text.
+        # Label and code as separate runs: the code stays copyable/searchable text.
         label = _ar("رمز التحقق:")
         w_label, w_code, gap = overlay.get_string_width(label), overlay.get_string_width(code), 4
-        start = x + (BOX_W - (w_label + gap + w_code)) / 2  # the pair centred: «رمز التحقق: CODE» read right to left
+        start = x + (BOX_W - (w_label + gap + w_code)) / 2  # «رمز التحقق: CODE» read right to left
         overlay.set_xy(start, y_top + 82)
         overlay.cell(w_code, 12, code)
         overlay.set_xy(start + w_code + gap, y_top + 82)
@@ -157,7 +186,9 @@ def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, 
 
     stamp_page = PdfReader(io.BytesIO(bytes(overlay.output()))).pages[0]
     writer = PdfWriter(clone_from=reader)
-    writer.pages[index].merge_page(stamp_page)
+    box = writer.pages[index].mediabox
+    # A page whose box does not start at (0, 0): shift the stamp with it.
+    writer.pages[index].merge_translated_page(stamp_page, float(box.left), float(box.bottom))
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()

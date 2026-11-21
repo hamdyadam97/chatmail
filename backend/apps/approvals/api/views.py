@@ -23,7 +23,7 @@ from apps.correspondence.models import Correspondence
 from apps.correspondence.services import correspondence_content, file_meta, get_readable
 from apps.org.models import Branch, Department, Institute
 
-from .. import services
+from .. import services, signing
 from ..models import ApprovalDelegation, ApprovalRequest, ApprovalStep, ApprovalWorkflow
 
 
@@ -96,6 +96,8 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         # Every approver chooses the page they sign.
         "page_count": services.ensure_page_count(req) if signed_request else None,
         "page_signatures": req.page_signatures or {},
+        "signature_boxes": req.signature_boxes or [],
+        "signature_box": {"w": signing.BOX_W, "h": signing.BOX_H} if signed_request else None,
     }
 
 
@@ -189,6 +191,14 @@ class DecideSerializer(serializers.Serializer):
     # Approving a signed request stamps the saved signature: current password required.
     password = serializers.CharField(required=False, allow_blank=True, write_only=True, trim_whitespace=False)
     page = serializers.IntegerField(required=False, min_value=1)
+    # Where the approver placed the box: top-left in PDF points (optional; default bottom of the page).
+    x = serializers.FloatField(required=False)
+    y = serializers.FloatField(required=False)
+
+    def validate(self, attrs):
+        if ("x" in attrs) != ("y" in attrs):
+            raise serializers.ValidationError({"position": "حدد مكان التوقيع كاملًا (x و y)."})
+        return attrs
 
 
 class DecideView(APIView):
@@ -202,6 +212,8 @@ class DecideView(APIView):
             user=request.user, request_id=request_id, decision=serializer.validated_data["decision"],
             password=serializer.validated_data.get("password"),
             page=serializer.validated_data.get("page"),
+            position=(serializer.validated_data["x"], serializer.validated_data["y"])
+            if "x" in serializer.validated_data else None,
         )
         return Response(request_dict(decision.request, request.user), status=status.HTTP_201_CREATED)
 

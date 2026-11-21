@@ -104,6 +104,9 @@ class ApprovalRequest(models.Model):
     # ({"1": 2, "3": 1}) — every approver chooses the page they sign.
     page_count = models.PositiveSmallIntegerField(default=0)  # 0 = not counted yet (older requests)
     page_signatures = models.JSONField(default=dict, blank=True)
+    # Where each stamped box sits: [{"page", "x", "y", "w", "h"}] in PDF points
+    # from the page's top-left — a new signature may not cover an earlier one.
+    signature_boxes = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "approval_requests"

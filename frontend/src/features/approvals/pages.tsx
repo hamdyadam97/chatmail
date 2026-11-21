@@ -10,6 +10,7 @@ import { correspondenceApi } from '../correspondence/api';
 import { RecipientPicker } from '../correspondence/components';
 import { approvalsApi, DECISION_LABELS, type ApprovalRequest, type Decision, type FileRef } from './api';
 import { SignatureManager } from './SignaturePad';
+import { SignPlacer, type Placement } from './SignPlacer';
 import { saveBlob } from '../../shared/lib/download';
 import { StatusBadge, StepsView, formatDate } from './components';
 
@@ -337,6 +338,7 @@ function ApprovalDetail({ id }: { id: string }) {
   const [confirming, setConfirming] = useState<Decision | null>(null);
   const [password, setPassword] = useState('');
   const [signPage, setSignPage] = useState('');
+  const [placement, setPlacement] = useState<Placement | null>(null);
   const { data: mySignature } = useQuery({
     queryKey: ['my-signature'],
     queryFn: approvalsApi.signature,
@@ -349,12 +351,15 @@ function ApprovalDetail({ id }: { id: string }) {
       approvalsApi.decide(
         id,
         decision,
-        decision === 'approved' && request?.signable ? { password, page: Number(signPage) } : undefined,
+        decision === 'approved' && request?.signable
+          ? { password, page: Number(signPage), ...(placement ? { x: placement.x, y: placement.y } : {}) }
+          : undefined,
       ),
     onSuccess: () => {
       setConfirming(null);
       setPassword('');
       setSignPage('');
+      setPlacement(null);
       setActionError(null);
       void refresh();
     },
@@ -509,7 +514,10 @@ function ApprovalDetail({ id }: { id: string }) {
                       <select
                         id="sign-page"
                         value={signPage}
-                        onChange={(e) => setSignPage(e.target.value)}
+                        onChange={(e) => {
+                          setSignPage(e.target.value);
+                          setPlacement(null);
+                        }}
                         className="h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm"
                       >
                         <option value="">اختر الصفحة…</option>
@@ -521,9 +529,16 @@ function ApprovalDetail({ id }: { id: string }) {
                         ))}
                       </select>
                     </div>
-                    <p className="text-xs text-gray-500">
-                      افتح «الملف الأصلي» أولًا وحدد صفحة توقيعك؛ يُختم توقيعك واسمك ووقت الاعتماد أسفل تلك الصفحة.
-                    </p>
+                    {signPage && request.signature_box && (request.signed_file ?? request.source_file) && (
+                      <SignPlacer
+                        fileId={(request.signed_file ?? request.source_file)!.id}
+                        page={Number(signPage)}
+                        box={request.signature_box}
+                        taken={request.signature_boxes}
+                        value={placement}
+                        onChange={setPlacement}
+                      />
+                    )}
                     <div className="flex gap-2">
                       <Button size="sm" disabled={!password || !signPage} loading={decide.isPending} onClick={() => decide.mutate('approved')}>
                         <PenLine className="h-4 w-4" />

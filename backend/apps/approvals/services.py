@@ -293,7 +293,8 @@ def is_signed_request(req) -> bool:
     return bool(req.source_file_id and req.workflow_id and req.workflow.signable)
 
 
-def decide(*, user, request_id, decision: str, password: str | None = None, page=None) -> ApprovalDecision:
+def decide(*, user, request_id, decision: str, password: str | None = None, page=None,
+           position: tuple[float, float] | None = None) -> ApprovalDecision:
     req = get_viewable(user, request_id)
     if decision not in DECISIONS:
         raise ValidationError({"decision": "قرار غير معروف."})
@@ -335,7 +336,7 @@ def decide(*, user, request_id, decision: str, password: str | None = None, page
         except IntegrityError:
             raise Conflict("سبق اتخاذ قرار في هذه الخانة.")
         if signing:
-            _sign(req, user, delegation, page, code)
+            _sign(req, user, delegation, page, code, position)
         _advance(req, step, row)
 
     log(
@@ -470,8 +471,24 @@ def _checked_page(req, page) -> int:
     return page
 
 
-def _sign(req, user, delegation, page, code) -> None:
-    """Stamp `user`'s signature on page `page` of the request's document (inside decide())."""
+def _taken_boxes(req, page: int, width: float, height: float, on_page: dict) -> list[dict]:
+    """Boxes already on `page`: the recorded ones, plus those stamped before
+    positions were recorded (they sit in the bottom slots, in order)."""
+    from . import signing
+
+    boxes = [b for b in (req.signature_boxes or []) if b.get("page") == page]
+    legacy = max(0, on_page.get(str(page), 0) - len(boxes))
+    for slot in range(legacy):
+        col, row = slot % signing.PER_ROW, slot // signing.PER_ROW
+        boxes.append({"page": page, "w": signing.BOX_W, "h": signing.BOX_H,
+                      "x": width - signing.MARGIN - (col + 1) * signing.BOX_W - col * signing.GAP,
+                      "y": height - signing.MARGIN - (row + 1) * signing.BOX_H - row * signing.GAP})
+    return boxes
+
+
+def _sign(req, user, delegation, page, code, position=None) -> None:
+    """Stamp `user`'s signature on page `page` of the request's document
+    (inside decide()), where they placed it or in the first free bottom slot."""
     from apps.correspondence.services import read_blob, store_blob
 
     from . import signing
@@ -481,22 +498,26 @@ def _sign(req, user, delegation, page, code) -> None:
     if not on_page and req.signature_count:
         on_page = {str(pages): req.signature_count}  # signed before page choice: all on the last page
 
-    base = req.signed_file or req.source_file
+    base_pdf = read_blob(req.signed_file or req.source_file)
+    width, height = signing.page_size(base_pdf, page)
+    at = signing.place(width, height, _taken_boxes(req, page, width, height, on_page), position)
     role = _role_label(user)
     if delegation is not None:
         role = f"بالتفويض عن {delegation.delegator.full_name}"
     when = timezone.localtime().strftime("%Y-%m-%d %H:%M")
     reference = req.correspondence.reference_number or ""
     pdf = signing.stamp(
-        read_blob(base), signature_png=signature_png(user), name=user.full_name or user.username,
-        role=role, when=when, reference=reference, slot=on_page.get(str(page), 0), page=page, code=code,
+        base_pdf, signature_png=signature_png(user), name=user.full_name or user.username,
+        role=role, when=when, reference=reference, page=page, at=at, code=code,
     )
     stored = store_blob(user, pdf, name=f"{reference or 'طلب'} - موقّع.pdf", mime="application/pdf")
     on_page[str(page)] = on_page.get(str(page), 0) + 1
     req.signed_file = stored
     req.signature_count += 1
     req.page_signatures = on_page
-    req.save(update_fields=["signed_file", "signature_count", "page_signatures"])
+    req.signature_boxes = [*(req.signature_boxes or []),
+                           {"page": page, "x": round(at[0], 1), "y": round(at[1], 1), "w": signing.BOX_W, "h": signing.BOX_H}]
+    req.save(update_fields=["signed_file", "signature_count", "page_signatures", "signature_boxes"])
 
 
 MAX_REQUEST_FILE_BYTES = 15 * 1024 * 1024

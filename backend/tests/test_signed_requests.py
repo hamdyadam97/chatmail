@@ -178,6 +178,25 @@ def test_reject_needs_no_signature_and_types_are_admin_defined(api_client, org):
     assert api_client.get(f"{API}request-types/", **h["sr_emp"]).json() == []
 
 
+def test_approver_places_the_signature_where_they_choose(api_client, org):
+    h = org["h"]
+    rid = _file(api_client, org).json()["id"]
+    for who in ("sr_bm", "sr_exec"):
+        api_client.put(f"{API}signature/", {"image": base64.b64encode(_png()).decode()}, format="json", **h[who])
+    decide = lambda who, **b: api_client.post(f"{API}{rid}/decide/", {"decision": "approved", "password": DEFAULT_PASSWORD,
+                                                                       "page": 1, **b}, format="json", **h[who])
+    assert decide("sr_bm", x=500, y=10).status_code == 400  # off the page (A4 ≈ 595 wide, box 165)
+    assert decide("sr_bm", x=40).status_code == 400  # x without y
+    first = decide("sr_bm", x=40, y=120)
+    assert first.status_code == 201, first.content
+    assert first.json()["signature_boxes"] == [{"page": 1, "x": 40.0, "y": 120.0, "w": 165.0, "h": 104.0}]
+    assert first.json()["signature_box"] == {"w": 165.0, "h": 104.0}
+    assert decide("sr_exec", x=100, y=150).status_code == 400  # would cover the first signature
+    second = decide("sr_exec", x=300, y=120)
+    assert second.status_code == 201, second.content
+    assert [b["x"] for b in second.json()["signature_boxes"]] == [40.0, 300.0]
+
+
 def test_type_signed_by_a_named_employee_goes_to_that_person_only(api_client, user_factory, org):
     from apps.accounts.models import User
 

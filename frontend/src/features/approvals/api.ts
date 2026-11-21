@@ -66,6 +66,9 @@ export interface ApprovalRequest {
   /** صفحات الملف، وعدد التوقيعات على كل صفحة ({"2": 1}). */
   page_count: number | null;
   page_signatures: Record<string, number>;
+  /** أماكن التوقيعات المختومة (نقاط PDF من أعلى يسار الصفحة)، ومقاس مربع التوقيع. */
+  signature_boxes: Array<{ page: number; x: number; y: number; w: number; h: number }>;
+  signature_box: { w: number; h: number } | null;
 }
 
 export interface FileRef {
@@ -107,7 +110,7 @@ export const approvalsApi = {
   get: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/`),
   create: (body: { correspondence_id: string; steps?: StepSpec[]; workflow_id?: string }) =>
     apiFetch<ApprovalRequest>('/approvals/', { method: 'POST', body }),
-  decide: (id: string, decision: Decision, sign?: { password: string; page: number }) =>
+  decide: (id: string, decision: Decision, sign?: { password: string; page: number; x?: number; y?: number }) =>
     apiFetch<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body: { decision, ...(sign ?? {}) } }),
   removeApprover: (id: string, approverId: string) =>
     apiFetch<ApprovalRequest>(`/approvals/${id}/remove-approver/`, { method: 'POST', body: { approver_id: approverId } }),
