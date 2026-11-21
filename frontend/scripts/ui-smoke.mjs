@@ -997,6 +997,41 @@ async function main() {
     check('أحمد ينزّل النسخة الموقّعة', Boolean(signedDl) && signedDl.suggestedFilename().endsWith('.pdf'));
     if (process.env.SHOTS) console.log(`    لقطة الطلب الموقّع: ${await shot(ahmed, 'signed-request')}`);
 
+    // معتمدان لنفس الخطوة؛ أحمد يزيل أحدهما فيختفي الطلب من عنده.
+    await runPython(
+      'from apps.accounts.models import User; from apps.authorization.models import Role, UserRoleAssignment; ' +
+        'from apps.org.models import Branch; b = Branch.objects.get(name="فرع الرياض"); ' +
+        'UserRoleAssignment.objects.get_or_create(user=User.objects.get(username="mohamed"), role=Role.objects.get(code="branch_manager"), institute=b.institute, branch=b)',
+    );
+    await ahmed.page.goto(`${UI}/approvals`);
+    await ahmed.page.getByRole('button', { name: 'طلب جديد' }).click({ timeout: 15000 }).catch(() => undefined);
+    await ahmed.page.selectOption('#req-type', { label: 'طلب صرف' }).catch(() => undefined);
+    await ahmed.page.fill('#req-title', 'طلب لإزالة معتمد').catch(() => undefined);
+    await ahmed.page.setInputFiles('#req-file', reqPdf).catch(() => undefined);
+    await ahmed.page.getByRole('button', { name: 'تقديم الطلب' }).click({ timeout: 10000 }).catch(() => undefined);
+    await ahmed.page.waitForURL(/\/approvals\/[0-9a-f-]{36}$/, { timeout: 20000 }).catch(() => undefined);
+    const secondUrl = ahmed.page.url();
+    await ahmed.page.getByRole('button', { name: 'إزالة محمد الشهري من المعتمدين' }).click({ timeout: 15000 }).catch(() => undefined);
+    await ahmed.page.getByRole('button', { name: 'تأكيد الإزالة' }).click({ timeout: 10000 }).catch(() => undefined);
+    await ahmed.page.waitForFunction(() => !document.body.innerText.includes('محمد الشهري'), null, { timeout: 15000 }).catch(() => undefined);
+    const goneFromStep = !(await ahmed.page.locator('text=محمد الشهري').count());
+    const blocked = await runPython(
+      'from apps.accounts.models import User; from apps.approvals.models import ApprovalRequest as R; ' +
+        'from apps.correspondence.services import can_read; ' +
+        `r = R.objects.get(id=${JSON.stringify(secondUrl.split('/').pop())}); ` +
+        'assert not can_read(User.objects.get(username="mohamed"), r.correspondence)',
+    ).then(() => true).catch(() => false);
+    await mohamed2.page.goto(`${UI}/approvals`);
+    await mohamed2.page.waitForTimeout(1500);
+    const notPending = !(await mohamed2.page.locator('text=طلب لإزالة معتمد').count());
+    check('إزالة معتمد: أحمد يزيل محمد من طلبه فلا يراه ولا يعتمده', goneFromStep && blocked && notPending,
+      `step=${goneFromStep} blocked=${blocked} list=${notPending}`);
+    await ahmed.page.goto(secondUrl);
+    await ahmed.page.getByRole('button', { name: 'إلغاء الطلب' }).click({ timeout: 10000 }).catch(() => undefined);
+    await runPython(
+      'from apps.authorization.models import UserRoleAssignment; UserRoleAssignment.objects.filter(user__username="mohamed", role__code="branch_manager").delete()',
+    );
+
     section('9) أخطاء الـConsole');
     for (const dev of [ahmed, mohamed2, manager, archivist, sara]) {
       check(`${dev.username}: لا أخطاء JavaScript`, dev.page.errors.length === 0, dev.page.errors.slice(0, 3).join(' | '));

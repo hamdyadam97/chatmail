@@ -155,6 +155,44 @@ def test_type_signed_by_a_named_employee_goes_to_that_person_only(api_client, us
     assert bad.status_code == 400
 
 
+def test_requester_removes_an_approver_who_then_no_longer_sees_it(api_client, user_factory, org):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from apps.notifications.models import Notification
+
+    h = org["h"]
+    extra = make_employee(user_factory, "sr_exec2", org["emp"].memberships.first().branch)
+    assign_role(extra, "executive")
+    h_extra = auth(api_client, "sr_exec2")
+    wf = api_client.post(f"{API}workflows/", {"name": "طلب سلفة", "signable": True, "steps": [
+        {"type": "any", "approver_selectors": [{"role": "executive", "scope": "central"}]}]}, format="json", **h["sr_admin"])
+    r = api_client.post(f"{API}file-request/", {
+        "workflow_id": wf.json()["id"], "title": "سلفة",
+        "file": SimpleUploadedFile("a.jpg", _scan(), content_type="image/jpeg")}, format="multipart", **h["sr_emp"])
+    req = r.json()
+    corr_id = req["correspondence"]["id"]
+    assert {a["user"]["id"] for a in req["steps"][0]["approvers"]} == {str(org["ex"].id), str(extra.id)}
+    assert Notification.objects.filter(user=extra, ref_id=req["id"]).exists()
+    assert corr_id in str(api_client.get("/api/v1/correspondences/?folder=inbox", **h_extra).json())
+
+    url = f"{API}{req['id']}/remove-approver/"
+    assert api_client.post(url, {"approver_id": str(extra.id)}, format="json", **h["sr_exec"]).status_code == 403
+    done = api_client.post(url, {"approver_id": str(extra.id)}, format="json", **h["sr_emp"])
+    assert done.status_code == 200, done.content
+    assert [a["user"]["id"] for a in done.json()["steps"][0]["approvers"]] == [str(org["ex"].id)]
+    # gone for the removed person: the request, its correspondence, the inbox and the bell
+    assert api_client.get(f"{API}{req['id']}/", **h_extra).status_code == 403
+    assert api_client.get(f"/api/v1/correspondences/{corr_id}/", **h_extra).status_code in (403, 404)
+    assert api_client.get(f"{API}?box=pending_mine", **h_extra).json() == []
+    inbox = api_client.get("/api/v1/correspondences/?folder=inbox", **h_extra).json()
+    assert corr_id not in str(inbox)
+    assert not Notification.objects.filter(user=extra, ref_id__in=[req["id"], corr_id]).exists()
+    # the last approver of a step cannot be removed (cancel instead); the other still decides
+    last = api_client.post(url, {"approver_id": str(org["ex"].id)}, format="json", **h["sr_emp"])
+    assert last.status_code == 400
+    assert api_client.get(f"{API}?box=pending_mine", **h["sr_exec"]).json()[0]["id"] == req["id"]
+
+
 def test_role_assignments_search_by_arabic_name(api_client, org):
     from apps.accounts.models import User
 

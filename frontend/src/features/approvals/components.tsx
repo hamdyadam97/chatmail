@@ -38,7 +38,12 @@ export function formatDate(iso: string | null): string {
 }
 
 /** الخطوات والقرارات. */
-export function StepsView({ request }: { request: ApprovalRequest }) {
+export function StepsView({ request, onRemove, removing }: {
+  request: ApprovalRequest;
+  /** مقدّم الطلب: إزالة معتمد لم يقرر (ويبقى في الخطوة معتمد واحد على الأقل). */
+  onRemove?: (userId: string, name: string) => void;
+  removing?: string | null;
+}) {
   return (
     <ol className="space-y-3">
       {request.steps.map((step) => (
@@ -78,7 +83,22 @@ export function StepsView({ request }: { request: ApprovalRequest }) {
                     </span>
                   </span>
                 ) : (
-                  <span className="text-xs text-gray-400">لم يُتخذ قرار</span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">لم يُتخذ قرار</span>
+                    {onRemove && request.status === 'pending' && step.approvers.length > 1 &&
+                      (step.status === 'active' || step.status === 'waiting') && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          loading={removing === user.id}
+                          onClick={() => onRemove(user.id, user.full_name)}
+                          aria-label={`إزالة ${user.full_name} من المعتمدين`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          إزالة
+                        </Button>
+                      )}
+                  </span>
                 )}
               </li>
             ))}

@@ -510,6 +510,56 @@ def _advance(req, step, decision) -> None:
 
 # --- requester actions ---------------------------------------------------------------------------
 
+def remove_approver(user, req, approver_id) -> dict:
+    """The requester takes an approver who has not decided off a pending
+    request (user decision 2026-11-21). For a filed request (طلب صرف…) whose
+    correspondence exists only for the approval, the person also loses the
+    request entirely: it leaves their inbox, search and notifications. On an
+    ordinary correspondence they only stop being an approver — the mail the
+    sender chose to send them stays."""
+    from apps.messaging.models import ConversationMember
+    from apps.notifications.models import Notification
+
+    if req.requested_by_id != user.id:
+        raise PermissionDenied("Only the requester can change the approvers.")
+    approver_id = str(approver_id)
+    with transaction.atomic():
+        req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
+        if req.status != "pending":
+            raise Conflict("الطلب ليس قيد الاعتماد.")
+        decided = {str(d.step_id) for d in req.decisions.filter(slot_user_id=approver_id)}
+        slots = [s for s in ApprovalStepApprover.objects.filter(step__request=req, user_id=approver_id).select_related("step")
+                 if str(s.step_id) not in decided and s.step.status in ("active", "waiting")]
+        if not slots:
+            raise ValidationError({"approver_id": "ليس معتمدًا لم يقرر بعد في هذا الطلب."})
+        for slot in slots:
+            if slot.step.approvers.count() <= 1:
+                raise ValidationError({"approver_id": f"آخر معتمد في الخطوة {slot.step.step_order} — ألغِ الطلب بدلًا من ذلك."})
+        for slot in slots:
+            slot.delete()
+        step = current_step(req)
+        if (step is not None and step.status == "active" and step.step_type == "all"
+                and step.decisions.filter(decision="approved").count() >= step.approvers.count()):
+            last = step.decisions.filter(decision="approved").order_by("-decided_at").first()
+            _advance(req, step, last)  # the others had already approved
+
+        hidden = False
+        if req.source_file_id and not decided:
+            c = req.correspondence
+            now = timezone.now()
+            hidden = bool(CorrespondenceParticipant.objects.filter(
+                correspondence=c, user_id=approver_id, kind__in=("to", "cc"), removed_at__isnull=True
+            ).update(removed_at=now))
+            ConversationMember.objects.filter(conversation_id=c.thread_id, user_id=approver_id,
+                                              removed_at__isnull=True).update(removed_at=now)
+            Notification.objects.filter(user_id=approver_id, ref_id__in=[req.id, c.id]).delete()
+        else:
+            Notification.objects.filter(user_id=approver_id, ref_id=req.id).delete()
+    log(actor=user, action="approval_approver_removed", target_type="approval_request", target_id=req.id,
+        metadata={"approver_id": approver_id, "slots": len(slots), "hidden": hidden})
+    return {"removed": len(slots), "hidden": hidden}
+
+
 def cancel_request(user, req) -> ApprovalRequest:
     if req.requested_by_id != user.id:
         raise PermissionDenied("Only the requester can cancel.")

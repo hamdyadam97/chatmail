@@ -88,6 +88,8 @@ export const approvalsApi = {
     apiFetch<ApprovalRequest>('/approvals/', { method: 'POST', body }),
   decide: (id: string, decision: Decision, password?: string) =>
     apiFetch<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body: { decision, ...(password ? { password } : {}) } }),
+  removeApprover: (id: string, approverId: string) =>
+    apiFetch<ApprovalRequest>(`/approvals/${id}/remove-approver/`, { method: 'POST', body: { approver_id: approverId } }),
   cancel: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/cancel/`, { method: 'POST' }),
   complete: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/complete/`, { method: 'POST' }),
   delegations: () => apiFetch<{ given: Delegation[]; received: Delegation[] }>('/approvals/delegations/'),

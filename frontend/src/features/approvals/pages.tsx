@@ -315,6 +315,19 @@ function ApprovalDetail({ id }: { id: string }) {
     },
   });
   const cancel = useMutation({ mutationFn: () => approvalsApi.cancel(id), onSuccess: refresh });
+  const [removingUser, setRemovingUser] = useState<{ id: string; name: string } | null>(null);
+  const removeApprover = useMutation({
+    mutationFn: (approverId: string) => approvalsApi.removeApprover(id, approverId),
+    onSuccess: () => {
+      setRemovingUser(null);
+      setActionError(null);
+      void refresh();
+    },
+    onError: (err) => {
+      setRemovingUser(null);
+      setActionError(toUserMessage(err, 'تعذرت الإزالة'));
+    },
+  });
   const complete = useMutation({ mutationFn: () => approvalsApi.complete(id), onSuccess: refresh });
 
   if (isLoading) {
@@ -386,7 +399,27 @@ function ApprovalDetail({ id }: { id: string }) {
           </div>
         )}
 
-        <StepsView request={request} />
+        <StepsView
+          request={request}
+          onRemove={isRequester ? (uid, name) => setRemovingUser({ id: uid, name }) : undefined}
+          removing={removeApprover.isPending ? removeApprover.variables : null}
+        />
+        {removingUser && (
+          <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/60 p-3 text-sm" data-testid="remove-approver-box">
+            <p className="text-gray-800">
+              إزالة <strong>{removingUser.name}</strong> من معتمدي الطلب؟ لن يستطيع اعتماده
+              {request.signable ? '، ويختفي الطلب من عنده (الوارد والإشعارات) — إلا إن كان قد فتحه من قبل فقد اطّلع عليه.' : '.'}
+            </p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="danger" loading={removeApprover.isPending} onClick={() => removeApprover.mutate(removingUser.id)}>
+                تأكيد الإزالة
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setRemovingUser(null)}>
+                تراجع
+              </Button>
+            </div>
+          </div>
+        )}
 
         {request.my_slot && (
           <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/50 p-4">

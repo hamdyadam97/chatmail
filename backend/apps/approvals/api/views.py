@@ -183,6 +183,23 @@ class CancelView(APIView):
         return Response(request_dict(req, request.user))
 
 
+class RemoveApproverView(APIView):
+    """POST {approver_id}: the requester takes an undecided approver off a pending request."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, request_id):
+        req = services.get_viewable(request.user, request_id)
+        approver_id = request.data.get("approver_id")
+        try:
+            uuid.UUID(str(approver_id))
+        except ValueError:
+            raise ValidationError({"approver_id": "معتمد غير صالح."})
+        services.remove_approver(request.user, req, approver_id)
+        req.refresh_from_db()
+        return Response(request_dict(req, request.user))
+
+
 class CompleteView(APIView):
     permission_classes = [IsAuthenticated]
 
