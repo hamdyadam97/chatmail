@@ -293,7 +293,7 @@ def is_signed_request(req) -> bool:
     return bool(req.source_file_id and req.workflow_id and req.workflow.signable)
 
 
-def decide(*, user, request_id, decision: str, password: str | None = None) -> ApprovalDecision:
+def decide(*, user, request_id, decision: str, password: str | None = None, page=None) -> ApprovalDecision:
     req = get_viewable(user, request_id)
     if decision not in DECISIONS:
         raise ValidationError({"decision": "قرار غير معروف."})
@@ -304,6 +304,8 @@ def decide(*, user, request_id, decision: str, password: str | None = None) -> A
             raise ValidationError({"password": "كلمة المرور غير صحيحة."})
         if signature_png(user) is None:
             raise ValidationError({"signature": "احفظ توقيعك أولًا."})
+        if page in (None, ""):
+            raise ValidationError({"page": "اختر الصفحة التي توقّع عليها."})
     with transaction.atomic():
         req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
         if req.status != "pending":
@@ -327,7 +329,7 @@ def decide(*, user, request_id, decision: str, password: str | None = None) -> A
         except IntegrityError:
             raise Conflict("سبق اتخاذ قرار في هذه الخانة.")
         if signing:
-            _sign(req, user, delegation)
+            _sign(req, user, delegation, page)
         _advance(req, step, row)
 
     log(
@@ -394,11 +396,34 @@ def delete_signature(user) -> None:
         log(actor=user, action="signature_deleted", target_type="user", target_id=user.id)
 
 
-def _sign(req, user, delegation) -> None:
-    """Stamp `user`'s signature on the request's document (inside decide())."""
+def ensure_page_count(req) -> int:
+    """Pages of the request's document (counted once for older requests)."""
+    if req.page_count == 0 and req.source_file_id:
+        from apps.correspondence.services import read_blob
+
+        from . import signing
+
+        req.page_count = signing.page_count(read_blob(req.source_file))
+        req.save(update_fields=["page_count"])
+    return req.page_count
+
+
+def _sign(req, user, delegation, page) -> None:
+    """Stamp `user`'s signature on page `page` of the request's document (inside decide())."""
     from apps.correspondence.services import read_blob, store_blob
 
     from . import signing
+
+    pages = ensure_page_count(req)
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        raise ValidationError({"page": "اختر الصفحة التي توقّع عليها."})
+    if not 1 <= page <= pages:
+        raise ValidationError({"page": f"اختر صفحة من 1 إلى {pages}."})
+    on_page = dict(req.page_signatures or {})
+    if not on_page and req.signature_count:
+        on_page = {str(pages): req.signature_count}  # signed before page choice: all on the last page
 
     base = req.signed_file or req.source_file
     role = _role_label(user)
@@ -408,12 +433,14 @@ def _sign(req, user, delegation) -> None:
     reference = req.correspondence.reference_number or ""
     pdf = signing.stamp(
         read_blob(base), signature_png=signature_png(user), name=user.full_name or user.username,
-        role=role, when=when, reference=reference, slot=req.signature_count,
+        role=role, when=when, reference=reference, slot=on_page.get(str(page), 0), page=page,
     )
     stored = store_blob(user, pdf, name=f"{reference or 'طلب'} - موقّع.pdf", mime="application/pdf")
+    on_page[str(page)] = on_page.get(str(page), 0) + 1
     req.signed_file = stored
     req.signature_count += 1
-    req.save(update_fields=["signed_file", "signature_count"])
+    req.page_signatures = on_page
+    req.save(update_fields=["signed_file", "signature_count", "page_signatures"])
 
 
 MAX_REQUEST_FILE_BYTES = 15 * 1024 * 1024
@@ -474,7 +501,8 @@ def file_request(*, requester, workflow_id, title: str, note: str, data: bytes, 
         corr = Correspondence.objects.select_related("content_message", "sender_membership").get(pk=result.correspondence.pk)
         req = create_request(requester=requester, correspondence=corr, workflow_id=workflow.id)
         req.source_file = stored
-        req.save(update_fields=["source_file"])
+        req.page_count = signing.page_count(pdf)
+        req.save(update_fields=["source_file", "page_count"])
     return req
 
 

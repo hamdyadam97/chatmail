@@ -91,6 +91,9 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         "source_file": file_meta(req.source_file) if req.source_file_id else None,
         "signed_file": file_meta(req.signed_file) if req.signed_file_id else None,
         "signature_count": req.signature_count,
+        # Every approver chooses the page they sign.
+        "page_count": services.ensure_page_count(req) if signed_request else None,
+        "page_signatures": req.page_signatures or {},
     }
 
 
@@ -123,6 +126,15 @@ class ApprovalListCreateView(APIView):
                 .select_related("correspondence", "requested_by")
                 .order_by("-created_at")[:200]
             )
+        elif box == "received":
+            # Every request I am (or was) an approver of — to find it again after signing.
+            from apps.correspondence.services import can_read
+
+            items = [
+                r for r in ApprovalRequest.objects.filter(steps__approvers__user=request.user)
+                .select_related("correspondence", "requested_by", "workflow").distinct().order_by("-created_at")[:200]
+                if can_read(request.user, r.correspondence)
+            ]
         elif box == "cancelled_mine":
             # Requests that waited for me and were cancelled (last 30 days): shown, not actionable.
             from datetime import timedelta
@@ -144,7 +156,7 @@ class ApprovalListCreateView(APIView):
                 correspondence.approval_requests.select_related("correspondence", "requested_by").order_by("-created_at")
             )
         else:
-            raise ValidationError({"box": "pending_mine | cancelled_mine | requested_by_me | correspondence"})
+            raise ValidationError({"box": "pending_mine | received | cancelled_mine | requested_by_me | correspondence"})
         return Response([request_dict(r, request.user) for r in items])
 
     def post(self, request):
@@ -174,6 +186,7 @@ class DecideSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=list(services.DECISIONS))
     # Approving a signed request stamps the saved signature: current password required.
     password = serializers.CharField(required=False, allow_blank=True, write_only=True, trim_whitespace=False)
+    page = serializers.IntegerField(required=False, min_value=1)
 
 
 class DecideView(APIView):
@@ -186,6 +199,7 @@ class DecideView(APIView):
         decision = services.decide(
             user=request.user, request_id=request_id, decision=serializer.validated_data["decision"],
             password=serializer.validated_data.get("password"),
+            page=serializer.validated_data.get("page"),
         )
         return Response(request_dict(decision.request, request.user), status=status.HTTP_201_CREATED)
 

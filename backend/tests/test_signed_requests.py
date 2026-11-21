@@ -82,7 +82,7 @@ def test_file_sign_and_download(api_client, org):
     assert r.status_code == 201, r.content
     req = r.json()
     assert req["signable"] and req["title"] == "طلب صرف: صرف مستلزمات" and req["source_file"]["name"] == "expense.pdf"
-    assert req["signed_file"] is None and req["signature_count"] == 0
+    assert req["signed_file"] is None and req["signature_count"] == 0 and req["page_count"] == 1
     rid = req["id"]
 
     # the branch manager: no saved signature → refused; wrong password → refused
@@ -91,13 +91,15 @@ def test_file_sign_and_download(api_client, org):
     sig = api_client.put(f"{API}signature/", {"image": base64.b64encode(_png()).decode()}, format="json", **h["sr_bm"])
     assert sig.status_code == 200 and sig.json()["has_signature"]
     assert decide("sr_bm", password="wrong").status_code == 400
-    first = decide("sr_bm", password=DEFAULT_PASSWORD)
+    assert decide("sr_bm", password=DEFAULT_PASSWORD).status_code == 400  # the page must be chosen
+    assert decide("sr_bm", password=DEFAULT_PASSWORD, page=2).status_code == 400  # one page only
+    first = decide("sr_bm", password=DEFAULT_PASSWORD, page=1)
     assert first.status_code == 201, first.content
     assert first.json()["signature_count"] == 1 and first.json()["status"] == "pending"
 
     api_client.put(f"{API}signature/", {"image": "data:image/png;base64," + base64.b64encode(_png()).decode()},
                    format="json", **h["sr_exec"])
-    second = decide("sr_exec", password=DEFAULT_PASSWORD)
+    second = decide("sr_exec", password=DEFAULT_PASSWORD, page=1)
     assert second.status_code == 201, second.content
     done = second.json()
     assert done["status"] == "approved" and done["signature_count"] == 2
@@ -112,6 +114,41 @@ def test_file_sign_and_download(api_client, org):
     assert _download(api_client, h["sr_exec"], done["signed_file"]["id"]).status_code == 200
     assert _download(api_client, h["sr_out"], done["signed_file"]["id"]).status_code == 403
     assert AuditLog.objects.filter(action="approval_decided", metadata__signed=True).count() == 2
+    # the approver finds it again after signing («وصلتني»)
+    assert rid in [x["id"] for x in api_client.get(f"{API}?box=received", **h["sr_bm"]).json()]
+    assert rid not in [x["id"] for x in api_client.get(f"{API}?box=received", **h["sr_out"]).json()]
+
+
+def _pages(n: int) -> bytes:
+    from PIL import Image
+
+    out = io.BytesIO()
+    first, *rest = [Image.new("RGB", (1240, 1754), "white") for _ in range(n)]
+    first.save(out, "PDF", save_all=True, append_images=rest)
+    return out.getvalue()
+
+
+def test_each_approver_signs_the_page_they_choose(api_client, org):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    h = org["h"]
+    r = api_client.post(f"{API}file-request/", {
+        "workflow_id": org["wf"]["id"], "title": "عقد",
+        "file": SimpleUploadedFile("contract.pdf", _pages(3), content_type="application/pdf")},
+        format="multipart", **h["sr_emp"])
+    assert r.status_code == 201 and r.json()["page_count"] == 3
+    rid = r.json()["id"]
+    for who, page in (("sr_bm", 2), ("sr_exec", 3)):
+        api_client.put(f"{API}signature/", {"image": base64.b64encode(_png()).decode()}, format="json", **h[who])
+        resp = api_client.post(f"{API}{rid}/decide/", {"decision": "approved", "password": DEFAULT_PASSWORD, "page": page},
+                               format="json", **h[who])
+        assert resp.status_code == 201, resp.content
+    done = api_client.get(f"{API}{rid}/", **h["sr_emp"]).json()
+    assert done["page_signatures"] == {"2": 1, "3": 1}
+    pdf = _download(api_client, h["sr_emp"], done["signed_file"]["id"])
+    reader = PdfReader(io.BytesIO(b"".join(pdf.streaming_content) if hasattr(pdf, "streaming_content") else pdf.content))
+    ref = ApprovalRequest.objects.get(id=rid).correspondence.reference_number
+    assert [reader.pages[i].extract_text().count(ref) for i in range(3)] == [0, 1, 1]
 
 
 def test_reject_needs_no_signature_and_types_are_admin_defined(api_client, org):

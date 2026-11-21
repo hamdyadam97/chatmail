@@ -45,6 +45,9 @@ export interface ApprovalRequest {
   source_file: FileRef | null;
   signed_file: FileRef | null;
   signature_count: number;
+  /** صفحات الملف، وعدد التوقيعات على كل صفحة ({"2": 1}). */
+  page_count: number | null;
+  page_signatures: Record<string, number>;
 }
 
 export interface FileRef {
@@ -80,14 +83,14 @@ export interface StepSpec {
 }
 
 export const approvalsApi = {
-  list: (box: 'pending_mine' | 'cancelled_mine' | 'requested_by_me') => apiFetch<ApprovalRequest[]>(`/approvals/?box=${box}`),
+  list: (box: 'pending_mine' | 'received' | 'cancelled_mine' | 'requested_by_me') => apiFetch<ApprovalRequest[]>(`/approvals/?box=${box}`),
   forCorrespondence: (correspondenceId: string) =>
     apiFetch<ApprovalRequest[]>(`/approvals/?box=correspondence&correspondence_id=${correspondenceId}`),
   get: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/`),
   create: (body: { correspondence_id: string; steps?: StepSpec[]; workflow_id?: string }) =>
     apiFetch<ApprovalRequest>('/approvals/', { method: 'POST', body }),
-  decide: (id: string, decision: Decision, password?: string) =>
-    apiFetch<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body: { decision, ...(password ? { password } : {}) } }),
+  decide: (id: string, decision: Decision, sign?: { password: string; page: number }) =>
+    apiFetch<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body: { decision, ...(sign ?? {}) } }),
   removeApprover: (id: string, approverId: string) =>
     apiFetch<ApprovalRequest>(`/approvals/${id}/remove-approver/`, { method: 'POST', body: { approver_id: approverId } }),
   cancel: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/cancel/`, { method: 'POST' }),

@@ -13,7 +13,7 @@ import { SignatureManager } from './SignaturePad';
 import { saveBlob } from '../../shared/lib/download';
 import { StatusBadge, StepsView, formatDate } from './components';
 
-type Tab = 'pending_mine' | 'requested_by_me' | 'delegations';
+type Tab = 'pending_mine' | 'received' | 'requested_by_me' | 'delegations';
 
 function RequestRow({ r, disabled = false }: { r: ApprovalRequest; disabled?: boolean }) {
   const body = <RowBody r={r} />;
@@ -66,7 +66,7 @@ function RowBody({ r }: { r: ApprovalRequest }) {
   );
 }
 
-function RequestList({ box }: { box: 'pending_mine' | 'requested_by_me' }) {
+function RequestList({ box }: { box: 'pending_mine' | 'received' | 'requested_by_me' }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['approvals', box],
     queryFn: () => approvalsApi.list(box),
@@ -91,7 +91,7 @@ function RequestList({ box }: { box: 'pending_mine' | 'requested_by_me' }) {
       {!data?.length ? (
         <EmptyState
           icon={CheckCheck}
-          title={box === 'pending_mine' ? 'لا طلبات بانتظار قرارك' : 'لم تقدّم طلبات اعتماد'}
+          title={box === 'pending_mine' ? 'لا طلبات بانتظار قرارك' : box === 'received' ? 'لم يصلك أي طلب اعتماد' : 'لم تقدّم طلبات اعتماد'}
         />
       ) : (
         <Card className="overflow-hidden">
@@ -280,6 +280,7 @@ export function Approvals() {
   const { data: types } = useQuery({ queryKey: ['approvals', 'request-types'], queryFn: approvalsApi.requestTypes });
   const tabs: Array<[Tab, string]> = [
     ['pending_mine', 'بانتظار قراري'],
+    ['received', 'وصلتني'],
     ['requested_by_me', 'طلباتي'],
     ['delegations', 'التفويضات'],
   ];
@@ -332,6 +333,7 @@ function ApprovalDetail({ id }: { id: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<Decision | null>(null);
   const [password, setPassword] = useState('');
+  const [signPage, setSignPage] = useState('');
   const { data: mySignature } = useQuery({
     queryKey: ['my-signature'],
     queryFn: approvalsApi.signature,
@@ -341,10 +343,15 @@ function ApprovalDetail({ id }: { id: string }) {
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['approvals'] });
   const decide = useMutation({
     mutationFn: (decision: Decision) =>
-      approvalsApi.decide(id, decision, decision === 'approved' && request?.signable ? password : undefined),
+      approvalsApi.decide(
+        id,
+        decision,
+        decision === 'approved' && request?.signable ? { password, page: Number(signPage) } : undefined,
+      ),
     onSuccess: () => {
       setConfirming(null);
       setPassword('');
+      setSignPage('');
       setActionError(null);
       void refresh();
     },
@@ -494,9 +501,28 @@ function ApprovalDetail({ id }: { id: string }) {
                         onChange={(e) => setPassword(e.target.value)}
                       />
                     </div>
-                    <p className="text-xs text-gray-500">يُختم توقيعك واسمك ووقت الاعتماد أسفل آخر صفحة من الملف.</p>
+                    <div className="md:w-1/2">
+                      <Label htmlFor="sign-page">الصفحة التي توقّع عليها</Label>
+                      <select
+                        id="sign-page"
+                        value={signPage}
+                        onChange={(e) => setSignPage(e.target.value)}
+                        className="h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm"
+                      >
+                        <option value="">اختر الصفحة…</option>
+                        {Array.from({ length: request.page_count ?? 1 }, (_, i) => String(i + 1)).map((n) => (
+                          <option key={n} value={n}>
+                            صفحة {n} من {request.page_count}
+                            {request.page_signatures[n] ? ` — عليها ${request.page_signatures[n]} توقيع` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      افتح «الملف الأصلي» أولًا وحدد صفحة توقيعك؛ يُختم توقيعك واسمك ووقت الاعتماد أسفل تلك الصفحة.
+                    </p>
                     <div className="flex gap-2">
-                      <Button size="sm" disabled={!password} loading={decide.isPending} onClick={() => decide.mutate('approved')}>
+                      <Button size="sm" disabled={!password || !signPage} loading={decide.isPending} onClick={() => decide.mutate('approved')}>
                         <PenLine className="h-4 w-4" />
                         توقيع واعتماد
                       </Button>

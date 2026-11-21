@@ -1,6 +1,6 @@
 """Signed requests (user decision 2026-11-21): an employee uploads a request
 file (expense, leave…); each approver who approves stamps their saved
-handwritten signature, name and time at the bottom of the LAST page.
+handwritten signature, name and time at the bottom of the page they choose.
 
 Everything happens in memory; the result is sealed like any other file
 (correspondence.services.store_blob). The signature is a picture of a
@@ -99,21 +99,31 @@ def clean_signature(data: bytes) -> bytes:
 
 # --- stamping --------------------------------------------------------------------------------
 
-def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, reference: str, slot: int) -> bytes:
-    """`pdf` with one more signature box at the bottom of its last page.
-    `slot` = how many signatures are already on it (0 for the first)."""
+def page_count(pdf: bytes) -> int:
+    from pypdf import PdfReader
+
+    return len(PdfReader(io.BytesIO(pdf)).pages)
+
+
+def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, reference: str, slot: int,
+          page: int | None = None) -> bytes:
+    """`pdf` with one more signature box at the bottom of page `page`
+    (1-based; default the last). `slot` = signatures already on that page."""
     from fpdf import FPDF
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(io.BytesIO(pdf))
-    last = reader.pages[-1]
-    width, height = float(last.mediabox.width), float(last.mediabox.height)
+    index = (page - 1) if page else len(reader.pages) - 1
+    if not 0 <= index < len(reader.pages):
+        raise ValidationError({"page": f"اختر صفحة من 1 إلى {len(reader.pages)}."})
+    target = reader.pages[index]
+    width, height = float(target.mediabox.width), float(target.mediabox.height)
 
     col, row = slot % PER_ROW, slot // PER_ROW
     x = width - MARGIN - (col + 1) * BOX_W - col * GAP
     y_top = height - MARGIN - (row + 1) * BOX_H - row * GAP  # fpdf: y grows downwards
     if x < 0 or y_top < 0:
-        raise ValidationError({"detail": "لا مكان لتوقيع إضافي على الصفحة الأخيرة."})
+        raise ValidationError({"page": "لا مكان لتوقيع إضافي على هذه الصفحة — اختر صفحة أخرى."})
 
     overlay = FPDF(unit="pt", format=(width, height))
     overlay.set_auto_page_break(False)
@@ -137,7 +147,7 @@ def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, 
 
     stamp_page = PdfReader(io.BytesIO(bytes(overlay.output()))).pages[0]
     writer = PdfWriter(clone_from=reader)
-    writer.pages[-1].merge_page(stamp_page)
+    writer.pages[index].merge_page(stamp_page)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()

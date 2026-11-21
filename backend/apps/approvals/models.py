@@ -100,6 +100,10 @@ class ApprovalRequest(models.Model):
         "correspondence.StoredFile", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )
     signature_count = models.PositiveSmallIntegerField(default=0)
+    # Pages of the document, and how many signatures each page already carries
+    # ({"1": 2, "3": 1}) — every approver chooses the page they sign.
+    page_count = models.PositiveSmallIntegerField(default=0)  # 0 = not counted yet (older requests)
+    page_signatures = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "approval_requests"
