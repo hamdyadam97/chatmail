@@ -758,12 +758,20 @@ async function main() {
 
     section('8) تصدير التقارير إلى Excel');
     const manager = await newDevice(browser, 'manager', 'Manager@12345');
+    // قسم «الإدارة» لمدير النظام والمدير التنفيذي فقط: لا يظهر لمدير الفرع، ورابطه المباشر يعود للبريد.
     await manager.page.goto(`${UI}/reports`);
-    const excelBtn = manager.page.locator('button:has-text("Excel")');
+    const bounced = await manager.page.waitForURL(/\/mail\/inbox/, { timeout: 15000 }).then(() => true).catch(() => false);
+    const railLabels = await manager.page.locator('nav[aria-label="الأقسام"]').first().innerText().catch(() => '');
+    await admin.page.goto(`${UI}/mail/inbox`);
+    const adminRail = await admin.page.locator('nav[aria-label="الأقسام"]').first().innerText({ timeout: 15000 }).catch(() => '');
+    check('قسم الإدارة: يظهر للمسؤول، ومخفي عن مدير الفرع ورابطه يعود للبريد',
+      bounced && railLabels.includes('التعاميم') && !railLabels.includes('الإدارة') && adminRail.includes('الإدارة'));
+    await admin.page.goto(`${UI}/reports`);
+    const excelBtn = admin.page.locator('button:has-text("Excel")');
     await excelBtn.waitFor({ timeout: 20000 });
-    await manager.page.locator('text=مراسلات مرسلة').first().waitFor({ timeout: 20000 }).catch(() => undefined);
+    await admin.page.locator('text=مراسلات مرسلة').first().waitFor({ timeout: 20000 }).catch(() => undefined);
     const [download] = await Promise.all([
-      manager.page.waitForEvent('download', { timeout: 20000 }).catch(() => null),
+      admin.page.waitForEvent('download', { timeout: 20000 }).catch(() => null),
       excelBtn.click(),
     ]);
     let xlsxOk = false;
@@ -774,8 +782,8 @@ async function main() {
       const head = readFileSync(file).subarray(0, 2).toString('latin1');
       xlsxOk = head === 'PK' && download.suggestedFilename().endsWith('.xlsx');
     }
-    if (!xlsxOk) console.log(`    لقطة: ${await shot(manager, 'export')} — console: ${manager.page.errors.join(' | ')}`);
-    check('manager: نزّل التقرير كملف Excel', xlsxOk);
+    if (!xlsxOk) console.log(`    لقطة: ${await shot(admin, 'export')} — console: ${admin.page.errors.join(' | ')}`);
+    check('المسؤول: نزّل التقرير كملف Excel', xlsxOk);
 
     section('8ب) الأدوار الخمسة والتعاميم');
     // المسؤول يسند «مدير إقليمي» لمحمد على فرعين بمربعات الاختيار.

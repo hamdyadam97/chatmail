@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ADMIN_ITEMS, MORE_ITEMS, SETTINGS_ITEMS, type HubItem } from '../../app/nav-items';
+import { useAuth } from '../auth/AuthContext';
 
 function Hub({ title, note, items }: { title: string; note: string; items: HubItem[] }) {
   return (
@@ -39,4 +40,7 @@ export const AdminHub = () => (
 
 export const SettingsHub = () => <Hub title="الإعدادات" note="أمان حسابك والإشعارات." items={SETTINGS_ITEMS} />;
 
-export const MoreHub = () => <Hub title="المزيد" note="بقية الأقسام." items={MORE_ITEMS} />;
+export function MoreHub() {
+  const { user } = useAuth();
+  return <Hub title="المزيد" note="بقية الأقسام." items={MORE_ITEMS.filter((i) => !i.adminOnly || user?.show_admin)} />;
+}

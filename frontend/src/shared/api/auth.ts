@@ -7,6 +7,8 @@ export interface User {
   must_change_password: boolean;
   /** المعهد الرئيسي للمستخدم نفسه (لشعاره في الرأس). */
   institute?: { code: string; name: string } | null;
+  /** قسم «الإدارة» لمدير النظام والمدير التنفيذي فقط (عرض فقط؛ الخادم يتحقق من كل صلاحية). */
+  show_admin?: boolean;
 }
 
 /** Successful password login (MFA not enabled or not challenged). */

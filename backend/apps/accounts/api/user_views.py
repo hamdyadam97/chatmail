@@ -27,6 +27,9 @@ from .serializers import (
 from .services import revoke_all_user_sessions
 
 
+ADMIN_SECTION_ROLES = {"sys_admin", "executive"}
+
+
 def _scope_unit_for_user(user: User):
     """The org unit that governs admin operations on this user:
     their primary membership's most specific unit, else None (central)."""
@@ -66,6 +69,13 @@ class MeView(APIView):
 
         data = PublicUserSerializer(request.user).data
         data["roles"] = user_scope_summary(request.user)
+        # The «الإدارة» section is shown to the system admin and the executive
+        # only (user decision 2026-11-21) — and to whoever manages roles
+        # centrally, so an admin bootstrapped with older roles keeps it. Only
+        # a display switch: every admin endpoint still checks its permission.
+        data["show_admin"] = any(r["role"] in ADMIN_SECTION_ROLES for r in data["roles"]) or has_permission(
+            request.user, "roles.manage"
+        )
         # The caller's own primary institute (for its logo in the header).
         membership = request.user.memberships.filter(is_primary=True).select_related("institute").first()
         data["institute"] = (

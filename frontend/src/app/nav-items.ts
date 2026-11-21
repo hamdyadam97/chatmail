@@ -7,7 +7,14 @@ export interface RailItem {
   icon: LucideIcon;
   /** مسارات أخرى تُعدّ ضمن هذا القسم (لإبراز الأيقونة). */
   match: string[];
+  /** يظهر فقط لمن يُعرض له قسم الإدارة (`show_admin`). */
+  adminOnly?: boolean;
 }
+
+/** مسارات قسم الإدارة — لا تُفتح لغير مدير النظام والمدير التنفيذي. */
+export const ADMIN_PATHS = ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/reports', '/audit-logs', '/login-approvals'];
+/** الأرشيف ضمن القسم في الشريط، لكن رابطه يبقى لضابط الأرشيف (الخادم لا يعرضه إلا للضباط). */
+const ADMIN_MATCH = [...ADMIN_PATHS, '/archive'];
 
 /** شريط الأقسام الرئيسية (أسلوب Teams/Slack): أيقونة + اسم قصير. */
 export const RAIL_ITEMS: RailItem[] = [
@@ -20,7 +27,8 @@ export const RAIL_ITEMS: RailItem[] = [
     to: '/admin',
     label: 'الإدارة',
     icon: Building2,
-    match: ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/reports', '/audit-logs', '/archive', '/login-approvals'],
+    match: ADMIN_MATCH,
+    adminOnly: true,
   },
 ];
 
@@ -41,7 +49,7 @@ export const MOBILE_TABS: RailItem[] = [
 
 export const MORE_ITEMS: HubItem[] = [
   { to: '/search', label: 'البحث', description: 'في بريدك ومحادثاتك وتعاميمك', icon: Search },
-  { to: '/admin', label: 'الإدارة', description: 'الموظفون والهيكل والتقارير والأرشيف', icon: Building2 },
+  { to: '/admin', label: 'الإدارة', description: 'الموظفون والهيكل والتقارير والأرشيف', icon: Building2, adminOnly: true },
   { to: '/settings', label: 'الإعدادات', description: 'الأمان والإشعارات', icon: Settings },
 ];
 
@@ -50,6 +58,7 @@ export interface HubItem {
   label: string;
   description: string;
   icon: LucideIcon;
+  adminOnly?: boolean;
 }
 
 export const ADMIN_ITEMS: HubItem[] = [

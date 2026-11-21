@@ -231,6 +231,21 @@ def test_me_carries_own_primary_institute(api_client, user_factory, branch_a):
     assert me["institute"] == {"code": branch_a.institute.code, "name": branch_a.institute.name}
 
 
+def test_admin_section_only_for_system_admin_and_executive(api_client, user_factory, role_factory, branch_a):
+    """«الإدارة» shows for sys_admin / executive (and central roles.manage) only."""
+    cases = [
+        ("sec_admin", lambda u: role_factory(u, "sys_admin"), True),
+        ("sec_exec", lambda u: role_factory(u, "executive"), True),
+        ("sec_bm", lambda u: role_factory(u, "branch_manager", institute=branch_a.institute, branch=branch_a), False),
+        ("sec_rm", lambda u: role_factory(u, "regional_manager", institute=branch_a.institute, branch=branch_a), False),
+        ("sec_emp", lambda u: role_factory(u, "employee", institute=branch_a.institute), False),
+    ]
+    for username, grant, expected in cases:
+        grant(user_factory(username, membership_unit=branch_a))
+        me = api_client.get("/api/v1/users/me/", **auth_headers(_access(api_client, username))).json()
+        assert me["show_admin"] is expected, username
+
+
 def test_structure_write_requires_permission(api_client, user_factory, institute_a):
     user_factory("no_perm")
     access = _access(api_client, "no_perm")

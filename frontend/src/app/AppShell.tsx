@@ -1,6 +1,6 @@
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Lock, LogOut, Search } from 'lucide-react';
-import { MOBILE_TABS, RAIL_BOTTOM, RAIL_ITEMS, type RailItem } from './nav-items';
+import { ADMIN_PATHS, MOBILE_TABS, RAIL_BOTTOM, RAIL_ITEMS, type RailItem } from './nav-items';
 import { useEffect } from 'react';
 import { useAuth } from '../features/auth/AuthContext';
 import { MustChangePasswordModal } from '../features/auth/MustChangePasswordModal';
@@ -73,6 +73,8 @@ export function AppShell() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const fullBleed = FULL_BLEED.some((p) => pathname.startsWith(p));
+  // قسم الإدارة لمدير النظام والمدير التنفيذي فقط — الرابط المباشر يعود للبريد.
+  const blockedAdmin = !!user && !user.show_admin && ADMIN_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   // نقرة على إشعار سطح المكتب والتطبيق مفتوح: ننتقل داخليًا بلا إعادة تحميل.
   useEffect(() => {
@@ -97,7 +99,7 @@ export function AppShell() {
         <Link to="/mail/inbox" className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-white" aria-label="الرئيسية">
           <Lock className="h-5 w-5" />
         </Link>
-        {RAIL_ITEMS.map((item) => (
+        {RAIL_ITEMS.filter((item) => !item.adminOnly || user?.show_admin).map((item) => (
           <RailLink key={item.to} item={item} pathname={pathname} />
         ))}
         <div className="mt-auto w-full">
@@ -169,7 +171,7 @@ export function AppShell() {
           <PushPrompt />
         </div>
         <main className={cn('min-h-0 flex-1', fullBleed ? 'overflow-hidden' : 'overflow-y-auto p-4 md:p-6')}>
-          <Outlet />
+          {blockedAdmin ? <Navigate to="/mail/inbox" replace /> : <Outlet />}
         </main>
         <MobileTabs pathname={pathname} />
       </div>
