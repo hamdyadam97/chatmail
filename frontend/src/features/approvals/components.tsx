@@ -133,21 +133,37 @@ export function ApprovalPanel({ detail, isSender }: { detail: CorrespondenceDeta
           </Button>
         )}
       </div>
-      {(requests ?? []).map((r) => (
-        <Link
-          key={r.id}
-          to={`/approvals/${r.id}`}
-          className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50"
-        >
-          <span>
-            طلب بتاريخ {formatDate(r.created_at)} — الخطوة {r.current_step_order} من {r.steps.length}
-          </span>
-          <span className="flex items-center gap-2">
-            {r.my_slot && <span className="text-xs font-medium text-amber-700">بانتظار قرارك</span>}
-            <StatusBadge status={r.status} />
-          </span>
-        </Link>
-      ))}
+      {(requests ?? []).map((r) => {
+        const inner = (
+          <>
+            <span>
+              طلب بتاريخ {formatDate(r.created_at)} — الخطوة {r.current_step_order} من {r.steps.length}
+            </span>
+            <span className="flex items-center gap-2">
+              {r.my_slot && <span className="text-xs font-medium text-amber-700">بانتظار قرارك</span>}
+              <StatusBadge status={r.status} />
+            </span>
+          </>
+        );
+        // الطلب الملغى يُعرض ولا يُفتح.
+        return r.status === 'cancelled' ? (
+          <div
+            key={r.id}
+            aria-disabled="true"
+            className="flex cursor-not-allowed items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-400"
+          >
+            {inner}
+          </div>
+        ) : (
+          <Link
+            key={r.id}
+            to={`/approvals/${r.id}`}
+            className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            {inner}
+          </Link>
+        );
+      })}
       {building && (
         <RequestBuilder
           detail={detail}

@@ -96,7 +96,7 @@ function RequestList({ box }: { box: 'pending_mine' | 'requested_by_me' }) {
       ) : (
         <Card className="overflow-hidden">
           {data.map((r) => (
-            <RequestRow key={r.id} r={r} />
+            <RequestRow key={r.id} r={r} disabled={r.status === 'cancelled'} />
           ))}
         </Card>
       )}
@@ -380,6 +380,18 @@ function ApprovalDetail({ id }: { id: string }) {
     return (
       <Card className="mx-auto mt-10 max-w-md p-8 text-center text-sm text-gray-600">
         {toUserMessage(error, 'لا تملك صلاحية الاطلاع على هذا الطلب')}
+      </Card>
+    );
+  }
+  // طلب ملغى: لا يُفتح لأحد (من رابط أو إشعار قديم) — رسالة فقط.
+  if (request.status === 'cancelled') {
+    return (
+      <Card className="mx-auto mt-10 max-w-md space-y-3 p-8 text-center" data-testid="cancelled-request">
+        <p className="text-base font-semibold text-gray-900">هذا الطلب ملغى</p>
+        <p className="text-sm text-gray-500">أُلغي في {formatDate(request.decided_at)} ولم يعد متاحًا.</p>
+        <Link to="/approvals" className="inline-block text-sm text-primary-700 hover:underline">
+          العودة إلى الموافقات
+        </Link>
       </Card>
     );
   }

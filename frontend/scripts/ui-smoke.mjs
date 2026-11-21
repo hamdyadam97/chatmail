@@ -1038,6 +1038,18 @@ async function main() {
     const stayed = manager.page.url().endsWith('/approvals');
     check('طلب ملغى: يبقى ظاهرًا عند المعتمد رماديًا ولا يُفتح', greyShown && notLink && stayed,
       `shown=${greyShown} notLink=${notLink} stayed=${stayed}`);
+    // وعند مقدّمه في «طلباتي» كذلك، ورابطه المباشر (إشعار قديم) يقول إنه ملغى فقط.
+    await ahmed.page.goto(`${UI}/approvals`);
+    await ahmed.page.getByRole('button', { name: 'طلباتي' }).click({ timeout: 10000 }).catch(() => undefined);
+    const mineRow = ahmed.page.locator('[data-testid="cancelled-request-row"]', { hasText: 'طلب لإزالة معتمد' });
+    const mineGrey = await mineRow.waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    await mineRow.click({ force: true }).catch(() => undefined);
+    const mineStayed = ahmed.page.url().endsWith('/approvals');
+    await ahmed.page.goto(secondUrl);
+    const onlyNotice = await ahmed.page.locator('[data-testid="cancelled-request"]').waitFor({ timeout: 15000 }).then(() => true).catch(() => false)
+      && !(await ahmed.page.locator('[data-testid="request-files"]').count());
+    check('طلب ملغى: لا يُفتح من «طلباتي»، والرابط المباشر يعرض «هذا الطلب ملغى» فقط', mineGrey && mineStayed && onlyNotice,
+      `grey=${mineGrey} stayed=${mineStayed} notice=${onlyNotice}`);
     await runPython(
       'from apps.authorization.models import UserRoleAssignment; UserRoleAssignment.objects.filter(user__username="mohamed", role__code="branch_manager").delete()',
     );
