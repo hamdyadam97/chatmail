@@ -19,6 +19,7 @@ import { SearchPage } from '../features/search/pages';
 import { AdminHub, MoreHub, SettingsHub } from '../features/hub/pages';
 import { ProfilePage } from '../features/profile/ProfilePage';
 import { RequestTypesPage } from '../features/approvals/RequestTypesPage';
+import { VerifySignaturePage } from '../features/approvals/VerifySignaturePage';
 
 /** تحويل يحافظ على ?query (روابط المسودات/الإحالة/البحث القديمة). */
 function Redirect({ to }: { to: string }) {
@@ -74,6 +75,7 @@ export const router = createBrowserRouter([
       { path: 'departments', element: <OrgPages.Departments /> },
       { path: 'roles', element: <RolesPages.Roles /> },
       { path: 'request-types', element: <RequestTypesPage /> },
+      { path: 'verify-signature', element: <VerifySignaturePage /> },
       { path: 'reports', element: <ReportsPages.Reports /> },
       { path: 'audit-logs', element: <AuditPages.AuditLogs /> },
 

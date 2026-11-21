@@ -46,6 +46,8 @@ def _decision_dict(d) -> dict:
         "approver": _user_ref(d.approver),
         "delegated": d.delegation_id is not None,
         "decided_at": d.decided_at.isoformat(),
+        "verify_code": d.verify_code,
+        "signed_page": d.signed_page,
     }
 
 
@@ -468,3 +470,22 @@ class SignatureView(APIView):
     def delete(self, request):
         services.delete_signature(request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class VerifyThrottle(SimpleRateThrottle):
+    scope = "signature_verify"
+    rate = "30/min"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {"scope": self.scope, "ident": str(request.user.pk)}
+
+
+class VerifySignatureView(APIView):
+    """GET ?code=XXXX-XXXX: is this printed signature real? Who, when, which
+    request — never its content. Any signed-in employee."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [VerifyThrottle]
+
+    def get(self, request):
+        return Response(services.verify_signature(request.user, request.query_params.get("code") or ""))

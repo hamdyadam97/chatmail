@@ -18,7 +18,7 @@ MAX_SIGNATURE_BYTES = 300 * 1024
 FONT_PATH = Path(__file__).resolve().parent / "fonts" / "Amiri-Regular.ttf"
 
 # Signature boxes at the bottom of the last page, right to left, 3 per row.
-BOX_W, BOX_H, GAP, MARGIN, PER_ROW = 165.0, 92.0, 8.0, 18.0, 3
+BOX_W, BOX_H, GAP, MARGIN, PER_ROW = 165.0, 104.0, 8.0, 18.0, 3
 
 
 def _ar(text: str) -> str:
@@ -106,7 +106,7 @@ def page_count(pdf: bytes) -> int:
 
 
 def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, reference: str, slot: int,
-          page: int | None = None) -> bytes:
+          page: int | None = None, code: str | None = None) -> bytes:
     """`pdf` with one more signature box at the bottom of page `page`
     (1-based; default the last). `slot` = signatures already on that page."""
     from fpdf import FPDF
@@ -144,6 +144,16 @@ def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, 
     overlay.cell(BOX_W - 8, 11, _ar(f"{role} — اعتُمد إلكترونيًا"), align="C")
     overlay.set_xy(x + 4, y_top + 70)
     overlay.cell(BOX_W - 8, 11, f"{when}  ·  {reference}", align="C")
+    if code:
+        overlay.set_text_color(20, 20, 20)
+        # Label (right) and code (left) as separate runs: the code stays copyable/searchable text.
+        label = _ar("رمز التحقق:")
+        w_label, w_code, gap = overlay.get_string_width(label), overlay.get_string_width(code), 4
+        start = x + (BOX_W - (w_label + gap + w_code)) / 2  # the pair centred: «رمز التحقق: CODE» read right to left
+        overlay.set_xy(start, y_top + 82)
+        overlay.cell(w_code, 12, code)
+        overlay.set_xy(start + w_code + gap, y_top + 82)
+        overlay.cell(w_label, 12, label)
 
     stamp_page = PdfReader(io.BytesIO(bytes(overlay.output()))).pages[0]
     writer = PdfWriter(clone_from=reader)

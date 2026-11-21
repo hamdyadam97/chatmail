@@ -16,6 +16,7 @@ urlpatterns = [
     path("request-types/", views.RequestTypesView.as_view(), name="approval-request-types"),
     path("file-request/", views.FileRequestView.as_view(), name="approval-file-request"),
     path("signature/", views.SignatureView.as_view(), name="approval-signature"),
+    path("verify/", views.VerifySignatureView.as_view(), name="approval-verify"),
     path("<uuid:request_id>/", views.ApprovalDetailView.as_view(), name="approval-detail"),
     path("<uuid:request_id>/decide/", views.DecideView.as_view(), name="approval-decide"),
     path("<uuid:request_id>/cancel/", views.CancelView.as_view(), name="approval-cancel"),

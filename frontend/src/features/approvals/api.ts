@@ -16,7 +16,25 @@ export interface DecisionRecord {
   approver: UserRef;
   delegated: boolean;
   decided_at: string;
+  /** طلب بتوقيع: رمز التحقق المطبوع في مربع التوقيع، والصفحة. */
+  verify_code: string | null;
+  signed_page: number | null;
 }
+
+export type VerifyResult =
+  | { valid: false }
+  | {
+      valid: true;
+      code: string;
+      signer: string;
+      on_behalf_of: string | null;
+      signed_at: string;
+      page: number | null;
+      request_type: string | null;
+      reference_number: string | null;
+      requested_by: string;
+      request_status: RequestStatus;
+    };
 
 export interface RequestStep {
   step_order: number;
@@ -129,6 +147,7 @@ export const approvalsApi = {
   signature: () => apiFetch<{ has_signature: boolean; image: string | null }>('/approvals/signature/'),
   saveSignature: (dataUrl: string) =>
     apiFetch<{ has_signature: boolean; image: string | null }>('/approvals/signature/', { method: 'PUT', body: { image: dataUrl } }),
+  verify: (code: string) => apiFetch<VerifyResult>(`/approvals/verify/?code=${encodeURIComponent(code.trim())}`),
   deleteSignature: () => apiFetch<null>('/approvals/signature/', { method: 'DELETE' }),
 };
 

@@ -50,6 +50,8 @@ export const ACTION_LABELS: Record<string, string> = {
   username_changed: 'تغيير اسم الدخول',
   account_purged: 'حذف نهائي لموظف',
   signature_saved: 'حفظ توقيع',
+  signature_verified: 'تحقق من رمز توقيع',
+  approval_approver_removed: 'إزالة معتمد من طلب',
   signature_deleted: 'حذف توقيع',
   approval_workflow_retired: 'إيقاف نوع طلب',
   profile_updated: 'تعديل بيانات التواصل الشخصية',

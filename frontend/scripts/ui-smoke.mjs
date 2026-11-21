@@ -1008,6 +1008,20 @@ async function main() {
       ahmed.page.locator('button:has-text("النسخة الموقّعة")').click({ timeout: 15000 }).catch(() => undefined),
     ]);
     check('أحمد ينزّل النسخة الموقّعة', Boolean(signedDl) && signedDl.suggestedFilename().endsWith('.pdf'));
+    // رمز التحقق: يظهر بجانب كل توقيع، وصفحة «التحقق من توقيع» تؤكده وترفض المزيّف.
+    const printedCode = ((await ahmed.page.locator('[data-testid="verify-code"] span.font-mono').first().innerText({ timeout: 10000 })
+      .catch(() => '')) || '').trim();
+    await ahmed.page.goto(`${UI}/approvals`);
+    await ahmed.page.getByRole('link', { name: 'التحقق من توقيع' }).click({ timeout: 10000 }).catch(() => undefined);
+    await ahmed.page.fill('#verify-code', printedCode.toLowerCase()).catch(() => undefined);
+    await ahmed.page.getByRole('button', { name: 'تحقق' }).click({ timeout: 10000 }).catch(() => undefined);
+    const validText = await ahmed.page.locator('[data-testid="verify-valid"]').innerText({ timeout: 15000 }).catch(() => '');
+    await ahmed.page.fill('#verify-code', 'AAAA-BBBB').catch(() => undefined);
+    await ahmed.page.getByRole('button', { name: 'تحقق' }).click().catch(() => undefined);
+    const fakeRejected = await ahmed.page.locator('[data-testid="verify-invalid"]').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    check('رمز التحقق: الحقيقي يُظهر الموقّع والطلب، والمزيّف «غير صحيح»',
+      /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(printedCode) && validText.includes('توقيع صحيح') && validText.includes('خالد الدوسري') && fakeRejected,
+      `code=${printedCode} valid=${validText.slice(0, 40)} fake=${fakeRejected}`);
     if (process.env.SHOTS) console.log(`    لقطة الطلب الموقّع: ${await shot(ahmed, 'signed-request')}`);
 
     // معتمدان لنفس الخطوة؛ أحمد يزيل أحدهما فيختفي الطلب من عنده.

@@ -315,6 +315,10 @@ def decide(*, user, request_id, decision: str, password: str | None = None, page
         if slot is None:
             raise PermissionDenied("You are not an approver of the current step (or already decided).")
         slot_user_id, delegation = slot
+        code = None
+        if signing:
+            page = _checked_page(req, page)
+            code = _new_verify_code()
         try:
             with transaction.atomic():
                 row = ApprovalDecision.objects.create(
@@ -325,11 +329,13 @@ def decide(*, user, request_id, decision: str, password: str | None = None, page
                     delegation=delegation,
                     decision=decision,
                     content_hash=req.content_hash,
+                    verify_code=code,
+                    signed_page=page if signing else None,
                 )
         except IntegrityError:
             raise Conflict("سبق اتخاذ قرار في هذه الخانة.")
         if signing:
-            _sign(req, user, delegation, page)
+            _sign(req, user, delegation, page, code)
         _advance(req, step, row)
 
     log(
@@ -408,12 +414,52 @@ def ensure_page_count(req) -> int:
     return req.page_count
 
 
-def _sign(req, user, delegation, page) -> None:
-    """Stamp `user`'s signature on page `page` of the request's document (inside decide())."""
-    from apps.correspondence.services import read_blob, store_blob
+# Verification codes: no 0/O, 1/I/L — easy to read off paper and type.
+CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
 
-    from . import signing
 
+def _new_verify_code() -> str:
+    import secrets
+
+    while True:
+        raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+        code = f"{raw[:4]}-{raw[4:]}"
+        if not ApprovalDecision.objects.filter(verify_code=code).exists():
+            return code
+
+
+def normalize_code(text: str) -> str:
+    raw = "".join(ch for ch in (text or "").upper() if ch.isalnum())
+    return f"{raw[:4]}-{raw[4:8]}" if len(raw) == 8 else ""
+
+
+def verify_signature(user, code: str) -> dict:
+    """What a printed code proves: who signed which request, when, on which
+    page — never the content. Any signed-in employee may check."""
+    code = normalize_code(code)
+    d = (ApprovalDecision.objects.filter(verify_code=code).select_related(
+        "approver", "slot_user", "request__correspondence", "request__workflow", "request__requested_by"
+    ).first() if code else None)
+    log(actor=user, action="signature_verified", target_type="approval_decision",
+        target_id=d.id if d else None, metadata={"valid": d is not None})
+    if d is None:
+        return {"valid": False}
+    r = d.request
+    return {
+        "valid": True,
+        "code": code,
+        "signer": d.approver.full_name or d.approver.username,
+        "on_behalf_of": (d.slot_user.full_name or d.slot_user.username) if d.delegation_id else None,
+        "signed_at": d.decided_at.isoformat(),
+        "page": d.signed_page,
+        "request_type": r.workflow.name if r.workflow_id else None,
+        "reference_number": r.correspondence.reference_number,
+        "requested_by": r.requested_by.full_name or r.requested_by.username,
+        "request_status": r.status,
+    }
+
+
+def _checked_page(req, page) -> int:
     pages = ensure_page_count(req)
     try:
         page = int(page)
@@ -421,6 +467,16 @@ def _sign(req, user, delegation, page) -> None:
         raise ValidationError({"page": "اختر الصفحة التي توقّع عليها."})
     if not 1 <= page <= pages:
         raise ValidationError({"page": f"اختر صفحة من 1 إلى {pages}."})
+    return page
+
+
+def _sign(req, user, delegation, page, code) -> None:
+    """Stamp `user`'s signature on page `page` of the request's document (inside decide())."""
+    from apps.correspondence.services import read_blob, store_blob
+
+    from . import signing
+
+    pages = ensure_page_count(req)
     on_page = dict(req.page_signatures or {})
     if not on_page and req.signature_count:
         on_page = {str(pages): req.signature_count}  # signed before page choice: all on the last page
@@ -433,7 +489,7 @@ def _sign(req, user, delegation, page) -> None:
     reference = req.correspondence.reference_number or ""
     pdf = signing.stamp(
         read_blob(base), signature_png=signature_png(user), name=user.full_name or user.username,
-        role=role, when=when, reference=reference, slot=on_page.get(str(page), 0), page=page,
+        role=role, when=when, reference=reference, slot=on_page.get(str(page), 0), page=page, code=code,
     )
     stored = store_blob(user, pdf, name=f"{reference or 'طلب'} - موقّع.pdf", mime="application/pdf")
     on_page[str(page)] = on_page.get(str(page), 0) + 1

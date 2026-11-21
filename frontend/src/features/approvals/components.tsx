@@ -81,6 +81,12 @@ export function StepsView({ request, onRemove, removing }: {
                       {DECISION_LABELS[decision.decision]}
                       {decision.delegated && ` — بالتفويض عبر ${decision.approver.full_name}`} · {formatDate(decision.decided_at)}
                     </span>
+                    {decision.verify_code && (
+                      <span className="text-xs text-gray-500" data-testid="verify-code">
+                        صفحة {decision.signed_page} · رمز التحقق{' '}
+                        <span dir="ltr" className="font-mono text-gray-800">{decision.verify_code}</span>
+                      </span>
+                    )}
                   </span>
                 ) : (
                   <span className="flex items-center gap-2">

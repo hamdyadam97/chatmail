@@ -289,6 +289,9 @@ export function Approvals() {
       <div className="mx-auto max-w-5xl space-y-4">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-gray-900">الموافقات</h2>
+          <Link to="/verify-signature" className="me-auto ms-3 text-sm text-primary-700 hover:underline">
+            التحقق من توقيع
+          </Link>
           {(types?.length ?? 0) > 0 && !creating && (
             <Button size="sm" onClick={() => setCreating(true)}>
               <FilePlus2 className="h-4 w-4" />

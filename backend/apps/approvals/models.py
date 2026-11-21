@@ -179,6 +179,10 @@ class ApprovalDecision(models.Model):
     decision = models.CharField(max_length=16, choices=DECISIONS)
     content_hash = models.BinaryField(max_length=32)
     decided_at = models.DateTimeField(auto_now_add=True)
+    # Signed requests: the code printed in the signature box (XXXX-XXXX) —
+    # anyone in the system checks it at «التحقق من توقيع».
+    verify_code = models.CharField(max_length=9, null=True, blank=True, unique=True)
+    signed_page = models.PositiveSmallIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "approval_decisions"

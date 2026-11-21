@@ -150,6 +150,18 @@ def test_each_approver_signs_the_page_they_choose(api_client, org):
     ref = ApprovalRequest.objects.get(id=rid).correspondence.reference_number
     assert [reader.pages[i].extract_text().count(ref) for i in range(3)] == [0, 1, 1]
 
+    # each box carries its verification code; any employee checks it (no content returned)
+    codes = {a["user"]["id"]: a["decision"]["verify_code"] for s in done["steps"] for a in s["approvers"]}
+    bm_code = codes[str(org["bm"].id)]
+    assert len(bm_code) == 9 and bm_code[4] == "-"
+    assert bm_code in reader.pages[1].extract_text() and codes[str(org["ex"].id)] in reader.pages[2].extract_text()
+    got = api_client.get(f"{API}verify/?code={bm_code.lower().replace('-', '')}", **h["sr_out"]).json()
+    assert got["valid"] and got["signer"] == org["bm"].full_name and got["page"] == 2 and got["reference_number"] == ref
+    assert got["request_status"] == "approved" and "title" not in got and "body" not in str(got)
+    assert api_client.get(f"{API}verify/?code=AAAA-BBBB", **h["sr_out"]).json() == {"valid": False}
+    assert api_client.get(f"{API}verify/?code=", **h["sr_out"]).json() == {"valid": False}
+    assert AuditLog.objects.filter(action="signature_verified").count() == 3
+
 
 def test_reject_needs_no_signature_and_types_are_admin_defined(api_client, org):
     h = org["h"]
