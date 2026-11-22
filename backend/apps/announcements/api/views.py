@@ -106,8 +106,21 @@ class AnnouncementListCreateView(APIView):
             )
             page = paginator.paginate_queryset(qs, request, view=self)
             items = [announcement_dict(a, request.user) for a in page]
+        elif box == "tracking":
+            # Compliance overview for track_ack holders: every announcement in
+            # their scope — the content only where they may read it anyway.
+            rows = services.trackable_announcements(request.user)
+            page = paginator.paginate_queryset(rows, request, view=self)
+            items = []
+            for a in page:
+                d = announcement_dict(a, request.user)
+                if not services.can_view(request.user, a):
+                    d["content"] = None
+                    d["content_hash"] = None
+                d["counts"] = {"recipients": a.n_recipients, "read": a.n_read, "acknowledged": a.n_acked}
+                items.append(d)
         else:
-            raise ValidationError({"box": "received | published"})
+            raise ValidationError({"box": "received | published | tracking"})
         return paginator.get_paginated_response(items)
 
     def post(self, request):
@@ -166,6 +179,7 @@ class TargetsView(APIView):
             "all": t["all"],
             "institutes": [unit(i) for i in t["institutes"]],
             "branches": [{**unit(b), "institute": b.institute.name} for b in t["branches"]],
+            "can_track": services.tracks_any(request.user),
         })
 
 

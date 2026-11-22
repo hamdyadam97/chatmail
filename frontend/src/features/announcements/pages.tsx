@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BellRing, CheckCircle2, Megaphone, Plus, Users } from 'lucide-react';
@@ -104,9 +104,111 @@ function AnnouncementList({ box }: { box: 'received' | 'published' }) {
   );
 }
 
+/**
+ * «متابعة التعاميم»: كل تعميم في نطاق المتابعة برقمه وناشره وأعداده. العنوان
+ * والنص لا يظهران إلا لمن هو مستلم أو ناشر — والضغط يفتح تقرير الالتزام هنا.
+ */
+function TrackingList() {
+  const [page, setPage] = useState(1);
+  const [open, setOpen] = useState<string | null>(null);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['announcements', 'tracking', page],
+    queryFn: () => announcementsApi.list('tracking', page),
+  });
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+  if (error) return <Card className="p-6 text-sm text-red-600">{toUserMessage(error)}</Card>;
+  if (!data?.results.length) return <EmptyState icon={Megaphone} title="لا تعاميم في نطاق متابعتك" />;
+  const pct = (n: number, of: number) => (of ? Math.round((n / of) * 100) : 0);
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">
+        مين شاف ومين أقر لكل تعميم في نطاقك. عنوان التعميم ونصه يظهران فقط إن كنت من مستلميه أو ناشره.
+      </p>
+      <Card className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-xs text-gray-500">
+            <tr>
+              <th className="px-4 py-2 text-start font-medium">الرقم</th>
+              <th className="px-4 py-2 text-start font-medium">الناشر</th>
+              <th className="px-4 py-2 text-start font-medium">موجّه إلى</th>
+              <th className="px-4 py-2 text-start font-medium">التاريخ</th>
+              <th className="px-3 py-2 text-center font-medium">المستلمون</th>
+              <th className="px-3 py-2 text-center font-medium">اطّلعوا</th>
+              <th className="px-3 py-2 text-center font-medium">أقرّوا</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.results.map((a) => {
+              const c = a.counts ?? { recipients: a.recipient_count, read: 0, acknowledged: 0 };
+              const expanded = open === a.id;
+              return (
+                <Fragment key={a.id}>
+                  <tr
+                    data-testid="tracking-row"
+                    onClick={() => setOpen(expanded ? null : a.id)}
+                    className={cn('cursor-pointer border-t border-gray-100 hover:bg-gray-50', expanded && 'bg-primary-50/40')}
+                  >
+                    <td className="px-4 py-2">
+                      <span dir="ltr" className="font-mono text-xs text-gray-700">{a.reference_number ?? '—'}</span>
+                      {a.content?.title && <span className="block truncate text-xs text-gray-500">{a.content.title}</span>}
+                      {a.status === 'withdrawn' && <span className="block text-xs text-red-600">مسحوب</span>}
+                    </td>
+                    <td className="px-4 py-2">{a.publisher.full_name}</td>
+                    <td className="px-4 py-2 text-gray-700">
+                      {TARGET_LABELS[a.target.type]}
+                      {a.target.name ? `: ${a.target.name}` : ''}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-gray-500">{formatDate(a.published_at ?? a.created_at)}</td>
+                    <td className="px-3 py-2 text-center">{c.recipients}</td>
+                    <td className="px-3 py-2 text-center">
+                      {c.read} <span className="text-xs text-gray-400">({pct(c.read, c.recipients)}%)</span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {a.requires_ack ? (
+                        <span className="text-emerald-700">
+                          {c.acknowledged} <span className="text-xs text-gray-400">({pct(c.acknowledged, c.recipients)}%)</span>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">لا يتطلب</span>
+                      )}
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr>
+                      <td colSpan={7} className="bg-gray-50 p-3">
+                        <ComplianceCard a={a} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+      {(data.next || data.previous) && (
+        <div className="flex justify-center gap-3">
+          <Button variant="outline" size="sm" disabled={!data.previous} onClick={() => setPage((p) => p - 1)}>
+            السابق
+          </Button>
+          <Button variant="outline" size="sm" disabled={!data.next} onClick={() => setPage((p) => p + 1)}>
+            التالي
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Announcements() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'received' | 'published'>('received');
+  const [tab, setTab] = useState<'received' | 'published' | 'tracking'>('received');
   const { data: targets } = useQuery({ queryKey: ['announcements', 'targets'], queryFn: announcementsApi.targets });
   const canPublish = !!targets && (targets.all || targets.institutes.length > 0 || targets.branches.length > 0);
   return (
@@ -126,6 +228,7 @@ export function Announcements() {
             [
               ['received', 'الواردة إليّ'],
               ['published', 'التي أصدرتُها'],
+              ...(targets?.can_track ? ([['tracking', 'متابعة التعاميم']] as const) : []),
             ] as const
           ).map(([key, label]) => (
             <button
@@ -141,7 +244,7 @@ export function Announcements() {
             </button>
           ))}
         </div>
-        <AnnouncementList key={tab} box={tab} />
+        {tab === 'tracking' ? <TrackingList /> : <AnnouncementList key={tab} box={tab} />}
       </div>
     </>
   );

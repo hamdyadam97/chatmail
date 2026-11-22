@@ -32,6 +32,8 @@ export interface Announcement {
   /** null للمستلم بعد سحب التعميم. */
   content: { title: string; body: string } | null;
   mine: { delivered_at: string | null; read_at: string | null; acknowledged_at: string | null } | null;
+  /** تبويب «متابعة التعاميم» فقط. */
+  counts?: { recipients: number; read: number; acknowledged: number };
 }
 
 export interface Page<T> {
@@ -71,6 +73,8 @@ export interface PublishTargets {
   all: boolean;
   institutes: Array<{ id: string; name: string; code: string }>;
   branches: Array<{ id: string; name: string; code: string; institute: string }>;
+  /** يتابع اطلاع التعاميم في نطاقه (تبويب «متابعة التعاميم»). */
+  can_track?: boolean;
 }
 
 export interface PublishBody extends AudienceTarget {
@@ -91,7 +95,7 @@ export interface OrgUnit {
 }
 
 export const announcementsApi = {
-  list: (box: 'received' | 'published', page = 1, pendingAck = false) =>
+  list: (box: 'received' | 'published' | 'tracking', page = 1, pendingAck = false) =>
     apiFetch<Page<Announcement>>(`/announcements/?box=${box}&page=${page}${pendingAck ? '&pending_ack=1' : ''}`),
   get: (id: string) => apiFetch<Announcement>(`/announcements/${id}/`),
   audience: (id: string) => apiFetch<{ publisher: UserRef; recipients: UserRef[] }>(`/announcements/${id}/audience/`),

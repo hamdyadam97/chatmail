@@ -938,6 +938,23 @@ async function main() {
       bmTargets[0] === 'فرع' && !bmTargets.includes('جميع المعاهد') && bmUnits.filter((u) => u !== 'اختر…').length === 1 && publishedOk,
       `targets=${bmTargets.join('|')} units=${bmUnits.join('|')} published=${publishedOk}`);
 
+    // مدير النظام: «متابعة التعاميم» يعرض تعميم مدير الفرع بأعداده، والضغط يفتح تقرير الالتزام —
+    // والعنوان لا يظهر له إلا إن كان من المستلمين.
+    const adminIsRecipient = await runPython(
+      "from apps.announcements.models import AnnouncementRecipient as R; " +
+        "assert R.objects.filter(user__username='admin', announcement__publisher__username='manager').exists()",
+    ).then(() => true).catch(() => false);
+    await admin.page.goto(`${UI}/announcements`);
+    await admin.page.getByRole('button', { name: 'متابعة التعاميم' }).click({ timeout: 15000 }).catch(() => undefined);
+    const trackRow = admin.page.locator('[data-testid="tracking-row"]', { hasText: 'خالد' }).first();
+    const trackListed = await trackRow.waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    const titleShown = (await admin.page.locator('main').innerText().catch(() => '')).includes('تعميم فرع الرياض');
+    await trackRow.click({ timeout: 10000 }).catch(() => undefined);
+    const reportOpen = await admin.page.locator('text=تقرير الالتزام').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    check('التعاميم: مدير النظام يتابع تعميمًا لم يصدره من «متابعة التعاميم» (والعنوان للمستلم فقط)',
+      trackListed && reportOpen && titleShown === adminIsRecipient,
+      `listed=${trackListed} report=${reportOpen} title=${titleShown} recipient=${adminIsRecipient}`);
+
     section('8ب) حسابي');
     await manager.page.goto(`${UI}/mail/inbox`);
     await manager.page.getByRole('link', { name: 'حسابي' }).first().click({ timeout: 15000 }).catch(() => undefined);

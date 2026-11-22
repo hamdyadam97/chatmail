@@ -182,6 +182,40 @@ def can_track(user, announcement) -> bool:
     return has_permission(user, "announcements.track_ack", unit=_tracking_unit(announcement))
 
 
+TRACKING_LIMIT = 500
+
+
+def tracks_any(user) -> bool:
+    """Holds announcements.track_ack somewhere (shows the «متابعة التعاميم» tab)."""
+    from apps.authorization.services import active_assignments
+
+    return active_assignments(user).filter(
+        role__role_permissions__permission__code="announcements.track_ack"
+    ).exists()
+
+
+def trackable_announcements(user) -> list[Announcement]:
+    """Published (or withdrawn) announcements whose compliance `user` may see —
+    the latest TRACKING_LIMIT, newest first. Metadata only: the content stays
+    with the publisher and the recipients (see announcement_content callers)."""
+    from django.db.models import Count
+
+    if not tracks_any(user):
+        return []
+    qs = (
+        Announcement.objects.filter(status__in=["published", "withdrawn"])
+        .select_related("publisher", "publisher_membership", "target_institute", "target_branch",
+                        "target_department")
+        .annotate(
+            n_recipients=Count("recipients", distinct=True),
+            n_read=Count("recipients", filter=Q(recipients__read_at__isnull=False), distinct=True),
+            n_acked=Count("recipients", filter=Q(recipients__acknowledged_at__isnull=False), distinct=True),
+        )
+        .order_by("-published_at")[:TRACKING_LIMIT]
+    )
+    return [a for a in qs if can_track(user, a)]
+
+
 def announcement_content(announcement, viewer) -> dict | None:
     """{title, body} for the publisher, or for recipients while not withdrawn."""
     if not announcement.content_message_id:

@@ -247,7 +247,7 @@ def test_audience_preview_matches_publish_and_permission(api_client, org):
 def test_publish_targets_follow_the_role(api_client, user_factory, org, branch_b):
     t = api_client.get(f"{ANN_URL}targets/", **org["h_pub"]).json()  # branch manager of branch_a
     assert not t["all"] and t["institutes"] == [] and [b["id"] for b in t["branches"]] == [str(org["branch_a"].id)]
-    assert api_client.get(f"{ANN_URL}targets/", **org["h_e1"]).json() == {"all": False, "institutes": [], "branches": []}
+    assert api_client.get(f"{ANN_URL}targets/", **org["h_e1"]).json() == {"all": False, "institutes": [], "branches": [], "can_track": False}
     exe = make_employee(user_factory, "a_exec", org["branch_a"])
     assign_role(exe, "executive")
     t = api_client.get(f"{ANN_URL}targets/", **auth(api_client, "a_exec")).json()
@@ -279,3 +279,31 @@ def test_regional_manager_announces_to_their_branches_together(api_client, user_
     assert prepare(api_client, h, "branches", branch_ids=[]).status_code == 400
     # one of their branches alone is fine too
     assert prepare(api_client, h, "branch", branch_b.id).status_code == 201
+
+
+def test_tracking_box_lists_scope_with_counts_but_no_content(api_client, user_factory, org):
+    """«متابعة التعاميم»: the admin sees every announcement with read/ack
+    counts — never the title or body of one they did not receive."""
+    ann = published(api_client, org)
+    api_client.post(f"{ANN_URL}{ann['id']}/read/", **org["h_e1"])
+    ack(api_client, org["h_e1"], ann)
+    admin = make_employee(user_factory, "a_admin", org["branch_a2"])
+    assign_role(admin, "sys_admin")
+    h = auth(api_client, "a_admin")
+    assert api_client.get(f"{ANN_URL}targets/", **h).json()["can_track"] is True
+    box = api_client.get(f"{ANN_URL}?box=tracking", **h)
+    assert box.status_code == 200
+    [row] = box.json()["results"]
+    assert row["id"] == ann["id"] and row["reference_number"] == ann["reference_number"]
+    assert row["content"] is None and row["content_hash"] is None and row["can_track"] is True
+    assert row["counts"] == {"recipients": 3, "read": 1, "acknowledged": 1}
+    assert "تعميم الدوام" not in box.content.decode() and "الثامنة" not in box.content.decode()
+    # the publisher sees their own with the content; an employee has no tab and an empty box
+    own = api_client.get(f"{ANN_URL}?box=tracking", **org["h_pub"]).json()["results"]
+    assert own == [] or own[0]["content"]["title"] == "تعميم الدوام"
+    assert api_client.get(f"{ANN_URL}targets/", **org["h_e2"]).json()["can_track"] is False
+    assert api_client.get(f"{ANN_URL}?box=tracking", **org["h_e2"]).json()["results"] == []
+    # another branch's manager does not track branch_a's announcement
+    boss = make_employee(user_factory, "a_boss2", org["branch_a2"])
+    assign_role(boss, "branch_manager", branch=org["branch_a2"])
+    assert api_client.get(f"{ANN_URL}?box=tracking", **auth(api_client, "a_boss2")).json()["results"] == []
