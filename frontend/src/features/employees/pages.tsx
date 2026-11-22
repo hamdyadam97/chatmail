@@ -484,13 +484,85 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
   );
 }
 
+/** حساب لم يُستخدم يُحذف صفه كله، وإلا الحذف النهائي (يبقى ما أرسله باسم «موظف محذوف»). */
+async function deleteEmployee(user: ManagedUser) {
+  const unused = !user.last_login_at && (await adminApi.deleteUser(user.id).then(() => true).catch(() => false));
+  if (!unused) await adminApi.purgeUser(user.id, user.username);
+}
+
+/** حذف عدة موظفين محددين — واحدًا واحدًا بنفس الطلبات، وما يفشل يُعرض سببه. */
+function BulkDelete({ users, onClose, onDone }: { users: ManagedUser[]; onClose: () => void; onDone: (deleted: string[]) => void }) {
+  const [done, setDone] = useState(0);
+  const [failures, setFailures] = useState<{ user: ManagedUser; reason: string }[]>([]);
+  const used = users.filter((u) => u.last_login_at).length;
+  const run = useMutation({
+    mutationFn: async () => {
+      const deleted: string[] = [];
+      const failed: { user: ManagedUser; reason: string }[] = [];
+      for (const u of users) {
+        try {
+          await deleteEmployee(u);
+          deleted.push(u.id);
+        } catch (err) {
+          failed.push({ user: u, reason: toUserMessage(err, 'تعذر الحذف') });
+        }
+        setDone((n) => n + 1);
+      }
+      setFailures(failed);
+      onDone(deleted);
+      if (!failed.length) onClose();
+    },
+  });
+  return (
+    <Modal title="حذف المحددين نهائيًا" onClose={run.isPending ? () => undefined : onClose}>
+      <div className="space-y-3" data-testid="bulk-delete">
+        <p className="text-sm text-gray-800">
+          حذف <span className="font-semibold">{users.length}</span> موظف نهائيًا؟ لا يمكن التراجع عنه.
+        </p>
+        <ul className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2 text-sm">
+          {users.map((u) => (
+            <li key={u.id} className="flex justify-between gap-2 py-0.5">
+              <span>{u.full_name || u.username}</span>
+              <span dir="ltr" className="font-mono text-xs text-gray-500">{u.username}</span>
+            </li>
+          ))}
+        </ul>
+        {used > 0 && (
+          <p className="text-xs text-gray-600">
+            {used} منهم دخل النظام من قبل: ما أرسلوه لزملائهم يبقى عندهم باسم «موظف محذوف».
+          </p>
+        )}
+        {run.isPending && <p className="text-xs text-gray-500">جارٍ الحذف… {done} / {users.length}</p>}
+        {failures.length > 0 && (
+          <div className="space-y-1 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+            <p className="font-medium">لم يُحذف {failures.length}:</p>
+            {failures.map((f) => (
+              <p key={f.user.id}>
+                <span dir="ltr" className="font-mono">{f.user.username}</span> — {f.reason}
+              </p>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={onClose} disabled={run.isPending}>
+            {failures.length ? 'إغلاق' : 'إلغاء'}
+          </Button>
+          {!failures.length && (
+            <Button size="sm" variant="danger" loading={run.isPending} onClick={() => run.mutate()}>
+              <Trash2 className="h-4 w-4" />
+              حذف {users.length} نهائيًا
+            </Button>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /** حذف نهائي مباشر من القائمة (أيقونة الصف) — نفس منطق «حذف نهائي» في تفاصيل الموظف. */
 function QuickDelete({ user, onClose, onDone }: { user: ManagedUser; onClose: () => void; onDone: () => void }) {
   const remove = useMutation({
-    mutationFn: async () => {
-      const unused = !user.last_login_at && (await adminApi.deleteUser(user.id).then(() => true).catch(() => false));
-      if (!unused) await adminApi.purgeUser(user.id, user.username);
-    },
+    mutationFn: () => deleteEmployee(user),
     onSuccess: () => {
       onDone();
       onClose();
@@ -538,7 +610,17 @@ export function Employees() {
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<ManagedUser | null>(null);
   const [deleting, setDeleting] = useState<ManagedUser | null>(null);
+  const [checked, setChecked] = useState<Map<string, ManagedUser>>(new Map());
+  const [bulk, setBulk] = useState(false);
   const { user: me } = useAuth();
+  const canDelete = (u: ManagedUser) => (me?.show_admin || !u.last_login_at) && String(me?.id) !== u.id;
+  const toggle = (u: ManagedUser, on: boolean) =>
+    setChecked((prev) => {
+      const next = new Map(prev);
+      if (on) next.set(u.id, u);
+      else next.delete(u.id);
+      return next;
+    });
   const org = useOrg();
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin', 'managed', query, status, branch, page],
@@ -633,9 +715,37 @@ export function Employees() {
         <EmptyState icon={Contact} title="لا موظفين" />
       ) : (
         <Card className="overflow-x-auto">
+          {checked.size > 0 && (
+            <div className="flex flex-wrap items-center gap-3 border-b border-red-100 bg-red-50/60 px-4 py-2 text-sm" data-testid="bulk-bar">
+              <span className="font-medium text-gray-800">محدد: {checked.size}</span>
+              <Button size="sm" variant="danger" onClick={() => setBulk(true)}>
+                <Trash2 className="h-4 w-4" />
+                حذف المحددين
+              </Button>
+              <button type="button" className="text-xs text-gray-500 hover:underline" onClick={() => setChecked(new Map())}>
+                إلغاء التحديد
+              </button>
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-500">
               <tr>
+                <th className="w-10 px-2 py-2">
+                  {(() => {
+                    const pageDeletable = data.results.filter(canDelete);
+                    const all = pageDeletable.length > 0 && pageDeletable.every((u) => checked.has(u.id));
+                    return (
+                      <input
+                        type="checkbox"
+                        aria-label="تحديد كل الصفحة"
+                        disabled={!pageDeletable.length}
+                        checked={all}
+                        onChange={(e) => pageDeletable.forEach((u) => toggle(u, e.target.checked))}
+                        className="h-4 w-4 accent-red-600"
+                      />
+                    );
+                  })()}
+                </th>
                 <th className="px-4 py-2 text-start font-medium">الاسم</th>
                 <th className="px-4 py-2 text-start font-medium">جهة العمل الرئيسية</th>
                 <th className="px-4 py-2 text-start font-medium">آخر دخول</th>
@@ -647,7 +757,19 @@ export function Employees() {
               {data.results.map((u) => {
                 const primary = u.memberships.find((m) => m.is_primary);
                 return (
-                  <tr key={u.id} onClick={() => setSelected(u)} className="cursor-pointer border-t border-gray-100 hover:bg-gray-50">
+                  <tr key={u.id} onClick={() => setSelected(u)} className={cn('cursor-pointer border-t border-gray-100 hover:bg-gray-50', checked.has(u.id) && 'bg-red-50/40')}>
+                    <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                      {canDelete(u) && (
+                        <input
+                          type="checkbox"
+                          aria-label={`تحديد ${u.username}`}
+                          data-testid="row-check"
+                          checked={checked.has(u.id)}
+                          onChange={(e) => toggle(u, e.target.checked)}
+                          className="h-4 w-4 accent-red-600"
+                        />
+                      )}
+                    </td>
                     <td className="px-4 py-2">
                       <div className="font-medium text-gray-900">{u.full_name || u.username}</div>
                       <div className="text-xs text-gray-500" dir="ltr">{u.username}</div>
@@ -663,7 +785,7 @@ export function Employees() {
                       </span>
                     </td>
                     <td className="px-2 py-2">
-                      {(me?.show_admin || !u.last_login_at) && String(me?.id) !== u.id && (
+                      {canDelete(u) && (
                         <button
                           type="button"
                           title="حذف نهائي"
@@ -699,6 +821,20 @@ export function Employees() {
       )}
       {creating && <CreateEmployee onClose={() => setCreating(false)} onCreated={refresh} />}
       {importing && <ImportEmployees onClose={() => setImporting(false)} onDone={refresh} />}
+      {bulk && (
+        <BulkDelete
+          users={[...checked.values()]}
+          onClose={() => setBulk(false)}
+          onDone={(deleted) => {
+            setChecked((prev) => {
+              const next = new Map(prev);
+              deleted.forEach((id) => next.delete(id));
+              return next;
+            });
+            void refresh();
+          }}
+        />
+      )}
       {deleting && <QuickDelete user={deleting} onClose={() => setDeleting(null)} onDone={() => void refresh()} />}
       {selected && (
         <EmployeeDetail

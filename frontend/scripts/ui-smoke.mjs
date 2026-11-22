@@ -361,6 +361,27 @@ async function main() {
         .then(() => true).catch(() => false));
     check('الموظفون: أيقونة الحذف في الصف تحذف مباشرة بعد تأكيد واحد', rowGone);
 
+    // تحديد عدة موظفين وحذفهم معًا.
+    await runPython(
+      "from apps.accounts.models import User; " +
+        "[User.objects.create(username=n, full_name=n) for n in ('bulk.one', 'bulk.two', 'bulk.keep')]",
+    );
+    await admin.page.reload();
+    await branchSelect.selectOption('none').catch(() => undefined);
+    for (const n of ['bulk.one', 'bulk.two']) {
+      await rows().filter({ hasText: n }).first().locator('[data-testid="row-check"]').check({ timeout: 15000 }).catch(() => undefined);
+    }
+    const barText = await admin.page.locator('[data-testid="bulk-bar"]').innerText({ timeout: 10000 }).catch(() => '');
+    await admin.page.getByRole('button', { name: 'حذف المحددين' }).click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.locator('[data-testid="bulk-delete"]').getByRole('button', { name: /حذف 2 نهائيًا/ }).click({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.locator('[data-testid="bulk-delete"]').waitFor({ state: 'detached', timeout: 15000 }).catch(() => undefined);
+    await rows().filter({ hasText: 'bulk.one' }).first().waitFor({ state: 'detached', timeout: 15000 }).catch(() => undefined);
+    const bulkOk = barText.includes('2') && !(await listed('bulk.one')) && !(await listed('bulk.two')) && (await listed('bulk.keep'))
+      && (await runPython(
+        "from apps.accounts.models import User; assert set(User.objects.filter(username__startswith='bulk.').values_list('username', flat=True)) == {'bulk.keep'}",
+      ).then(() => true).catch(() => false));
+    check('الموظفون: تحديد عدة موظفين و«حذف المحددين» يحذفهم ويُبقي غيرهم', bulkOk, barText);
+
     // أرشفة موظف استُخدم: يختفي من النشطين ويظهر في «المؤرشفون»، ثم حذفه نهائيًا.
     await runPython(
       'import datetime; from django.utils import timezone; from apps.accounts.models import User; ' +
