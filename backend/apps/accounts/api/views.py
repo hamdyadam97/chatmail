@@ -129,7 +129,9 @@ def _issue_session(user, request, device, raw_device=None) -> Response:
     )
     _set_refresh_cookie(response, raw_refresh)
     if raw_device:
-        login_approval.set_device_cookie(response, raw_device)
+        login_approval.set_device_cookie(response, user, raw_device)
+    else:
+        login_approval.adopt_legacy_cookie(user, request, response)
     return response
 
 
@@ -326,7 +328,9 @@ class RefreshView(APIView):
         device = new_session.device
         if (device is not None and not device.browser_token_hash
                 and login_approval.known_device(new_session.user, request) is None):
-            login_approval.set_device_cookie(response, login_approval.mark_known(device))
+            login_approval.set_device_cookie(response, new_session.user, login_approval.mark_known(device))
+        else:
+            login_approval.adopt_legacy_cookie(new_session.user, request, response)
         return response
 
 

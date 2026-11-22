@@ -40,11 +40,36 @@ def _digest(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def cookie_name(user) -> str:
+    """One device cookie per account, so signing in with another account in
+    the same browser never replaces this one's. The name is keyed (HMAC) so it
+    does not reveal the account id."""
+    tag = hmac.new(settings.SECRET_KEY.encode(), f"corr-device:{user.pk}".encode(), hashlib.sha256)
+    return f"{DEVICE_COOKIE}_{tag.hexdigest()[:16]}"
+
+
 def known_device(user, request) -> TrustedDevice | None:
-    raw = request.COOKIES.get(DEVICE_COOKIE) if request is not None else None
-    if not raw:
+    """This browser's device row for `user`: the account's own cookie, or the
+    single shared cookie of earlier releases (still honoured)."""
+    if request is None:
         return None
-    return TrustedDevice.objects.filter(user=user, browser_token_hash=_digest(raw)).first()
+    for name in (cookie_name(user), DEVICE_COOKIE):
+        raw = request.COOKIES.get(name)
+        if raw:
+            device = TrustedDevice.objects.filter(user=user, browser_token_hash=_digest(raw)).first()
+            if device is not None:
+                return device
+    return None
+
+
+def adopt_legacy_cookie(user, request, response) -> None:
+    """A browser known through the old shared cookie gets the account's own
+    cookie (same token), so a later login with another account cannot erase it."""
+    if request is None or request.COOKIES.get(cookie_name(user)):
+        return
+    raw = request.COOKIES.get(DEVICE_COOKIE)
+    if raw and TrustedDevice.objects.filter(user=user, browser_token_hash=_digest(raw)).exists():
+        set_device_cookie(response, user, raw)
 
 
 def mark_known(device: TrustedDevice) -> str:
@@ -55,9 +80,9 @@ def mark_known(device: TrustedDevice) -> str:
     return raw
 
 
-def set_device_cookie(response, raw: str) -> None:
+def set_device_cookie(response, user, raw: str) -> None:
     response.set_cookie(
-        DEVICE_COOKIE,
+        cookie_name(user),
         raw,
         max_age=DEVICE_COOKIE_MAX_AGE,
         path=settings.AUTH_REFRESH_COOKIE_PATH,

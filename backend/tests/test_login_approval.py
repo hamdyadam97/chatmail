@@ -75,7 +75,7 @@ def test_new_browser_needs_the_admin_code_then_is_known(people, mails, django_ca
 
     ok = browser.post(f"{AUTH}login/code/", {"approval_token": body["approval_token"], "code": code}, format="json")
     assert ok.status_code == 200 and ok.json()["access"]
-    assert login_approval.DEVICE_COOKIE in ok.cookies
+    assert login_approval.cookie_name(people["emp"]) in ok.cookies
     # same browser later: straight in; a different browser: a new code
     assert "access" in login(browser, "la_emp").json()
     assert login(APIClient(), "la_emp").json()["approval_required"]
@@ -128,11 +128,43 @@ def test_signed_in_browser_becomes_known_through_refresh(people, settings):
     settings.LOGIN_NEW_DEVICE_APPROVAL = False
     browser = APIClient()
     login(browser, "la_emp")  # before the feature: the login marks the browser known
-    browser.cookies.pop(login_approval.DEVICE_COOKIE, None)  # e.g. signed in before this release
+    browser.cookies.pop(login_approval.cookie_name(people["emp"]), None)  # e.g. signed in before this release
     from apps.accounts.models import TrustedDevice
 
     TrustedDevice.objects.filter(user=people["emp"]).update(browser_token_hash=None)
     settings.LOGIN_NEW_DEVICE_APPROVAL = True
     r = browser.post(f"{AUTH}refresh/")
-    assert r.status_code == 200 and login_approval.DEVICE_COOKIE in r.cookies
+    assert r.status_code == 200 and login_approval.cookie_name(people["emp"]) in r.cookies
     assert "access" in login(browser, "la_emp", DEFAULT_PASSWORD).json()
+
+
+def _approve(browser, username):
+    first = login(browser, username).json()
+    assert first["approval_required"]
+    r = browser.post(f"{AUTH}login/code/", {"approval_token": first["approval_token"], "code": _code_for(username)},
+                     format="json")
+    assert r.status_code == 200, r.content
+
+
+def test_two_accounts_in_one_browser_both_stay_known(people):
+    """Signing in with a second account must not make the first ask again."""
+    browser = APIClient()
+    _approve(browser, "la_admin")
+    _approve(browser, "la_emp")
+    assert login_approval.cookie_name(people["admin"]) != login_approval.cookie_name(people["emp"])
+    assert "access" in login(browser, "la_admin").json()
+    assert "access" in login(browser, "la_emp").json()
+
+
+def test_browser_known_through_the_old_shared_cookie_keeps_working(people):
+    """A browser approved by an earlier release (single `corr_device` cookie)
+    is still known, and receives the account's own cookie on the next login."""
+    browser = APIClient()
+    _approve(browser, "la_emp")
+    own = login_approval.cookie_name(people["emp"])
+    raw = browser.cookies.pop(own).value
+    browser.cookies[login_approval.DEVICE_COOKIE] = raw
+    r = login(browser, "la_emp")
+    assert "access" in r.json() and r.cookies[own].value == raw
+    browser.cookies.pop(login_approval.DEVICE_COOKIE)
+    assert "access" in login(browser, "la_emp").json()
