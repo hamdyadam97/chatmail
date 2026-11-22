@@ -484,6 +484,45 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
   );
 }
 
+/** حذف نهائي مباشر من القائمة (أيقونة الصف) — نفس منطق «حذف نهائي» في تفاصيل الموظف. */
+function QuickDelete({ user, onClose, onDone }: { user: ManagedUser; onClose: () => void; onDone: () => void }) {
+  const remove = useMutation({
+    mutationFn: async () => {
+      const unused = !user.last_login_at && (await adminApi.deleteUser(user.id).then(() => true).catch(() => false));
+      if (!unused) await adminApi.purgeUser(user.id, user.username);
+    },
+    onSuccess: () => {
+      onDone();
+      onClose();
+    },
+  });
+  return (
+    <Modal title="حذف نهائي" onClose={onClose}>
+      <div className="space-y-3" data-testid="quick-delete">
+        <p className="text-sm text-gray-800">
+          حذف <span className="font-semibold">{user.full_name || user.username}</span>{' '}
+          (<span dir="ltr" className="font-mono">{user.username}</span>) نهائيًا؟ لا يمكن التراجع عنه.
+        </p>
+        <p className="text-xs text-gray-600">
+          {user.last_login_at
+            ? 'دخل النظام من قبل: يُحذف حسابه وبياناته، وما أرسله لزملائه يبقى عندهم باسم «موظف محذوف». لإيقافه مع الاحتفاظ بكل شيء استخدم «أرشفة الموظف» من تفاصيله.'
+            : 'لم يدخل النظام قط: يُحذف حسابه بالكامل.'}
+        </p>
+        {remove.error && <p className="text-sm text-red-600">{toUserMessage(remove.error, 'تعذر الحذف')}</p>}
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={onClose}>
+            إلغاء
+          </Button>
+          <Button size="sm" variant="danger" loading={remove.isPending} onClick={() => remove.mutate()}>
+            <Trash2 className="h-4 w-4" />
+            حذف نهائي
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // القائمة
 // ---------------------------------------------------------------------------
@@ -498,6 +537,8 @@ export function Employees() {
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<ManagedUser | null>(null);
+  const [deleting, setDeleting] = useState<ManagedUser | null>(null);
+  const { user: me } = useAuth();
   const org = useOrg();
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin', 'managed', query, status, branch, page],
@@ -599,6 +640,7 @@ export function Employees() {
                 <th className="px-4 py-2 text-start font-medium">جهة العمل الرئيسية</th>
                 <th className="px-4 py-2 text-start font-medium">آخر دخول</th>
                 <th className="px-4 py-2 text-start font-medium">الحالة</th>
+                <th className="w-10 px-2 py-2"><span className="sr-only">حذف</span></th>
               </tr>
             </thead>
             <tbody>
@@ -620,6 +662,23 @@ export function Employees() {
                         {u.is_active ? (u.must_change_password ? 'بانتظار تغيير كلمة المرور' : 'نشط') : 'مؤرشف'}
                       </span>
                     </td>
+                    <td className="px-2 py-2">
+                      {(me?.show_admin || !u.last_login_at) && String(me?.id) !== u.id && (
+                        <button
+                          type="button"
+                          title="حذف نهائي"
+                          aria-label={`حذف ${u.username} نهائيًا`}
+                          data-testid="row-delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleting(u);
+                          }}
+                          className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -640,6 +699,7 @@ export function Employees() {
       )}
       {creating && <CreateEmployee onClose={() => setCreating(false)} onCreated={refresh} />}
       {importing && <ImportEmployees onClose={() => setImporting(false)} onDone={refresh} />}
+      {deleting && <QuickDelete user={deleting} onClose={() => setDeleting(null)} onDone={() => void refresh()} />}
       {selected && (
         <EmployeeDetail
           key={selected.id}

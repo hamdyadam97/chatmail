@@ -349,6 +349,18 @@ async function main() {
         .then(() => true).catch(() => false));
     check('الموظفون: حذف نهائي لحساب لم يُستخدم', gone);
 
+    // أيقونة الحذف في صف القائمة: تأكيد واحد بلا فتح التفاصيل.
+    await runPython("from apps.accounts.models import User; User.objects.create(username='typo.two', full_name='حساب مكرر ثان')");
+    await admin.page.reload();
+    await branchSelect.selectOption('none').catch(() => undefined);
+    await rows().filter({ hasText: 'typo.two' }).first().locator('[data-testid="row-delete"]').click({ timeout: 15000 }).catch(() => undefined);
+    await admin.page.locator('[data-testid="quick-delete"]').getByRole('button', { name: 'حذف نهائي' }).click({ timeout: 10000 }).catch(() => undefined);
+    await rows().filter({ hasText: 'typo.two' }).first().waitFor({ state: 'detached', timeout: 15000 }).catch(() => undefined);
+    const rowGone = !(await listed('typo.two'))
+      && (await runPython("from apps.accounts.models import User; assert not User.objects.filter(username='typo.two').exists()")
+        .then(() => true).catch(() => false));
+    check('الموظفون: أيقونة الحذف في الصف تحذف مباشرة بعد تأكيد واحد', rowGone);
+
     // أرشفة موظف استُخدم: يختفي من النشطين ويظهر في «المؤرشفون»، ثم حذفه نهائيًا.
     await runPython(
       'import datetime; from django.utils import timezone; from apps.accounts.models import User; ' +
@@ -364,10 +376,10 @@ async function main() {
     const archivedMsg = await admin.page.locator('text=أُرشف الموظف').waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
     await closeDialog();
     await admin.page.locator('select[aria-label="الحالة"]').selectOption('inactive').catch(() => undefined);
-    const archivedRow = rows().filter({ hasText: 'leaver.one' }).first();
-    const inArchive = await archivedRow.waitFor({ timeout: 15000 }).then(() => true).catch(() => false)
-      && (await archivedRow.innerText().catch(() => '')).includes('مؤرشف');
-    check('الموظفون: أرشفة موظف — يظهر للمسؤول في «المؤرشفون»', archivedMsg && inArchive);
+    // The previous list stays on screen while the filtered one loads: wait for the archived row itself.
+    const archivedRow = rows().filter({ hasText: 'leaver.one' }).filter({ hasText: 'مؤرشف' }).first();
+    const inArchive = await archivedRow.waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    check('الموظفون: أرشفة موظف — يظهر للمسؤول في «المؤرشفون»', archivedMsg && inArchive, `msg=${archivedMsg} list=${inArchive}`);
 
     await archivedRow.click({ timeout: 10000 }).catch(() => undefined);
     await confirmPurge('leaver.one');
