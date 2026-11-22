@@ -3,6 +3,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Eye, EyeOff, KeyRound, Lock, MonitorSmartphone, ShieldCheck, User } from 'lucide-react';
 import { toUserMessage } from '../../shared/api';
 import { Button } from '../../shared/ui';
+import { WhatsAppSupport } from '../../shared/ui/WhatsAppSupport';
 import { cn } from '../../shared/lib/cn';
 import { GROUP_INSTITUTES, InstituteLogo, OWNER } from '../../shared/brand';
 import { useAuth } from './AuthContext';
@@ -279,6 +280,7 @@ export default function LoginPage() {
           )}
         </div>
       </main>
+      <WhatsAppSupport variant="floating" />
     </div>
   );
 }

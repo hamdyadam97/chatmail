@@ -62,6 +62,7 @@ const env = {
   BREVO_API_BASE: `http://127.0.0.1:${BREVO_PORT}`,
   // كل دخول من متصفح جديد يحتاج كود المسؤول — كما في الإنتاج.
   LOGIN_NEW_DEVICE_APPROVAL: '1',
+  SUPPORT_WHATSAPP: '0500000001',
   PYTHONWARNINGS: 'ignore',
 };
 const children = [];
@@ -293,6 +294,10 @@ async function main() {
       console.log(`    [cookie after reload] ${c ? c.value : 'none'}`);
     }
     check('ahmed: الجلسة تصمد بعد إعادة التحميل', afterReload === null, afterReload ?? '');
+
+    // زر الدعم على واتساب: في عمود الأقسام (أو الرأس على الموبايل)، والرقم من إعدادات الخادم بصيغة دولية.
+    const waLinks = await ahmed.page.locator('[data-testid="whatsapp-support"]').evaluateAll((els) => els.map((a) => a.getAttribute('href') || ''));
+    check('زر واتساب للدعم ظاهر ويفتح رقم الدعم الدولي', waLinks.length > 0 && waLinks.every((h) => h.startsWith('https://wa.me/966500000001?text=')), waLinks.join(' '));
 
     section('1أ) دخول من متصفح جديد بكود المسؤول');
     check('أول دخول من متصفح جديد طلب كود المسؤول', ahmed.neededCode && mohamed.neededCode);

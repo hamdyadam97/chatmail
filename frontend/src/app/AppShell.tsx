@@ -8,6 +8,7 @@ import { NotificationBell } from '../features/notifications/NotificationBell';
 import { PushPrompt } from '../features/notifications/PushControls';
 import { InstallPrompt } from '../features/install/InstallPrompt';
 import { Avatar } from '../shared/ui';
+import { WhatsAppSupport } from '../shared/ui/WhatsAppSupport';
 import { InstituteLogo } from '../shared/brand';
 import { cn } from '../shared/lib/cn';
 
@@ -103,6 +104,7 @@ export function AppShell() {
           <RailLink key={item.to} item={item} pathname={pathname} />
         ))}
         <div className="mt-auto w-full">
+          <WhatsAppSupport variant="rail" />
           {RAIL_BOTTOM.map((item) => (
             <RailLink key={item.to} item={item} pathname={pathname} />
           ))}
@@ -142,6 +144,7 @@ export function AppShell() {
             <Link to="/search" className="rounded-lg p-2 text-gray-600 hover:bg-gray-100 md:hidden" aria-label="بحث">
               <Search className="h-5 w-5" />
             </Link>
+            <WhatsAppSupport variant="icon" className="md:hidden" />
             <NotificationBell />
             {user?.institute && (
               <InstituteLogo

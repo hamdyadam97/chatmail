@@ -238,6 +238,22 @@ if not CONTENT_ENCRYPTION_KEY:
 # production (prod.py), off by default elsewhere.
 LOGIN_NEW_DEVICE_APPROVAL = os.environ.get("LOGIN_NEW_DEVICE_APPROVAL", "0") == "1"
 
+
+def _whatsapp_number(raw: str) -> str:
+    """International digits for wa.me: a Saudi local number (05xxxxxxxx)
+    becomes 9665xxxxxxxx; '+' and spaces are dropped."""
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if digits.startswith("05") and len(digits) == 10:
+        digits = "966" + digits[1:]
+    return digits if 8 <= len(digits) <= 15 else ""
+
+
+# The support contact shown as a WhatsApp button (login page and app). From the
+# environment file only — the repository is public.
+SUPPORT_WHATSAPP = _whatsapp_number(os.environ.get("SUPPORT_WHATSAPP", ""))
+
 # One shared temporary password for accounts created from the employees page
 # (the user must change it at first login). From the server's env file only —
 # never in the repository. Empty = a random one per account, as before.

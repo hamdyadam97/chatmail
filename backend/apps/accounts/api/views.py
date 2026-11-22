@@ -142,6 +142,16 @@ def _authenticate_credentials(username: str, password: str):
     return user
 
 
+class SupportContactView(APIView):
+    """Who to contact for help — public (the login page shows it too)."""
+
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        return Response({"whatsapp": settings.SUPPORT_WHATSAPP or None})
+
+
 class LoginView(APIView):
     throttle_classes = [LoginIPThrottle, LoginUsernameThrottle]
 
