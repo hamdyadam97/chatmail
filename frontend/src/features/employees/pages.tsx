@@ -369,15 +369,27 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
                   {m.job_title && <span className="text-gray-500"> — {m.job_title}</span>}
                   {m.is_primary && <span className="ms-2 rounded-full bg-primary-50 px-2 py-0.5 text-xs text-primary-700">رئيسية</span>}
                   {!m.is_current && <span className="ms-2 text-xs">انتهت {m.ended_on}</span>}
+                  {m.is_current && m.ended_on && (
+                    <span className="ms-2 rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                      {m.ended_on === new Date().toLocaleDateString('en-CA') ? 'تنتهي اليوم' : `تنتهي ${m.ended_on}`}
+                    </span>
+                  )}
                 </span>
                 {m.is_current && !m.is_primary && (
                   <span className="flex gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => membershipOp.mutate({ mid: m.id, body: { make_primary: true } })}>
-                      اجعلها رئيسية
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title={m.ended_on ? 'تُعاد سارية وتصبح الرئيسية (للتراجع عن نقل اليوم)' : undefined}
+                      onClick={() => membershipOp.mutate({ mid: m.id, body: { make_primary: true } })}
+                    >
+                      {m.ended_on ? 'إرجاعها رئيسية' : 'اجعلها رئيسية'}
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => membershipOp.mutate({ mid: m.id, body: { end: true } })}>
-                      إنهاء
-                    </Button>
+                    {!m.ended_on && (
+                      <Button size="sm" variant="ghost" onClick={() => membershipOp.mutate({ mid: m.id, body: { end: true } })}>
+                        إنهاء
+                      </Button>
+                    )}
                   </span>
                 )}
               </li>

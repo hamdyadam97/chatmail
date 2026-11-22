@@ -254,6 +254,27 @@ def test_end_and_promote_memberships(api_client, staff):
     assert ended.json()["ended_on"] is not None
 
 
+def test_a_transfer_made_today_is_undone_by_making_the_old_membership_primary(api_client, staff):
+    """The membership a transfer ended today is still current: making it primary
+    again reopens it (a transfer made by mistake); one ended earlier cannot."""
+    import datetime
+
+    url = f"{USERS}{staff['emp'].id}/memberships/"
+    old = next(m for m in api_client.get(url, **staff["h_central"]).json() if m["is_primary"])
+    body = {"institute": str(staff["branch_b"].institute_id), "branch": str(staff["branch_b"].id)}
+    assert api_client.post(f"{USERS}{staff['emp'].id}/transfer/", body, format="json", **staff["h_central"]).status_code == 201
+    back = api_client.patch(f"{url}{old['id']}/", {"make_primary": True}, format="json", **staff["h_central"])
+    assert back.status_code == 200, back.content
+    assert back.json()["is_primary"] is True and back.json()["ended_on"] is None
+    assert EmployeeMembership.objects.filter(user=staff["emp"], is_primary=True).count() == 1
+
+    new = EmployeeMembership.objects.get(user=staff["emp"], branch=staff["branch_b"])
+    new.ended_on = datetime.date.today() - datetime.timedelta(days=1)
+    new.save()
+    late = api_client.patch(f"{url}{new.id}/", {"make_primary": True}, format="json", **staff["h_central"])
+    assert late.status_code == 400
+
+
 def test_remote_sign_out_needs_manage_sessions_and_spares_devices(api_client, staff):
     device = make_device(staff["emp"])
     before = list(TrustedDevice.objects.filter(user=staff["emp"]).values())

@@ -261,7 +261,12 @@ class MembershipDetailView(APIView):
                 m.save(update_fields=["job_title"])
             if d.get("make_primary") and not m.is_primary:
                 if m.ended_on is not None:
-                    raise ValidationError({"make_primary": "لا تصبح عضوية منتهية رئيسية."})
+                    if m.ended_on < timezone.localdate():
+                        raise ValidationError({"make_primary": "لا تصبح عضوية منتهية رئيسية."})
+                    # Still current (ends today or later — e.g. a transfer made by
+                    # mistake today): making it primary again reopens it.
+                    m.ended_on = None
+                    m.save(update_fields=["ended_on"])
                 current = target.memberships.filter(is_primary=True).first()
                 if current is not None:
                     _require_structure(request, _unit_of(current))
