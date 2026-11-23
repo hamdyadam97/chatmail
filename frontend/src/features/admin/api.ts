@@ -27,6 +27,27 @@ export interface Membership {
 
 export type EmploymentType = 'full_time' | 'part_time' | 'volunteer' | 'contract';
 
+/** فلاتر قائمة الموظفين (القائمة والتصدير). */
+export interface ManagedFilters {
+  q?: string;
+  status?: 'active' | 'inactive' | 'all';
+  branch?: string;
+  /** never = لم يدخل بعد، must_change = بانتظار تغيير كلمة المرور، done = دخل وغيّرها. */
+  login?: '' | 'never' | 'must_change' | 'done';
+  /** مستلمو تعميم (لمن يتابع اطلاعه)، و`ack` حالتهم فيه. */
+  announcement?: string;
+  ack?: '' | 'yes' | 'no' | 'read' | 'unread';
+}
+
+function managedQuery(params: ManagedFilters): URLSearchParams {
+  const s = new URLSearchParams();
+  for (const key of ['q', 'status', 'branch', 'login', 'announcement', 'ack'] as const) {
+    const v = params[key];
+    if (v) s.set(key, v);
+  }
+  return s;
+}
+
 export interface ManagedUser {
   id: string;
   username: string;
@@ -43,6 +64,8 @@ export interface ManagedUser {
   deactivated_at: string | null;
   active_sessions: number | null;
   memberships: Membership[];
+  /** مع فلتر التعميم فقط: حالته في التعميم المختار. */
+  announcement_state?: { read_at: string | null; acknowledged_at: string | null };
 }
 
 export interface Page<T> {
@@ -111,10 +134,9 @@ export interface Assignment {
 
 export const adminApi = {
   /** branch: معرّف فرع العضوية الرئيسية، أو 'none' لمن لا فرع له. */
-  managed: (params: { q?: string; status?: 'active' | 'inactive' | 'all'; branch?: string; page?: number }) => {
-    const s = new URLSearchParams({ page: String(params.page ?? 1), status: params.status ?? 'all' });
-    if (params.q) s.set('q', params.q);
-    if (params.branch) s.set('branch', params.branch);
+  managed: (params: ManagedFilters & { page?: number }) => {
+    const s = managedQuery({ status: 'all', ...params });
+    s.set('page', String(params.page ?? 1));
     return apiFetch<Page<ManagedUser>>(`/users/managed/?${s.toString()}`);
   },
   createUser: (body: {
@@ -142,11 +164,8 @@ export const adminApi = {
     return data as ImportResult;
   },
   /** قائمة الموظفين بنفس فلاتر الصفحة كملف Excel. */
-  exportManaged: async (params: { q?: string; status?: string; branch?: string }): Promise<Blob> => {
-    const s = new URLSearchParams();
-    if (params.q) s.set('q', params.q);
-    if (params.status) s.set('status', params.status);
-    if (params.branch) s.set('branch', params.branch);
+  exportManaged: async (params: ManagedFilters): Promise<Blob> => {
+    const s = managedQuery(params);
     const res = await rawFetch(`/users/managed/export/?${s.toString()}`, {});
     if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
     return res.blob();

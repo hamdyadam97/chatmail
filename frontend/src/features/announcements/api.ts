@@ -97,6 +97,8 @@ export interface OrgUnit {
 export const announcementsApi = {
   list: (box: 'received' | 'published' | 'tracking', page = 1, pendingAck = false) =>
     apiFetch<Page<Announcement>>(`/announcements/?box=${box}&page=${page}${pendingAck ? '&pending_ack=1' : ''}`),
+  /** آخر 100 تعميم في نطاق متابعتي (لاختيار تعميم في فلتر الموظفين). */
+  trackingOptions: () => apiFetch<Page<Announcement>>('/announcements/?box=tracking&page_size=100'),
   get: (id: string) => apiFetch<Announcement>(`/announcements/${id}/`),
   audience: (id: string) => apiFetch<{ publisher: UserRef; recipients: UserRef[] }>(`/announcements/${id}/audience/`),
   previewAudience: (body: AudienceTarget) =>

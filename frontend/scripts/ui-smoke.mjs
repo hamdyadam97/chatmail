@@ -955,6 +955,31 @@ async function main() {
       trackListed && reportOpen && titleShown === adminIsRecipient,
       `listed=${trackListed} report=${reportOpen} title=${titleShown} recipient=${adminIsRecipient}`);
 
+    // الموظفون: فلتر «التعميم» + «لم يقرّوا»، وفلتر «لم يدخل بعد».
+    await admin.page.goto(`${UI}/employees`);
+    const annSelect = admin.page.locator('select[aria-label="التعميم"]');
+    await annSelect.locator('option').nth(1).waitFor({ state: 'attached', timeout: 15000 }).catch(() => undefined);
+    const annValue = await annSelect.locator('option').nth(1).getAttribute('value').catch(() => null);
+    if (annValue) await annSelect.selectOption(annValue).catch(() => undefined);
+    const stateCells = admin.page.locator('[data-testid="announcement-state"]');
+    await stateCells.first().waitFor({ timeout: 15000 }).catch(() => undefined);
+    const allRecipients = await stateCells.count();
+    await admin.page.locator('select[aria-label="حالة التعميم"]').selectOption('no').catch(() => undefined);
+    await admin.page.waitForTimeout(800);
+    const notAcked = await stateCells.allInnerTexts().catch(() => []);
+    const countMatches = await runPython(
+      `from apps.announcements.models import AnnouncementRecipient as R; assert R.objects.filter(announcement_id='${annValue}', acknowledged_at__isnull=True).count() == ${notAcked.length}`,
+    ).then(() => true).catch(() => false);
+    check('الموظفون: فلتر التعميم يعرض المستلمين وحالتهم، و«لم يقرّوا» يعرض من لم يقر فقط',
+      !!annValue && allRecipients > 0 && countMatches && notAcked.every((t) => !t.includes('أقر ✓')),
+      `ann=${annValue} all=${allRecipients} notAcked=${notAcked.length} matches=${countMatches}`);
+    await annSelect.selectOption('').catch(() => undefined);
+    await admin.page.locator('select[aria-label="الدخول"]').selectOption('never').catch(() => undefined);
+    await admin.page.locator('tbody tr').filter({ hasText: 'ahmed' }).first().waitFor({ state: 'detached', timeout: 15000 }).catch(() => undefined);
+    const neverRows = await admin.page.locator('tbody tr').allInnerTexts().catch(() => []);
+    check('الموظفون: فلتر «لم يدخل بعد» لا يعرض من دخل', !neverRows.some((t) => t.includes('ahmed')), `${neverRows.length} صف`);
+    await admin.page.locator('select[aria-label="الدخول"]').selectOption('').catch(() => undefined);
+
     section('8ب) حسابي');
     await manager.page.goto(`${UI}/mail/inbox`);
     await manager.page.getByRole('link', { name: 'حسابي' }).first().click({ timeout: 15000 }).catch(() => undefined);

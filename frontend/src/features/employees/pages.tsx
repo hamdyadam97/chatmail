@@ -16,6 +16,7 @@ import {
 } from '../admin/api';
 import { Modal, UnitPicker, useOrg } from '../admin/components';
 import { useAuth } from '../auth/AuthContext';
+import { announcementsApi } from '../announcements/api';
 import { ImportEmployees } from './ImportEmployees';
 
 function formatDate(iso: string | null): string {
@@ -617,6 +618,9 @@ export function Employees() {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | 'active' | 'inactive'>('active');
   const [branch, setBranch] = useState('');
+  const [login, setLogin] = useState<'' | 'never' | 'must_change' | 'done'>('');
+  const [announcement, setAnnouncement] = useState('');
+  const [ack, setAck] = useState<'' | 'yes' | 'no' | 'read' | 'unread'>('');
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -634,15 +638,23 @@ export function Employees() {
       return next;
     });
   const org = useOrg();
+  const filters = { q: query, status, branch, login, announcement, ack: announcement ? ack : ('' as const) };
+  // فلتر التعميم لمن يتابع اطلاع التعاميم فقط (نفس صلاحية تقرير الالتزام).
+  const { data: annTargets } = useQuery({ queryKey: ['announcements', 'targets'], queryFn: announcementsApi.targets });
+  const { data: annOptions } = useQuery({
+    queryKey: ['announcements', 'tracking-options'],
+    queryFn: announcementsApi.trackingOptions,
+    enabled: !!annTargets?.can_track,
+  });
   const { data, isLoading, error } = useQuery({
-    queryKey: ['admin', 'managed', query, status, branch, page],
-    queryFn: () => adminApi.managed({ q: query, status, branch, page }),
+    queryKey: ['admin', 'managed', filters, page],
+    queryFn: () => adminApi.managed({ ...filters, page }),
     placeholderData: keepPreviousData,
     retry: false,
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['admin', 'managed'] });
   const exporting = useMutation({
-    mutationFn: () => adminApi.exportManaged({ q: query, status, branch }),
+    mutationFn: () => adminApi.exportManaged(filters),
     onSuccess: (blob) => saveBlob(blob, `الموظفون-${new Date().toISOString().slice(0, 10)}.xlsx`),
   });
 
@@ -703,6 +715,48 @@ export function Employees() {
             ) : null;
           })}
         </select>
+        <select
+          value={login}
+          onChange={(e) => { setLogin(e.target.value as typeof login); setPage(1); }}
+          className="h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm"
+          aria-label="الدخول"
+        >
+          <option value="">كل حالات الدخول</option>
+          <option value="never">لم يدخل بعد</option>
+          <option value="must_change">لم يغيّر كلمة المرور المؤقتة</option>
+          <option value="done">دخل وغيّر كلمة المرور</option>
+        </select>
+        {annTargets?.can_track && (
+          <>
+            <select
+              value={announcement}
+              onChange={(e) => { setAnnouncement(e.target.value); setPage(1); }}
+              className="h-10 max-w-[20rem] rounded-lg border border-gray-300 bg-white px-2 text-sm"
+              aria-label="التعميم"
+            >
+              <option value="">كل الموظفين (بلا تعميم)</option>
+              {(annOptions?.results ?? []).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {[a.reference_number, a.content?.title, a.publisher.full_name, formatDate(a.published_at)].filter(Boolean).join(' — ')}
+                </option>
+              ))}
+            </select>
+            {announcement && (
+              <select
+                value={ack}
+                onChange={(e) => { setAck(e.target.value as typeof ack); setPage(1); }}
+                className="h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm"
+                aria-label="حالة التعميم"
+              >
+                <option value="">كل المستلمين</option>
+                <option value="yes">أقرّوا</option>
+                <option value="no">لم يقرّوا</option>
+                <option value="read">اطّلعوا</option>
+                <option value="unread">لم يطّلعوا</option>
+              </select>
+            )}
+          </>
+        )}
         <Button type="submit" variant="outline">
           بحث
         </Button>
@@ -762,6 +816,7 @@ export function Employees() {
                 <th className="px-4 py-2 text-start font-medium">جهة العمل الرئيسية</th>
                 <th className="px-4 py-2 text-start font-medium">آخر دخول</th>
                 <th className="px-4 py-2 text-start font-medium">الحالة</th>
+                {announcement && <th className="px-4 py-2 text-start font-medium">التعميم</th>}
                 <th className="w-10 px-2 py-2"><span className="sr-only">حذف</span></th>
               </tr>
             </thead>
@@ -796,6 +851,17 @@ export function Employees() {
                         {u.is_active ? (u.must_change_password ? 'بانتظار تغيير كلمة المرور' : 'نشط') : 'مؤرشف'}
                       </span>
                     </td>
+                    {announcement && (
+                      <td className="px-4 py-2 text-xs" data-testid="announcement-state">
+                        {u.announcement_state?.acknowledged_at ? (
+                          <span className="text-emerald-700">أقر ✓ {formatDate(u.announcement_state.acknowledged_at)}</span>
+                        ) : u.announcement_state?.read_at ? (
+                          <span className="text-amber-700">اطّلع ولم يقر</span>
+                        ) : (
+                          <span className="text-red-600">لم يطّلع</span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-2 py-2">
                       {canDelete(u) && (
                         <button

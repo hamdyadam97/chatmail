@@ -118,14 +118,56 @@ def filtered_managed_users(request):
             qs = qs.filter(memberships__is_primary=True, memberships__branch_id=uuid.UUID(branch))
         except ValueError:
             raise ValidationError({"branch": "فرع غير صالح."})
+    login = request.query_params.get("login", "")
+    if login == "never":  # never signed in
+        qs = qs.filter(last_login_at__isnull=True)
+    elif login == "must_change":  # still on a temporary password
+        qs = qs.filter(must_change_password=True)
+    elif login == "done":  # signed in and chose their own password
+        qs = qs.filter(last_login_at__isnull=False, must_change_password=False)
+    elif login:
+        raise ValidationError({"login": "never | must_change | done"})
+    announcement = announcement_filter(request)
+    if announcement is not None:
+        from apps.announcements.models import AnnouncementRecipient
+
+        rows = AnnouncementRecipient.objects.filter(announcement=announcement)
+        ack = request.query_params.get("ack", "")
+        if ack == "yes":
+            rows = rows.filter(acknowledged_at__isnull=False)
+        elif ack == "no":
+            rows = rows.filter(acknowledged_at__isnull=True)
+        elif ack == "read":
+            rows = rows.filter(read_at__isnull=False)
+        elif ack == "unread":
+            rows = rows.filter(read_at__isnull=True)
+        elif ack:
+            raise ValidationError({"ack": "yes | no | read | unread"})
+        qs = qs.filter(id__in=rows.values("user_id"))
     term = (request.query_params.get("q") or "").strip()
     if term:
         qs = qs.filter(Q(full_name__icontains=term) | Q(username__icontains=term) | Q(phone__icontains=term))
     return qs
 
 
+def announcement_filter(request):
+    """?announcement=<id>: only its recipients — for someone who may follow that
+    announcement's compliance (announcements.track_ack in its scope, or its
+    publisher); the same gate as its compliance report. Never its content."""
+    raw = (request.query_params.get("announcement") or "").strip()
+    if not raw:
+        return None
+    from apps.announcements import services as announcements
+
+    try:
+        return announcements.get_trackable(request.user, uuid.UUID(raw))
+    except ValueError:
+        raise ValidationError({"announcement": "تعميم غير صالح."})
+
+
 class ManagedUsersView(APIView):
     """GET /users/managed/?q=&status=active|inactive|all&branch=<id>|none
+    &login=never|must_change|done&announcement=<id>&ack=yes|no|read|unread
     (branch = of the primary membership; "none" = no branch yet)."""
 
     permission_classes = [IsAuthenticated]
@@ -146,7 +188,23 @@ class ManagedUsersView(APIView):
         )
         paginator = _Pagination()
         page = paginator.paginate_queryset(qs, request, view=self)
-        return paginator.get_paginated_response([managed_user_dict(u) for u in page])
+        items = [managed_user_dict(u) for u in page]
+        announcement = announcement_filter(request)
+        if announcement is not None:
+            # Each listed employee's state for that announcement (read / acknowledged).
+            from apps.announcements.models import AnnouncementRecipient
+
+            states = {
+                str(r.user_id): r
+                for r in AnnouncementRecipient.objects.filter(announcement=announcement, user_id__in=[u.id for u in page])
+            }
+            for item in items:
+                r = states.get(item["id"])
+                item["announcement_state"] = {
+                    "read_at": r.read_at.isoformat() if r and r.read_at else None,
+                    "acknowledged_at": r.acknowledged_at.isoformat() if r and r.acknowledged_at else None,
+                }
+        return paginator.get_paginated_response(items)
 
 
 def _get_target(request, user_id) -> User:
@@ -436,8 +494,20 @@ class ManagedUsersExportView(APIView):
         ws.title = "الموظفون"
         ws.sheet_view.rightToLeft = True
         # Same first columns as the import template, so the file can be re-imported.
-        ws.append(["الاسم", "اسم المستخدم", "الفرع", "المعهد", "القسم", "المسمى الوظيفي", "الجوال",
-                   "البريد الإلكتروني", "الحالة", "آخر دخول", "تاريخ الإنشاء"])
+        header = ["الاسم", "اسم المستخدم", "الفرع", "المعهد", "القسم", "المسمى الوظيفي", "الجوال",
+                  "البريد الإلكتروني", "الحالة", "آخر دخول", "تاريخ الإنشاء"]
+        announcement = announcement_filter(request)
+        states = {}
+        if announcement is not None:
+            from apps.announcements.models import AnnouncementRecipient
+
+            header += [f"اطلع على {announcement.reference_number}", f"أقر بـ {announcement.reference_number}"]
+            states = {r.user_id: r for r in AnnouncementRecipient.objects.filter(announcement=announcement)}
+        ws.append(header)
+
+        def when(dt):
+            return timezone.localtime(dt).strftime("%Y-%m-%d %H:%M") if dt else "لا"
+
         count = 0
         for u in qs.iterator(chunk_size=500):
             m = next((m for m in u.memberships.all() if m.is_primary), None)
@@ -450,15 +520,21 @@ class ManagedUsersExportView(APIView):
                 timezone.localtime(u.last_login_at).strftime("%Y-%m-%d %H:%M") if u.last_login_at else "",
                 timezone.localtime(u.created_at).strftime("%Y-%m-%d"),
             ]
+            if announcement is not None:
+                r = states.get(u.id)
+                values += [when(r.read_at if r else None), when(r.acknowledged_at if r else None)]
             ws.append([str(v) for v in values])
             for cell in ws[ws.max_row]:
                 cell.data_type = "s"  # text only — no formula injection from names
             count += 1
-        for col, width in zip("ABCDEFGHIJK", (30, 24, 28, 28, 22, 22, 16, 28, 24, 18, 14)):
+        for col, width in zip("ABCDEFGHIJKLM", (30, 24, 28, 28, 22, 22, 16, 28, 24, 18, 14, 22, 22)):
             ws.column_dimensions[col].width = width
         log(actor=request.user, action="employees_exported", target_type="user", target_id=None,
             metadata={"count": count, "status": request.query_params.get("status", "all"),
-                      "branch": request.query_params.get("branch", ""), "filtered": bool(request.query_params.get("q"))},
+                      "branch": request.query_params.get("branch", ""), "filtered": bool(request.query_params.get("q")),
+                      "login": request.query_params.get("login", ""),
+                      "announcement": str(announcement.id) if announcement else None,
+                      "ack": request.query_params.get("ack", "")},
             **request_context(request))
         buf = io.BytesIO()
         wb.save(buf)
