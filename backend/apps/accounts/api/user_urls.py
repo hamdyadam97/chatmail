@@ -9,6 +9,7 @@ urlpatterns = [
     path("", user_views.UserDirectoryView.as_view(), name="users-directory"),
     path("managed/", admin_views.ManagedUsersView.as_view(), name="users-managed"),
     path("managed/export/", admin_views.ManagedUsersExportView.as_view(), name="users-managed-export"),
+    path("managed/export/pdf/", admin_views.ManagedUsersPdfView.as_view(), name="users-managed-export-pdf"),
     path("import/", admin_views.EmployeeImportView.as_view(), name="users-import"),
     path("import/template/", admin_views.EmployeeImportTemplateView.as_view(), name="users-import-template"),
     path("<uuid:user_id>/memberships/", admin_views.MembershipsView.as_view(), name="user-memberships"),

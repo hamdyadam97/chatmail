@@ -472,6 +472,76 @@ class EmployeeImportTemplateView(APIView):
         return response
 
 
+class ManagedUsersPdfView(APIView):
+    """GET /users/managed/export/pdf/ — the filtered list as a printable PDF:
+    name, workplace, sign-in state (and the chosen announcement's state).
+    Same filters, scope and gates as the list. Audited."""
+
+    permission_classes = [IsAuthenticated]
+
+    LOGIN_LABELS = {"never": "لم يدخلوا بعد", "must_change": "لم يغيّروا كلمة المرور", "done": "دخلوا وغيّروا كلمة المرور"}
+    ACK_LABELS = {"yes": "أقرّوا", "no": "لم يقرّوا", "read": "اطّلعوا", "unread": "لم يطّلعوا"}
+
+    def get(self, request):
+        from django.http import HttpResponse
+
+        from .. import employees_pdf
+
+        qs = (
+            filtered_managed_users(request)
+            .prefetch_related("memberships__institute", "memberships__branch", "memberships__department")
+            .order_by("full_name", "username")
+        )
+        announcement = announcement_filter(request)
+        states = {}
+        if announcement is not None:
+            from apps.announcements.models import AnnouncementRecipient
+
+            states = {r.user_id: r for r in AnnouncementRecipient.objects.filter(announcement=announcement)}
+        header = ["الاسم", "جهة العمل", "الحالة"]
+        widths = [0.32, 0.43, 0.25]
+        if announcement is not None:
+            header.append("التعميم")
+            widths = [0.28, 0.36, 0.18, 0.18]
+        rows = []
+        for u in qs.iterator(chunk_size=500):
+            m = next((m for m in u.memberships.all() if m.is_primary), None)
+            row = [u.full_name or u.username, employees_pdf.workplace(m), employees_pdf.sign_in_state(u)]
+            if announcement is not None:
+                row.append(employees_pdf.announcement_state(states.get(u.id)))
+            rows.append(row)
+
+        lines = [f"التاريخ: {timezone.localtime().strftime('%Y-%m-%d %H:%M')}   ·   العدد: {len(rows)}"]
+        branch = (request.query_params.get("branch") or "").strip()
+        if branch == "none":
+            lines.append("الفرع: بلا فرع")
+        elif branch:
+            from apps.org.models import Branch
+
+            b = Branch.objects.filter(id=branch).first()
+            if b:
+                lines.append(f"الفرع: {b.name}")
+        login = request.query_params.get("login", "")
+        if login in self.LOGIN_LABELS:
+            lines.append(f"الدخول: {self.LOGIN_LABELS[login]}")
+        if announcement is not None:
+            ack = request.query_params.get("ack", "")
+            pub = announcement.publisher.full_name or announcement.publisher.username
+            lines.append(f"التعميم: {announcement.reference_number} — {pub}"
+                         + (f" — {self.ACK_LABELS[ack]}" if ack in self.ACK_LABELS else ""))
+        data = employees_pdf.build(title="الموظفون", lines=lines, header=header, rows=rows, widths=widths)
+        log(actor=request.user, action="employees_exported", target_type="user", target_id=None,
+            metadata={"format": "pdf", "count": len(rows), "status": request.query_params.get("status", "all"),
+                      "branch": branch, "filtered": bool(request.query_params.get("q")), "login": login,
+                      "announcement": str(announcement.id) if announcement else None,
+                      "ack": request.query_params.get("ack", "")},
+            **request_context(request))
+        response = HttpResponse(data, content_type="application/pdf")
+        response["Content-Disposition"] = 'attachment; filename="employees.pdf"'
+        response["Cache-Control"] = "no-store"
+        return response
+
+
 class ManagedUsersExportView(APIView):
     """GET /users/managed/export/ — the same filtered list as .xlsx (same
     scope as the page; account data only, no content). Audited."""

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { externalApi } from '../external/service';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Contact, Download, FileSpreadsheet, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe } from 'lucide-react';
+import { Contact, Download, FileSpreadsheet, FileText, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { ApiError, toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
@@ -657,6 +657,10 @@ export function Employees() {
     mutationFn: () => adminApi.exportManaged(filters),
     onSuccess: (blob) => saveBlob(blob, `الموظفون-${new Date().toISOString().slice(0, 10)}.xlsx`),
   });
+  const exportingPdf = useMutation({
+    mutationFn: () => adminApi.exportManagedPdf(filters),
+    onSuccess: (blob) => saveBlob(blob, `الموظفون-${new Date().toISOString().slice(0, 10)}.pdf`),
+  });
 
   if (error instanceof ApiError && error.status === 403) {
     return (
@@ -769,6 +773,16 @@ export function Employees() {
         >
           <Download className="h-4 w-4" />
           تصدير Excel
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          loading={exportingPdf.isPending}
+          onClick={() => exportingPdf.mutate()}
+          title="PDF للطباعة: الاسم وجهة العمل والحالة (وحالة التعميم المختار)"
+        >
+          <FileText className="h-4 w-4" />
+          تصدير PDF
         </Button>
       </form>
       {isLoading ? (

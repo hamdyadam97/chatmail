@@ -86,3 +86,29 @@ def test_export_has_the_announcement_columns(api_client, org):
     ws = openpyxl.load_workbook(io.BytesIO(resp.content)).active
     rows = list(ws.values)
     assert rows[0][-1].startswith("أقر بـ") and [r[1] for r in rows[1:]] == ["f_e2"] and rows[1][-1] == "لا"
+
+
+def test_pdf_export_lists_name_workplace_state_and_announcement(api_client, org):
+    from pypdf import PdfReader
+
+    resp = api_client.get(f"{MANAGED}export/pdf/?announcement={org['ann']['id']}&ack=no", **org["h_admin"])
+    assert resp.status_code == 200 and resp["Content-Type"] == "application/pdf"
+    reader = PdfReader(io.BytesIO(resp.content))
+    assert len(reader.pages) >= 1
+    # one row (f_e2): no content of the announcement in the file
+    assert b"\xd8\xaa\xd8\xb9\xd9\x85\xd9\x8a\xd9\x85 \xd8\xb3\xd8\xb1\xd9\x8a" not in resp.content
+    from apps.audit.models import AuditLog
+
+    assert AuditLog.objects.filter(action="employees_exported", metadata__format="pdf", metadata__count=1).exists()
+    # same gate as the list: a staff-only manager without tracking is refused
+    assert api_client.get(f"{MANAGED}export/pdf/", **org["h_e1"]).status_code == 403
+
+
+def test_pdf_export_paginates_long_lists(api_client, user_factory, org):
+    from pypdf import PdfReader
+
+    for i in range(70):
+        user_factory(f"f_many{i:02d}")
+    resp = api_client.get(f"{MANAGED}export/pdf/", **org["h_admin"])
+    assert resp.status_code == 200
+    assert len(PdfReader(io.BytesIO(resp.content)).pages) >= 2

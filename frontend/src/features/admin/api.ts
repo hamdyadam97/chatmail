@@ -164,6 +164,12 @@ export const adminApi = {
     return data as ImportResult;
   },
   /** قائمة الموظفين بنفس فلاتر الصفحة كملف Excel. */
+  /** نفس القائمة PDF للطباعة: الاسم، جهة العمل، الحالة، (والتعميم المختار). */
+  exportManagedPdf: async (params: ManagedFilters): Promise<Blob> => {
+    const res = await rawFetch(`/users/managed/export/pdf/?${managedQuery(params).toString()}`, {});
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+    return res.blob();
+  },
   exportManaged: async (params: ManagedFilters): Promise<Blob> => {
     const s = managedQuery(params);
     const res = await rawFetch(`/users/managed/export/?${s.toString()}`, {});

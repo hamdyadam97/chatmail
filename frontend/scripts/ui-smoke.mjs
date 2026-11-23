@@ -456,6 +456,21 @@ async function main() {
     }
     check('الموظفون: تصدير Excel بنفس فلتر الفرع', empXlsxOk);
 
+    // نفس القائمة PDF للطباعة (الاسم، جهة العمل، الحالة).
+    const [pdfDownload] = await Promise.all([
+      admin.page.waitForEvent('download', { timeout: 20000 }).catch(() => null),
+      admin.page.getByRole('button', { name: 'تصدير PDF' }).click({ timeout: 10000 }).catch(() => undefined),
+    ]);
+    let empPdfOk = false;
+    if (pdfDownload) {
+      const file = path.join(work, 'employees-export.pdf');
+      await pdfDownload.saveAs(file);
+      empPdfOk = pdfDownload.suggestedFilename().endsWith('.pdf') && await runPython(
+        `from pypdf import PdfReader; r = PdfReader(${JSON.stringify(file)}); assert len(r.pages) >= 1`,
+      ).then(() => true).catch(() => false);
+    }
+    check('الموظفون: تصدير PDF للقائمة المعروضة', empPdfOk);
+
     // تعديل الاسم الأول واسم العائلة (المستورد انقسم تلقائيًا) — وهو ما يظهر للناس مع الفرع.
     await rows().filter({ hasText: 'salma.imp' }).first().click({ timeout: 15000 }).catch(() => undefined);
     const firstIn = admin.page.locator('#edit-first');
