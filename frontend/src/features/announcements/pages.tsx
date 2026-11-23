@@ -529,6 +529,20 @@ function ComplianceCard({ a }: { a: Announcement }) {
     },
     onError: (err) => setMessage(toUserMessage(err, 'تعذر إرسال التذكير')),
   });
+  const newMembers = useQuery({
+    queryKey: ['announcements', 'new-members', a.id],
+    queryFn: () => announcementsApi.newMembers(a.id),
+    enabled: a.status === 'published',
+  });
+  const addNew = useMutation({
+    mutationFn: () => announcementsApi.addNewMembers(a.id),
+    onSuccess: (r) => {
+      setMessage(`وصل التعميم إلى ${r.added} موظف جديد.`);
+      void queryClient.invalidateQueries({ queryKey: ['announcements'] });
+    },
+    onError: (err) => setMessage(toUserMessage(err, 'تعذر إضافة الموظفين الجدد')),
+  });
+  const missing = newMembers.data?.can_add ? newMembers.data.users : [];
   if (!data) return null;
   const stat = (label: string, value: number, tone = 'text-gray-900') => (
     <div className="rounded-lg bg-gray-50 p-3 text-center">
@@ -554,6 +568,20 @@ function ComplianceCard({ a }: { a: Announcement }) {
         {stat('أقرّوا', data.acknowledged, 'text-emerald-700')}
         {stat('متأخرون', data.overdue, data.overdue ? 'text-red-600' : 'text-gray-900')}
       </div>
+      {missing.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3" data-testid="announcement-new-members">
+          <div className="text-sm text-amber-900">
+            <span className="font-medium">{missing.length} موظف انضموا للنطاق بعد النشر ولم يصلهم التعميم: </span>
+            <span className="text-amber-800">
+              {missing.slice(0, 5).map((u) => u.full_name).join('، ')}
+              {missing.length > 5 && ` و${missing.length - 5} آخرون`}
+            </span>
+          </div>
+          <Button size="sm" loading={addNew.isPending} onClick={() => addNew.mutate()}>
+            إرساله لهم
+          </Button>
+        </div>
+      )}
       {message && <p className="text-sm text-gray-700">{message}</p>}
       <div className="max-h-96 overflow-y-auto">
         <table className="w-full text-sm">

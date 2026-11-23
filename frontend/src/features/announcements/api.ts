@@ -107,6 +107,11 @@ export const announcementsApi = {
   markRead: (id: string) => apiFetch<null>(`/announcements/${id}/read/`, { method: 'POST' }),
   ack: (id: string) => apiFetch<{ acknowledged_at: string }>(`/announcements/${id}/ack/`, { method: 'POST' }),
   compliance: (id: string) => apiFetch<Compliance>(`/announcements/${id}/compliance/`),
+  newMembers: (id: string) =>
+    apiFetch<{ can_add: boolean; users: { id: string; full_name: string; username: string; branch?: string | null; institute?: string | null }[] }>(
+      `/announcements/${id}/new-members/`,
+    ),
+  addNewMembers: (id: string) => apiFetch<{ added: number }>(`/announcements/${id}/new-members/`, { method: 'POST' }),
   remind: (id: string) => apiFetch<{ reminded: number }>(`/announcements/${id}/remind/`, { method: 'POST' }),
   withdraw: (id: string) => apiFetch<Announcement>(`/announcements/${id}/withdraw/`, { method: 'POST' }),
   targets: () => apiFetch<PublishTargets>('/announcements/targets/'),

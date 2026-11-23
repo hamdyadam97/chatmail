@@ -307,3 +307,59 @@ def test_tracking_box_lists_scope_with_counts_but_no_content(api_client, user_fa
     boss = make_employee(user_factory, "a_boss2", org["branch_a2"])
     assign_role(boss, "branch_manager", branch=org["branch_a2"])
     assert api_client.get(f"{ANN_URL}?box=tracking", **auth(api_client, "a_boss2")).json()["results"] == []
+
+
+# --- employees who joined after publishing ----------------------------------------------
+
+def test_late_joiners_receive_a_published_announcement(api_client, user_factory, org):
+    ann = published(api_client, org)
+    late = make_employee(user_factory, "a_late", org["branch_a"])  # joins after publishing
+    make_employee(user_factory, "a_late_foreign", org["branch_a2"])  # outside the target
+    h_late = auth(api_client, "a_late")
+    url = f"{ANN_URL}{ann['id']}/new-members/"
+    assert api_client.get(f"{ANN_URL}{ann['id']}/", **h_late).status_code == 403
+
+    # a tracker without the publish right sees nothing to add and cannot add
+    from apps.authorization.models import Permission, Role, RolePermission
+
+    role = Role.objects.create(code="t_track_only", name_ar="متابعة فقط")
+    RolePermission.objects.create(role=role, permission=Permission.objects.get(code="announcements.track_ack"))
+    head = make_employee(user_factory, "a_head2", org["branch_a"])  # also a late joiner
+    assign_role(head, "t_track_only", institute=org["branch_a"].institute, branch=org["branch_a"])
+    h_head = auth(api_client, "a_head2")
+    assert api_client.get(url, **h_head).json() == {"can_add": False, "users": []}
+    assert api_client.post(url, **h_head).status_code == 403
+    # recipients cannot even look
+    assert api_client.get(url, **org["h_e1"]).status_code == 403
+
+    got = api_client.get(url, **org["h_pub"]).json()
+    assert got["can_add"] is True
+    assert {u["username"] for u in got["users"]} == {"a_late", "a_head2"}
+    assert api_client.post(url, **org["h_pub"]).json() == {"added": 2}
+    assert api_client.post(url, **org["h_pub"]).json() == {"added": 0}  # idempotent
+
+    row = AnnouncementRecipient.objects.get(announcement_id=ann["id"], user=late)
+    assert row.acknowledged_at is None
+    assert Notification.objects.filter(user=late, kind="announcement").exists()
+    opened = api_client.get(f"{ANN_URL}{ann['id']}/", **h_late)
+    assert opened.status_code == 200 and opened.json()["content"]["title"] == "تعميم الدوام"
+    assert ack(api_client, h_late, ann).status_code == 200
+
+
+def test_central_admin_adds_late_joiners_to_an_all_announcement(api_client, user_factory, org):
+    exe = make_employee(user_factory, "a_exe2", org["branch_a"])
+    assign_role(exe, "executive")
+    resp = prepare(api_client, auth(api_client, "a_exe2"), "all")
+    ann = resp.json()
+    make_employee(user_factory, "a_new", org["branch_a2"])
+    admin = make_employee(user_factory, "a_sys", org["branch_a"])
+    assign_role(admin, "sys_admin")
+    h_admin = auth(api_client, "a_sys")
+    url = f"{ANN_URL}{ann['id']}/new-members/"
+    names = {u["username"] for u in api_client.get(url, **h_admin).json()["users"]}
+    assert names == {"a_new", "a_sys"}
+    assert api_client.post(url, **h_admin).json() == {"added": 2}
+    # withdrawn announcements are never extended
+    api_client.post(f"{ANN_URL}{ann['id']}/withdraw/", **auth(api_client, "a_exe2"))
+    make_employee(user_factory, "a_newer", org["branch_a"])
+    assert api_client.get(url, **h_admin).json()["can_add"] is False

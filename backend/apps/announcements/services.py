@@ -333,6 +333,77 @@ def allocate_reference(membership, when) -> str:
     raise Conflict("تعذر إصدار رقم التعميم؛ أعد المحاولة.")
 
 
+def _target_unit(announcement):
+    if announcement.target_type == "branches":
+        return list(Branch.objects.filter(id__in=announcement.target_branch_ids))
+    return {
+        "department": announcement.target_department,
+        "branch": announcement.target_branch,
+        "institute": announcement.target_institute,
+    }.get(announcement.target_type)
+
+
+def missing_recipients(announcement) -> list[User]:
+    """Employees who belong to the announcement's target today but were not in
+    the audience snapshotted at publish time (joined or moved in later).
+    Named-user announcements have no target to grow."""
+    if announcement.status != "published" or announcement.target_type == "users":
+        return []
+    memberships = _active_memberships()
+    unit = _target_unit(announcement)
+    if announcement.target_type == "all":
+        ids = memberships.values_list("user_id", flat=True)
+    elif announcement.target_type == "branches":
+        ids = memberships.filter(branch__in=unit).values_list("user_id", flat=True)
+    elif unit is None:
+        return []
+    else:
+        ids = memberships.filter(**{announcement.target_type: unit}).values_list("user_id", flat=True)
+    existing = set(announcement.recipients.values_list("user_id", flat=True))
+    missing = {u for u in ids if u not in existing and u != announcement.publisher_id}
+    return list(User.objects.filter(id__in=missing, purged_at__isnull=True).order_by("full_name", "username"))
+
+
+def can_add_recipients(user, announcement) -> bool:
+    """Publisher, or someone who could publish to the same target."""
+    if announcement.status != "published" or announcement.target_type == "users":
+        return False
+    if announcement.publisher_id == user.id:
+        return True
+    unit = _target_unit(announcement)
+    if announcement.target_type == "branches":
+        return bool(unit) and all(has_permission(user, "announcements.publish", unit=b) for b in unit)
+    return has_permission(user, "announcements.publish", unit=unit)
+
+
+def add_missing_recipients(user, announcement) -> int:
+    """Deliver an already-published announcement to the employees who joined
+    its target after publishing — same content, same number, same deadline."""
+    if not can_add_recipients(user, announcement):
+        raise PermissionDenied("لا تملك إضافة مستلمين لهذا التعميم.")
+    new_ids = [u.id for u in missing_recipients(announcement)]
+    if not new_ids:
+        return 0
+    if announcement.recipients.count() + len(new_ids) > settings.ANNOUNCEMENT_MAX_RECIPIENTS:
+        raise ValidationError({"detail": f"سيتجاوز التعميم الحد ({settings.ANNOUNCEMENT_MAX_RECIPIENTS} مستلمًا)."})
+    with transaction.atomic():
+        in_thread = set(ConversationMember.objects.filter(
+            conversation=announcement.thread, user_id__in=new_ids
+        ).values_list("user_id", flat=True))
+        ConversationMember.objects.bulk_create([
+            ConversationMember(conversation=announcement.thread, user_id=u, member_role="member", added_by=user)
+            for u in new_ids if u not in in_thread
+        ])
+        AnnouncementRecipient.objects.bulk_create(
+            [AnnouncementRecipient(announcement=announcement, user_id=u) for u in new_ids],
+            ignore_conflicts=True,
+        )
+        notify(new_ids, "announcement", ref_type="announcement", ref_id=announcement.id, actor=announcement.publisher)
+    log(actor=user, action="announcement_recipients_added", target_type="announcement",
+        target_id=announcement.id, metadata={"count": len(new_ids)})
+    return len(new_ids)
+
+
 def withdraw(user, announcement) -> Announcement:
     """Withdraw: recipients can no longer open the content (the publisher still can)."""
     if announcement.publisher_id != user.id:

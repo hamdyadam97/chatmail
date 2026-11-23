@@ -241,6 +241,23 @@ class RemindView(APIView):
         return Response({"reminded": count})
 
 
+class NewMembersView(APIView):
+    """GET: employees who joined the target after publishing (names only);
+    POST: deliver the announcement to them. Tracking gate + publish right."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, announcement_id):
+        a = services.get_trackable(request.user, announcement_id)
+        allowed = services.can_add_recipients(request.user, a)
+        users = services.missing_recipients(a) if allowed else []
+        return Response({"can_add": allowed, "users": with_units([_user_ref(u) for u in users])})
+
+    def post(self, request, announcement_id):
+        a = services.get_trackable(request.user, announcement_id)
+        return Response({"added": services.add_missing_recipients(request.user, a)})
+
+
 class WithdrawView(APIView):
     permission_classes = [IsAuthenticated]
 

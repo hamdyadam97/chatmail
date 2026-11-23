@@ -13,5 +13,6 @@ urlpatterns = [
     path("<uuid:announcement_id>/ack/", views.AckView.as_view(), name="announcement-ack"),
     path("<uuid:announcement_id>/compliance/", views.ComplianceView.as_view(), name="announcement-compliance"),
     path("<uuid:announcement_id>/remind/", views.RemindView.as_view(), name="announcement-remind"),
+    path("<uuid:announcement_id>/new-members/", views.NewMembersView.as_view(), name="announcement-new-members"),
     path("<uuid:announcement_id>/withdraw/", views.WithdrawView.as_view(), name="announcement-withdraw"),
 ]

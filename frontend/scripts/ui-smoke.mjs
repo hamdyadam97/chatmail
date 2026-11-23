@@ -970,6 +970,27 @@ async function main() {
       trackListed && reportOpen && titleShown === adminIsRecipient,
       `listed=${trackListed} report=${reportOpen} title=${titleShown} recipient=${adminIsRecipient}`);
 
+    // موظف انضم لفرع الرياض بعد النشر: التقرير يعرضه، و«إرساله لهم» يوصله التعميم.
+    await runPython(
+      "import datetime; from apps.accounts.models import User; from apps.org.models import Branch, EmployeeMembership; " +
+        "b = Branch.objects.get(name='فرع الرياض'); u = User.objects.create(username='late.joiner', full_name='منضم متأخر'); " +
+        "EmployeeMembership.objects.create(user=u, institute=b.institute, branch=b, is_primary=True, started_on=datetime.date.today())",
+    );
+    await admin.page.reload();
+    await admin.page.getByRole('button', { name: 'متابعة التعاميم' }).click({ timeout: 15000 }).catch(() => undefined);
+    await admin.page.locator('[data-testid="tracking-row"]', { hasText: 'خالد' }).first().click({ timeout: 15000 }).catch(() => undefined);
+    const lateBox = admin.page.locator('[data-testid="announcement-new-members"]');
+    const lateShown = await lateBox.filter({ hasText: 'منضم متأخر' }).waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    await lateBox.getByRole('button', { name: 'إرساله لهم' }).click({ timeout: 10000 }).catch(() => undefined);
+    const lateSent = await admin.page.locator('text=وصل التعميم إلى').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    const lateGot = lateSent && await runPython(
+      "from apps.announcements.models import AnnouncementRecipient as R; from apps.notifications.models import Notification as N; " +
+        "assert R.objects.filter(user__username='late.joiner', announcement__publisher__username='manager').exists(); " +
+        "assert N.objects.filter(user__username='late.joiner', kind='announcement').exists()",
+    ).then(() => true).catch(() => false);
+    check('التعاميم: من انضم بعد النشر يظهر في التقرير و«إرساله لهم» يوصله التعميم', lateShown && lateGot,
+      `shown=${lateShown} sent=${lateSent} got=${lateGot}`);
+
     // الموظفون: فلتر «التعميم» + «لم يقرّوا»، وفلتر «لم يدخل بعد».
     await admin.page.goto(`${UI}/employees`);
     const annSelect = admin.page.locator('select[aria-label="التعميم"]');
