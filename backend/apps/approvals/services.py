@@ -203,6 +203,7 @@ def create_request(*, requester, correspondence, steps=None, workflow_id=None) -
                     [ApprovalStepApprover(step=step, user_id=uid) for uid in spec["approver_ids"]]
                 )
             _notify_step(req, 1)
+            _notify_executives_early(req)
     except IntegrityError:
         raise Conflict("يوجد طلب اعتماد قائم لهذه المراسلة.")
     log(
@@ -227,6 +228,74 @@ def _notify_step(req, step_order) -> None:
         if can_read(d.delegate, req.correspondence)
     ]
     notify(approvers + delegates, "approval_requested", ref_type="approval_request", ref_id=req.id, actor=req.requested_by)
+
+
+# --- the executive decides directly (user decision 2026-11-24) ----------------------------------
+#
+# The executive (central `executive` role) who is an approver of a LATER step
+# sees the request from the start and may approve or reject it right away:
+# the earlier open steps are closed as "skipped" (timeline + their approvers
+# are told), and the executive's own step is decided as usual (signed, for a
+# signed request). Waiting for the direct manager stays the default.
+
+OVERRIDE_ROLE = "executive"
+OVERRIDE_DECISIONS = ("approved", "rejected")
+
+
+def is_executive(user) -> bool:
+    now = timezone.now()
+    return UserRoleAssignment.objects.filter(
+        user=user, user__is_active=True, role__code=OVERRIDE_ROLE,
+        institute__isnull=True, branch__isnull=True, department__isnull=True,
+    ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now)).exists()
+
+
+def early_step(user, req):
+    """The executive's own later step they may decide now (earlier steps still
+    open), or None. Own slot only — not through a delegation."""
+    if req.status != "pending" or not is_executive(user):
+        return None
+    decided = set(req.decisions.filter(round=req.round, slot_user=user).values_list("step_id", flat=True))
+    for step in req.steps.filter(
+        step_order__gt=req.current_step_order, status="waiting", approvers__user=user
+    ).order_by("step_order"):
+        if step.id not in decided:
+            return step
+    return None
+
+
+def _notify_executives_early(req) -> None:
+    later = {
+        str(u) for u in ApprovalStepApprover.objects.filter(
+            step__request=req, step__step_order__gt=req.current_step_order, step__status="waiting"
+        ).values_list("user_id", flat=True)
+    }
+    execs = [u for u in User.objects.filter(id__in=later) if is_executive(u)]
+    if execs:
+        notify([u.id for u in execs], "approval_awaiting_manager", ref_type="approval_request", ref_id=req.id,
+               actor=req.requested_by)
+
+
+def _skip_to(req, step, user) -> list[str]:
+    """Close the open steps before `step` as skipped and make `step` current.
+    Returns who was waiting in the skipped steps (to tell them)."""
+    skipped = list(req.steps.filter(step_order__lt=step.step_order, status__in=("active", "waiting")).order_by("step_order"))
+    decided = {(d.step_id, str(d.slot_user_id)) for d in req.decisions.filter(round=req.round)}
+    waiting = [
+        str(a.user_id)
+        for s in skipped for a in s.approvers.all()
+        if (s.id, str(a.user_id)) not in decided
+    ]
+    for s in skipped:
+        s.status = "skipped"
+        s.save(update_fields=["status"])
+        s.approvers.update(deferred_at=None)
+        _record(req, "skipped", user, s.step_order)
+    step.status = "active"
+    step.save(update_fields=["status"])
+    req.current_step_order = step.step_order
+    req.save(update_fields=["current_step_order"])
+    return list(dict.fromkeys(waiting))
 
 
 # --- delegation ------------------------------------------------------------------------------
@@ -352,8 +421,16 @@ def decide(*, user, request_id, decision: str, password: str | None = None, page
             raise Conflict("الطلب ليس قيد الاعتماد.")
         step = current_step(req)
         slot = available_slot(user, req, step)
+        skipped_waiting: list[str] = []
+        overridden = False
         if slot is None:
-            raise PermissionDenied("You are not an approver of the current step (or already decided).")
+            early = early_step(user, req)
+            if early is None:
+                raise PermissionDenied("You are not an approver of the current step (or already decided).")
+            if decision not in OVERRIDE_DECISIONS:
+                raise ValidationError({"decision": "للمدير التنفيذي قبل وصول دوره: اعتماد أو رفض فقط."})
+            skipped_waiting = _skip_to(req, early, user)
+            step, slot, overridden = early, (str(user.id), None), True
         slot_user_id, delegation = slot
         code = None
         if signing:
@@ -381,6 +458,8 @@ def decide(*, user, request_id, decision: str, password: str | None = None, page
         _record(req, decision, user, step.step_order,
                 on_behalf_of=slot_user_id if delegation is not None else None, note=note)
         _advance(req, step, row)
+        if skipped_waiting:
+            notify(skipped_waiting, "approval_overridden", ref_type="approval_request", ref_id=req.id, actor=user)
 
     log(
         actor=user,
@@ -393,6 +472,8 @@ def decide(*, user, request_id, decision: str, password: str | None = None, page
             "delegated": delegation is not None,
             "signed": signing,
             "note": bool(note),
+            "overridden": overridden,
+            "skipped": len(skipped_waiting),
         },
     )
     return row
@@ -840,4 +921,14 @@ def pending_for(user) -> list[ApprovalRequest]:
         .distinct()
         .order_by("created_at")
     )
-    return [r for r in candidates if can_read(user, r.correspondence) and available_slot(user, r)]
+    items = [r for r in candidates if can_read(user, r.correspondence) and available_slot(user, r)]
+    if is_executive(user):
+        # Waiting for the direct manager — the executive sees it now too.
+        seen = {r.id for r in items}
+        early = (
+            ApprovalRequest.objects.filter(status="pending", steps__status="waiting", steps__approvers__user=user)
+            .exclude(id__in=seen).select_related("correspondence", "requested_by").distinct()
+        )
+        items += [r for r in early if can_read(user, r.correspondence) and early_step(user, r)]
+        items.sort(key=lambda r: r.created_at)
+    return items

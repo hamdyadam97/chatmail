@@ -21,6 +21,10 @@ TITLES = {
     "approval_returned": "أُعيد طلبك إليك للمراجعة",
     "approval_deferred": "أُجِّل البتّ في طلبك",
     "approval_step_approved": "تقدّم طلبك: اعتُمدت خطوة وانتقل إلى الخطوة التالية",
+    # To the executive (a later approver): visible now, decidable now.
+    "approval_awaiting_manager": "طلب جديد بانتظار موافقة المدير المباشر — يمكنك اعتماده أو رفضه مباشرة",
+    # To an earlier approver whose step the executive skipped.
+    "approval_overridden": "حسم المدير التنفيذي طلبًا كان بانتظار قرارك",
     "device_alert": "تغيّرت أجهزة حسابك — راجع قائمة أجهزتك",
     "announcement": "صدر تعميم جديد موجّه إليك",
     "announcement_reminder": "تذكير: تعميم بانتظار تأكيد اطلاعك",

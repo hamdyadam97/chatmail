@@ -83,6 +83,8 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
             }
         )
     slot = services.available_slot(viewer, req)
+    # The executive, before their turn: may approve or reject directly (earlier steps get skipped).
+    early = services.early_step(viewer, req) if slot is None else None
     c = req.correspondence
     signed_request = services.is_signed_request(req)
     content = (correspondence_content(c) or {}) if signed_request else {}
@@ -99,6 +101,7 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         "completed_at": req.completed_at.isoformat() if req.completed_at else None,
         "steps": steps,
         "my_slot": {"slot_user_id": slot[0], "delegated": slot[1] is not None} if slot else None,
+        "my_early_step": early.step_order if early is not None else None,
         # Signed requests (طلب صرف، إجازة…): the type, the title and the document.
         "signable": signed_request,
         "workflow_name": req.workflow.name if req.workflow_id else None,

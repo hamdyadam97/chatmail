@@ -1189,6 +1189,40 @@ async function main() {
       `code=${printedCode} valid=${validText.slice(0, 40)} fake=${fakeRejected}`);
     if (process.env.SHOTS) console.log(`    لقطة الطلب الموقّع: ${await shot(ahmed, 'signed-request')}`);
 
+    // المدير التنفيذي يرى الطلب فورًا (بانتظار المدير المباشر) ويرفضه مباشرة دون انتظار.
+    await runPython(
+      'from apps.accounts.models import User; from apps.authorization.models import Role, UserRoleAssignment; ' +
+        'from apps.approvals.models import ApprovalStep, ApprovalWorkflow; ' +
+        'ex = User.objects.get(username="archivist"); ' +
+        'UserRoleAssignment.objects.get_or_create(user=ex, role=Role.objects.get(code="executive"), institute=None, branch=None, department=None); ' +
+        'w = ApprovalWorkflow.objects.create(name="طلب عهدة", signable=True, created_by=User.objects.get(username="admin")); ' +
+        'ApprovalStep.objects.create(workflow=w, step_order=1, step_type="any", approver_selectors=[{"role": "branch_manager", "scope": "sender_branch"}]); ' +
+        'ApprovalStep.objects.create(workflow=w, step_order=2, step_type="any", approver_selectors=[{"role": "executive", "scope": "central"}])',
+    );
+    await ahmed.page.goto(`${UI}/approvals`);
+    await ahmed.page.getByRole('button', { name: 'طلب جديد' }).click({ timeout: 15000 }).catch(() => undefined);
+    await ahmed.page.selectOption('#req-type', { label: 'طلب عهدة' }).catch(() => undefined);
+    await ahmed.page.fill('#req-title', 'لابتوب').catch(() => undefined);
+    await ahmed.page.setInputFiles('#req-file', reqPdf).catch(() => undefined);
+    await ahmed.page.getByRole('button', { name: 'تقديم الطلب' }).click({ timeout: 10000 }).catch(() => undefined);
+    const execFiled = await ahmed.page.waitForURL(/\/approvals\/[0-9a-f-]{36}$/, { timeout: 20000 }).then(() => true).catch(() => false);
+    const execReqId = ahmed.page.url().split('/').pop();
+    await archivist.page.goto(`${UI}/approvals`);
+    const execChip = await archivist.page.locator(`a[href$="${execReqId}"] [data-testid="awaiting-manager-chip"]`)
+      .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    await archivist.page.goto(`${UI}/approvals/${execReqId}`);
+    const earlyBox = await archivist.page.locator('[data-testid="early-decision"]').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    await archivist.page.getByRole('button', { name: 'رفض', exact: true }).click({ timeout: 15000 }).catch(() => undefined);
+    await archivist.page.getByRole('button', { name: 'تأكيد', exact: true }).click({ timeout: 10000 }).catch(() => undefined);
+    const execDone = await archivist.page.locator('text=تم تخطيها').first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    const execDb = await runPython(
+      `from apps.approvals.models import ApprovalRequest as R; r = R.objects.get(id=${JSON.stringify(execReqId)}); ` +
+        'assert r.status == "rejected" and [s.status for s in r.steps.order_by("step_order")] == ["skipped", "rejected"]',
+    ).then(() => true).catch(() => false);
+    if (!(execChip && earlyBox && execDone && execDb)) console.log(`    لقطة: ${await shot(archivist, 'exec-direct')}`);
+    check('المدير التنفيذي: يرى الطلب فورًا «بانتظار المدير المباشر» ويرفضه مباشرة (تُتخطى خطوة المدير)',
+      execFiled && execChip && earlyBox && execDone && execDb, `filed=${execFiled} chip=${execChip} box=${earlyBox} done=${execDone} db=${execDb}`);
+
     // معتمدان لنفس الخطوة؛ أحمد يزيل أحدهما فيختفي الطلب من عنده.
     await runPython(
       'from apps.accounts.models import User; from apps.authorization.models import Role, UserRoleAssignment; ' +

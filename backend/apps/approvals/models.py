@@ -135,6 +135,8 @@ class ApprovalRequestStep(models.Model):
         ("rejected", "مرفوضة"),
         ("returned", "معادة"),
         ("cancelled", "ملغاة"),
+        # The executive decided the request directly, before this step was reached.
+        ("skipped", "تم تخطيها"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -217,6 +219,7 @@ class ApprovalEvent(models.Model):
         ("deferred", "تأجيل"),
         ("resubmitted", "إعادة إرسال"),
         ("resubmitted_file", "إعادة إرسال بملف جديد"),
+        ("skipped", "تخطٍّ من المدير التنفيذي"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

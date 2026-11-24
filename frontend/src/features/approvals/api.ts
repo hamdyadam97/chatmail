@@ -38,7 +38,7 @@ export type VerifyResult =
       superseded: boolean;
     };
 
-export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file';
+export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file' | 'skipped';
 
 /** سجل الطلب: القرارات والتأجيل وإعادة الإرسال، مع الملاحظة إن وُجدت. */
 export interface RequestEvent {
@@ -54,7 +54,7 @@ export interface RequestEvent {
 export interface RequestStep {
   step_order: number;
   step_type: 'all' | 'any';
-  status: 'waiting' | 'active' | 'approved' | 'rejected' | 'returned' | 'cancelled';
+  status: 'waiting' | 'active' | 'approved' | 'rejected' | 'returned' | 'cancelled' | 'skipped';
   approvers: Array<{ user: UserRef; decision: DecisionRecord | null; deferred_at: string | null }>;
 }
 
@@ -71,6 +71,8 @@ export interface ApprovalRequest {
   completed_at: string | null;
   steps: RequestStep[];
   my_slot: { slot_user_id: string; delegated: boolean } | null;
+  /** المدير التنفيذي قبل وصول دوره: رقم خطوته — يستطيع الاعتماد أو الرفض مباشرة (تُتخطى الخطوات السابقة). */
+  my_early_step: number | null;
   /** طلب بتوقيع (صرف، إجازة…): الاعتماد يختم توقيع المعتمد على الملف. */
   signable: boolean;
   workflow_name: string | null;
@@ -224,4 +226,5 @@ export const EVENT_LABELS: Record<EventKind, string> = {
   deferred: 'أجّل البتّ',
   resubmitted: 'أعاد إرساله',
   resubmitted_file: 'أعاد إرساله بملف جديد',
+  skipped: 'تخطّى هذه الخطوة وقرر مباشرة',
 };

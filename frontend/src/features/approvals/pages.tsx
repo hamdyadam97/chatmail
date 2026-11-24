@@ -61,6 +61,11 @@ function RowBody({ r }: { r: ApprovalRequest }) {
         الخطوة {r.current_step_order}/{r.steps.length}
       </span>
       {r.my_slot?.delegated && <span className="text-xs text-purple-700">بالتفويض</span>}
+      {r.my_early_step != null && (
+        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-800" data-testid="awaiting-manager-chip">
+          بانتظار المدير المباشر
+        </span>
+      )}
       {r.status === 'pending' &&
         r.steps.some((s) => s.status === 'active' && s.approvers.some((a) => a.deferred_at && !a.decision)) && (
           <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700">مؤجَّل</span>
@@ -347,7 +352,7 @@ function ApprovalDetail({ id }: { id: string }) {
   const { data: mySignature } = useQuery({
     queryKey: ['my-signature'],
     queryFn: approvalsApi.signature,
-    enabled: Boolean(request?.signable && request.my_slot),
+    enabled: Boolean(request?.signable && (request.my_slot || request.my_early_step != null)),
   });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['approvals'] });
@@ -422,6 +427,8 @@ function ApprovalDetail({ id }: { id: string }) {
 
   const isRequester = request.requested_by.id === String(user?.id);
   const contentReady = Boolean(detail?.content);
+  // المدير التنفيذي قبل وصول دوره: اعتماد أو رفض مباشر فقط.
+  const early = !request.my_slot && request.my_early_step != null;
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -497,10 +504,16 @@ function ApprovalDetail({ id }: { id: string }) {
           </div>
         )}
 
-        {request.my_slot && (
-          <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/50 p-4">
+        {(request.my_slot || early) && (
+          <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/50 p-4" data-testid={early ? 'early-decision' : undefined}>
+            {early && (
+              <p className="text-sm font-medium text-amber-900">
+                الطلب بانتظار موافقة المدير المباشر. يمكنك الانتظار حتى يصلك دورك، أو اعتماده أو رفضه مباشرة الآن — تُتخطى
+                الخطوات السابقة ويُبلَّغ أصحابها.
+              </p>
+            )}
             <p className="text-sm text-gray-800">
-              {request.my_slot.delegated ? 'تتخذ القرار بالتفويض نيابة عن معتمد آخر.' : 'دورك في اتخاذ القرار.'} يُسجَّل القرار
+              {early ? '' : request.my_slot?.delegated ? 'تتخذ القرار بالتفويض نيابة عن معتمد آخر.' : 'دورك في اتخاذ القرار.'} يُسجَّل القرار
               باسمك ووقته ونسخة المراسلة التي اطلعت عليها. هذا سجل داخل النظام وليس توقيعًا إلكترونيًا نظاميًا معتمدًا قانونيًا.
             </p>
             {confirming === 'approved' && request.signable ? (
@@ -581,7 +594,7 @@ function ApprovalDetail({ id }: { id: string }) {
                   <span className="text-sm">
                     {confirming === 'deferred'
                       ? 'تأجيل: يبقى الطلب عندك لتقرر لاحقًا، ويُبلَّغ مقدّمه.'
-                      : `تأكيد «${DECISION_LABELS[confirming]}»؟ لا يمكن التراجع عن القرار.`}
+                      : `تأكيد «${DECISION_LABELS[confirming]}»${early ? ' مباشرة دون انتظار المدير المباشر' : ''}؟ لا يمكن التراجع عن القرار.`}
                   </span>
                   <Button size="sm" loading={decide.isPending} onClick={() => decide.mutate(confirming)}>
                     تأكيد
@@ -594,15 +607,19 @@ function ApprovalDetail({ id }: { id: string }) {
             ) : (
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" disabled={!contentReady} onClick={() => setConfirming('approved')}>
-                  اعتماد
+                  {early ? 'اعتماد مباشر' : 'اعتماد'}
                 </Button>
-                <Button size="sm" variant="outline" disabled={!contentReady} onClick={() => setConfirming('returned')}>
-                  إعادة للمراجعة
-                </Button>
-                <Button size="sm" variant="outline" disabled={!contentReady} onClick={() => setConfirming('deferred')}>
-                  <Clock className="h-4 w-4" />
-                  تأجيل
-                </Button>
+                {!early && (
+                  <>
+                    <Button size="sm" variant="outline" disabled={!contentReady} onClick={() => setConfirming('returned')}>
+                      إعادة للمراجعة
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={!contentReady} onClick={() => setConfirming('deferred')}>
+                      <Clock className="h-4 w-4" />
+                      تأجيل
+                    </Button>
+                  </>
+                )}
                 <Button size="sm" variant="danger" disabled={!contentReady} onClick={() => setConfirming('rejected')}>
                   رفض
                 </Button>

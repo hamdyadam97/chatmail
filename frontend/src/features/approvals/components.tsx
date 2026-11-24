@@ -61,7 +61,7 @@ export function StepsView({ request, onRemove, removing }: {
               الخطوة {step.step_order} — {step.step_type === 'all' ? 'يلزم اعتماد الجميع' : 'يكفي معتمد واحد'}
             </span>
             <span className="text-xs text-gray-500">
-              {{ waiting: 'بالانتظار', active: 'جارية', approved: 'معتمدة', rejected: 'مرفوضة', returned: 'معادة', cancelled: 'ملغاة' }[step.status]}
+              {{ waiting: 'بالانتظار', active: 'جارية', approved: 'معتمدة', rejected: 'مرفوضة', returned: 'معادة', cancelled: 'ملغاة', skipped: 'تم تخطيها' }[step.status]}
             </span>
           </div>
           <ul className="space-y-1.5">
@@ -129,6 +129,7 @@ const EVENT_STYLES: Record<EventKind, string> = {
   deferred: 'bg-sky-500',
   resubmitted: 'bg-primary-500',
   resubmitted_file: 'bg-primary-500',
+  skipped: 'bg-gray-400',
 };
 
 /** سجل الطلب: من قرر ماذا ومتى، مع الملاحظات. */
@@ -190,7 +191,7 @@ export function ApprovalPanel({ detail, isSender }: { detail: CorrespondenceDeta
               طلب بتاريخ {formatDate(r.created_at)} — الخطوة {r.current_step_order} من {r.steps.length}
             </span>
             <span className="flex items-center gap-2">
-              {r.my_slot && <span className="text-xs font-medium text-amber-700">بانتظار قرارك</span>}
+              {(r.my_slot || r.my_early_step != null) && <span className="text-xs font-medium text-amber-700">بانتظار قرارك</span>}
               <StatusBadge status={r.status} />
             </span>
           </>

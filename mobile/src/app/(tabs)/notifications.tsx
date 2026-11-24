@@ -15,6 +15,8 @@ const ICONS: Record<string, IconName> = {
   correspondence_reply: 'arrow-undo',
   correspondence_forward: 'arrow-redo',
   approval_requested: 'checkmark-done-circle',
+  approval_awaiting_manager: 'hourglass',
+  approval_overridden: 'flash',
   announcement: 'megaphone',
   announcement_reminder: 'megaphone',
   correspondence_due_soon: 'time',
