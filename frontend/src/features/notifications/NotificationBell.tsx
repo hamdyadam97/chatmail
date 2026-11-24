@@ -19,6 +19,7 @@ const INVALIDATES: Record<string, string[][]> = {
   approval_step_approved: [['approvals']],
   approval_awaiting_manager: [['approvals']],
   approval_overridden: [['approvals']],
+  approval_reminder: [['approvals']],
   device_alert: [['devices']],
   announcement: [['announcements']],
   announcement_reminder: [['announcements']],

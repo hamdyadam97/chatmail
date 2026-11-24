@@ -17,6 +17,7 @@ const ICONS: Record<string, IconName> = {
   approval_requested: 'checkmark-done-circle',
   approval_awaiting_manager: 'hourglass',
   approval_overridden: 'flash',
+  approval_reminder: 'alarm-outline',
   announcement: 'megaphone',
   announcement_reminder: 'megaphone',
   correspondence_due_soon: 'time',

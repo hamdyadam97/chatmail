@@ -131,3 +131,52 @@ def test_admin_edits_a_request_type_and_bad_role_scopes_are_refused(api_client, 
     assert len(api_client.get(f"{API}{old['id']}/", **h["sr_emp"]).json()["steps"]) == 2
     new = _file(api_client, org).json()
     assert len(new["steps"]) == 1 and new["workflow_name"] == "طلب صرف عاجل"
+
+
+def _three_steps(api_client, org, user_factory, branch_a):
+    """branch manager → regional manager (the SAME person: sr_bm) → executive."""
+    from .conftest import assign_role
+
+    assign_role(org["bm"], "regional_manager", institute=branch_a.institute, branch=branch_a)
+    wf = api_client.post(f"{API}workflows/", {
+        "name": "طلب اجازة", "signable": True,
+        "steps": [
+            {"type": "any", "approver_selectors": [{"role": "branch_manager", "scope": "sender_branch"}]},
+            {"type": "any", "approver_selectors": [{"role": "regional_manager", "scope": "sender_branch"}]},
+            {"type": "any", "approver_selectors": [{"role": "executive", "scope": "central"}]},
+        ],
+    }, format="json", **org["h"]["sr_admin"]).json()
+    return _file(api_client, {**org, "wf": wf}).json()["id"]
+
+
+def test_one_person_in_two_steps_signs_once(api_client, user_factory, branch_a, org):
+    h = org["h"]
+    rid = _three_steps(api_client, org, user_factory, branch_a)
+    _sign_up(api_client, h["sr_bm"])
+    r = _decide(api_client, h["sr_bm"], rid, password=DEFAULT_PASSWORD, page=1)
+    assert r.status_code == 201, r.content
+    body = r.json()
+    # step 2 counted from the same person's approval; now the executive's turn
+    assert [s["status"] for s in body["steps"]] == ["approved", "approved", "active"]
+    assert body["current_step_order"] == 3 and body["signature_count"] == 1  # one signature on the file
+    assert [e["kind"] for e in body["events"]] == ["approved", "carried"]
+    # the manager is not asked again for step 2; the executive is (it is their turn now)
+    assert Notification.objects.filter(user=org["bm"], kind="approval_requested").count() == 1
+    assert Notification.objects.filter(user=org["ex"], kind="approval_requested").count() == 1
+    assert api_client.get(f"{API}?box=pending_mine", **h["sr_bm"]).json() == []
+
+
+def test_executive_reminds_the_earlier_approvers_once_an_hour(api_client, user_factory, branch_a, org):
+    h = org["h"]
+    rid = _three_steps(api_client, org, user_factory, branch_a)
+    url = f"{API}{rid}/remind/"
+    assert api_client.post(url, {}, format="json", **h["sr_bm"]).status_code == 403  # not the executive
+    assert api_client.post(url, {}, format="json", **h["sr_emp"]).status_code == 403
+    r = api_client.post(url, {}, format="json", **h["sr_exec"])
+    assert r.status_code == 200, r.content
+    assert r.json()["reminded"] == 1 and r.json()["reminded_at"]
+    assert r.json()["events"][-1]["kind"] == "reminded"
+    n = Notification.objects.get(user=org["bm"], kind="approval_reminder")
+    assert n.title_generic.startswith("المدير التنفيذي يطلب توقيعك")
+    assert api_client.post(url, {}, format="json", **h["sr_exec"]).status_code == 409  # within the hour
+    assert AuditLog.objects.filter(action="approval_reminder_sent").count() == 1

@@ -94,6 +94,24 @@ export default function ApprovalScreen() {
             </T>
           </View>
         )}
+        {early && (
+          <Button
+            title="تذكير بالتوقيع"
+            icon="notifications-outline"
+            variant="secondary"
+            onPress={() =>
+              approvalsApi
+                .remind(req.id)
+                .then((r) => {
+                  setReq(r);
+                  success();
+                  Alert.alert('أُرسل التذكير', `وصل إشعار إلى ${r.reminded} ممن لم يوقّع بعد.`);
+                })
+                .catch((err) => Alert.alert('تعذر إرسال التذكير', errorText(err)))
+            }
+          />
+        )}
+        {early && !!req.reminded_at && <T style={styles.meta}>آخر تذكير {fullDate(req.reminded_at)} — مرة كل ساعة</T>}
 
         {(req.source_file || req.signed_file) && (
           <View style={styles.card}>

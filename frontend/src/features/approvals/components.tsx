@@ -130,6 +130,8 @@ const EVENT_STYLES: Record<EventKind, string> = {
   resubmitted: 'bg-primary-500',
   resubmitted_file: 'bg-primary-500',
   skipped: 'bg-gray-400',
+  carried: 'bg-emerald-300',
+  reminded: 'bg-amber-400',
 };
 
 /** سجل الطلب: من قرر ماذا ومتى، مع الملاحظات. */

@@ -16,6 +16,7 @@ export type NotificationKind =
   | 'approval_step_approved'
   | 'approval_awaiting_manager'
   | 'approval_overridden'
+  | 'approval_reminder'
   | 'device_alert'
   | 'announcement'
   | 'announcement_reminder'

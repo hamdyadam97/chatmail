@@ -102,6 +102,8 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         "steps": steps,
         "my_slot": {"slot_user_id": slot[0], "delegated": slot[1] is not None} if slot else None,
         "my_early_step": early.step_order if early is not None else None,
+        # «تذكير بالتوقيع» (the executive, before their turn): when last sent.
+        "reminded_at": (lambda t: t.isoformat() if t else None)(services.last_reminder(req)) if early is not None else None,
         # Signed requests (طلب صرف، إجازة…): the type, the title and the document.
         "signable": signed_request,
         "workflow_name": req.workflow.name if req.workflow_id else None,
@@ -274,6 +276,19 @@ class ResubmitView(APIView):
             data=upload.read() if upload is not None else None, filename=upload.name if upload is not None else "",
         )
         return Response(request_dict(req, request.user))
+
+
+class RemindView(APIView):
+    """POST: the executive reminds the current step's approvers to sign (once an hour)."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [DecisionThrottle]
+
+    def post(self, request, request_id):
+        req = services.get_viewable(request.user, request_id)
+        sent = services.remind(request.user, req)
+        req.refresh_from_db()
+        return Response({**request_dict(req, request.user), "reminded": len(sent)})
 
 
 class CancelView(APIView):

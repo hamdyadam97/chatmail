@@ -29,6 +29,7 @@ export interface ApprovalRequest {
   }[];
   my_slot: { slot_user_id: string; delegated: boolean } | null;
   my_early_step: number | null;
+  reminded_at?: string | null;
   signable: boolean;
   workflow_name: string | null;
   title: string | null;
@@ -75,6 +76,8 @@ export const EVENT_LABELS: Record<string, string> = {
   resubmitted: 'أعاد إرساله',
   resubmitted_file: 'أعاد إرساله بملف جديد',
   skipped: 'تخطّى هذه الخطوة وقرر مباشرة',
+  carried: 'اعتمد هذه الخطوة أيضًا (باعتماده السابق)',
+  reminded: 'ذكّر بالتوقيع',
 };
 
 /** عنوان الطلب للعرض (بلا اسم النوع المكرر). */
@@ -89,6 +92,7 @@ export const approvalsApi = {
   decide: (id: string, body: { decision: Decision; note?: string; password?: string; page?: number }) =>
     api<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body }),
   defer: (id: string, note: string) => api<ApprovalRequest>(`/approvals/${id}/defer/`, { method: 'POST', body: { note } }),
+  remind: (id: string) => api<ApprovalRequest & { reminded: number }>(`/approvals/${id}/remind/`, { method: 'POST' }),
   cancel: (id: string) => api<ApprovalRequest>(`/approvals/${id}/cancel/`, { method: 'POST' }),
   signature: () => api<{ has_signature: boolean }>('/approvals/signature/'),
   types: () => api<RequestType[]>('/approvals/request-types/'),

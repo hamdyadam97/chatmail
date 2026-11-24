@@ -1238,6 +1238,14 @@ async function main() {
       .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
     await archivist.page.goto(`${UI}/approvals/${execReqId}`);
     const earlyBox = await archivist.page.locator('[data-testid="early-decision"]').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    await archivist.page.getByTestId('remind-approvers').click({ timeout: 10000 }).catch(() => undefined);
+    const reminded = await archivist.page.locator('[data-testid="remind-note"]:has-text("أُرسل التذكير")').waitFor({ timeout: 10000 })
+      .then(() => true).catch(() => false);
+    const reminderDb = await runPython(
+      'from apps.notifications.models import Notification as N; ' +
+        `assert N.objects.filter(kind="approval_reminder", ref_id=${JSON.stringify(execReqId)}).exists()`,
+    ).then(() => true).catch(() => false);
+    check('المدير التنفيذي: «تذكير بالتوقيع» يصل لمن لم يوقّع في الخطوة الحالية', reminded && reminderDb, `ui=${reminded} db=${reminderDb}`);
     await archivist.page.getByRole('button', { name: 'رفض', exact: true }).click({ timeout: 15000 }).catch(() => undefined);
     await archivist.page.getByRole('button', { name: 'تأكيد', exact: true }).click({ timeout: 10000 }).catch(() => undefined);
     const execDone = await archivist.page.locator('text=تم تخطيها').first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false);

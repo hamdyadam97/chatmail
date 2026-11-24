@@ -38,7 +38,7 @@ export type VerifyResult =
       superseded: boolean;
     };
 
-export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file' | 'skipped';
+export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file' | 'skipped' | 'carried' | 'reminded';
 
 /** سجل الطلب: القرارات والتأجيل وإعادة الإرسال، مع الملاحظة إن وُجدت. */
 export interface RequestEvent {
@@ -73,6 +73,8 @@ export interface ApprovalRequest {
   my_slot: { slot_user_id: string; delegated: boolean } | null;
   /** المدير التنفيذي قبل وصول دوره: رقم خطوته — يستطيع الاعتماد أو الرفض مباشرة (تُتخطى الخطوات السابقة). */
   my_early_step: number | null;
+  /** آخر «تذكير بالتوقيع» أرسله المدير التنفيذي (له وحده). */
+  reminded_at?: string | null;
   /** طلب بتوقيع (صرف، إجازة…): الاعتماد يختم توقيع المعتمد على الملف. */
   signable: boolean;
   workflow_name: string | null;
@@ -166,6 +168,7 @@ export const approvalsApi = {
     signable: true;
     steps: Array<{ type: 'all' | 'any'; approver_selectors: Array<{ role: string; scope: SelectorScope } | { user: string }> }>;
   }) => apiFetch<WorkflowTemplate>('/approvals/workflows/', { method: 'POST', body }),
+  remind: (id: string) => apiFetch<ApprovalRequest & { reminded: number }>(`/approvals/${id}/remind/`, { method: 'POST' }),
   retireType: (id: string) => apiFetch<WorkflowTemplate>(`/approvals/workflows/${id}/`, { method: 'PATCH', body: { is_active: false } }),
   /** تعديل الاسم والخطوات: الطلبات المقدّمة تبقى بخطواتها، والجديدة تأخذ المعدَّلة. */
   updateType: (
@@ -240,4 +243,6 @@ export const EVENT_LABELS: Record<EventKind, string> = {
   resubmitted: 'أعاد إرساله',
   resubmitted_file: 'أعاد إرساله بملف جديد',
   skipped: 'تخطّى هذه الخطوة وقرر مباشرة',
+  carried: 'اعتمد هذه الخطوة أيضًا (باعتماده السابق، بلا توقيع ثانٍ)',
+  reminded: 'ذكّر بالتوقيع',
 };

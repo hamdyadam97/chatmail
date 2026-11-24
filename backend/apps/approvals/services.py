@@ -756,14 +756,74 @@ def _advance(req, step, decision) -> None:
         nxt.save(update_fields=["status"])
         req.current_step_order = nxt.step_order
         req.save(update_fields=["current_step_order"])
-        _notify_step(req, nxt.step_order)
         notify([req.requested_by_id], "approval_step_approved", ref_type="approval_request", ref_id=req.id,
                actor=decision.approver)
+        if _carry_over(req, nxt):
+            return  # the same person's earlier approval completed this step too
+        _notify_step(req, nxt.step_order)
         return
     req.status = "approved"
     req.decided_at = now
     req.save(update_fields=["status", "decided_at"])
     notify([req.requested_by_id], "approval_approved", ref_type="approval_request", ref_id=req.id, actor=decision.approver)
+
+
+def _carry_over(req, step) -> bool:
+    """Someone who already approved an earlier step of this request (e.g. the
+    branch manager who is also the regional manager) is not asked again: their
+    approval counts for this step (no second signature). Returns True when
+    that completed the step (and the request advanced)."""
+    earlier = {
+        str(u) for u in req.decisions.filter(
+            round=req.round, decision="approved", step__step_order__lt=step.step_order
+        ).values_list("slot_user_id", flat=True)
+    }
+    decided = {str(u) for u in step.decisions.filter(round=req.round).values_list("slot_user_id", flat=True)}
+    rows = []
+    for a in step.approvers.select_related("user"):
+        uid = str(a.user_id)
+        if uid in earlier and uid not in decided:
+            rows.append(ApprovalDecision.objects.create(
+                request=req, step=step, slot_user_id=a.user_id, approver_id=a.user_id,
+                decision="approved", content_hash=req.content_hash, round=req.round,
+            ))
+            _record(req, "carried", a.user, step.step_order)
+    if not rows:
+        return False
+    if step.step_type == "all" and step.decisions.filter(decision="approved", round=req.round).count() < step.approvers.count():
+        return False
+    _advance(req, step, rows[-1])
+    return True
+
+
+REMIND_EVERY = timedelta(hours=1)
+
+
+def remind(user, req) -> list[str]:
+    """«تذكير بالتوقيع»: the executive (before their turn) tells the current
+    step's approvers who have not decided yet. Once an hour per request."""
+    with transaction.atomic():
+        req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
+        if early_step(user, req) is None:
+            raise PermissionDenied("Only the executive waiting on this request can send a reminder.")
+        last = req.events.filter(kind="reminded").order_by("-created_at").first()
+        if last is not None and timezone.now() - last.created_at < REMIND_EVERY:
+            raise Conflict("أُرسل تذكير قبل أقل من ساعة.")
+        step = current_step(req)
+        decided = {str(u) for u in step.decisions.filter(round=req.round).values_list("slot_user_id", flat=True)}
+        waiting = [str(a.user_id) for a in step.approvers.all() if str(a.user_id) not in decided]
+        if not waiting:
+            raise Conflict("لا أحد ينتظر توقيعه الآن.")
+        _record(req, "reminded", user, step.step_order)
+        notify(waiting, "approval_reminder", ref_type="approval_request", ref_id=req.id, actor=user)
+    log(actor=user, action="approval_reminder_sent", target_type="approval_request", target_id=req.id,
+        metadata={"step_order": step.step_order, "count": len(waiting)})
+    return waiting
+
+
+def last_reminder(req):
+    last = req.events.filter(kind="reminded").order_by("-created_at").first()
+    return last.created_at if last else None
 
 
 # --- requester actions ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCheck, Clock, Download, FilePlus2, FileSignature, Lock, PenLine, RotateCcw } from 'lucide-react';
+import { BellRing, CheckCheck, Clock, Download, FilePlus2, FileSignature, Lock, PenLine, RotateCcw } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
@@ -397,6 +397,15 @@ function ApprovalDetail({ id }: { id: string }) {
     },
   });
   const complete = useMutation({ mutationFn: () => approvalsApi.complete(id), onSuccess: refresh });
+  const [remindNote, setRemindNote] = useState<string | null>(null);
+  const remind = useMutation({
+    mutationFn: () => approvalsApi.remind(id),
+    onSuccess: (r) => {
+      setRemindNote(`أُرسل التذكير إلى ${r.reminded} من المعتمدين.`);
+      void refresh();
+    },
+    onError: (err) => setRemindNote(toUserMessage(err, 'تعذر إرسال التذكير')),
+  });
 
   if (isLoading) {
     return (
@@ -507,10 +516,21 @@ function ApprovalDetail({ id }: { id: string }) {
         {(request.my_slot || early) && (
           <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/50 p-4" data-testid={early ? 'early-decision' : undefined}>
             {early && (
-              <p className="text-sm font-medium text-amber-900">
-                الطلب بانتظار موافقة المدير المباشر. يمكنك الانتظار حتى يصلك دورك، أو اعتماده أو رفضه مباشرة الآن — تُتخطى
-                الخطوات السابقة ويُبلَّغ أصحابها.
-              </p>
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-amber-900">
+                  الطلب بانتظار موافقة المدير المباشر. يمكنك الانتظار حتى يصلك دورك، أو اعتماده أو رفضه مباشرة الآن — تُتخطى
+                  الخطوات السابقة ويُبلَّغ أصحابها.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="outline" loading={remind.isPending} onClick={() => remind.mutate()} data-testid="remind-approvers">
+                    <BellRing className="h-4 w-4" />
+                    تذكير بالتوقيع
+                  </Button>
+                  <span className="text-xs text-gray-600" data-testid="remind-note">
+                    {remindNote ?? (request.reminded_at ? `آخر تذكير ${formatDate(request.reminded_at)} — مرة كل ساعة` : 'يُرسل إشعارًا لمن لم يوقّع بعد في الخطوة الحالية.')}
+                  </span>
+                </div>
+              </div>
             )}
             <p className="text-sm text-gray-800">
               {early ? '' : request.my_slot?.delegated ? 'تتخذ القرار بالتفويض نيابة عن معتمد آخر.' : 'دورك في اتخاذ القرار.'} يُسجَّل القرار

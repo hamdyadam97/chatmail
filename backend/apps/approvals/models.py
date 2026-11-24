@@ -220,6 +220,10 @@ class ApprovalEvent(models.Model):
         ("resubmitted", "إعادة إرسال"),
         ("resubmitted_file", "إعادة إرسال بملف جديد"),
         ("skipped", "تخطٍّ من المدير التنفيذي"),
+        # The same person approves a later step too: their earlier approval counts.
+        ("carried", "اعتماد سابق يُحتسب"),
+        # The executive reminded the earlier approvers to sign.
+        ("reminded", "تذكير بالتوقيع"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
