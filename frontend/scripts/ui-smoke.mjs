@@ -1088,6 +1088,18 @@ async function main() {
       .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
     if (!namedSaved) console.log(`    لقطة: ${await shot(admin, 'named-type')}`);
     check('أنواع الطلبات: «موظف محدد» بالاسم بدل الدور', namedSaved);
+    // «تعديل» النوع: الاسم وإضافة توقيع ثانٍ (المدير التنفيذي)، والنطاق يُضبط وحده حسب الدور.
+    await admin.page.locator('[data-testid="request-type-row"]:has-text("طلب إجازة")').getByTestId('request-type-edit').click({ timeout: 10000 }).catch(() => undefined);
+    const editName = await admin.page.inputValue('#rt-name').catch(() => '');
+    await admin.page.fill('#rt-name', 'طلب إجازة سنوية').catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'إضافة توقيع' }).click({ timeout: 10000 }).catch(() => undefined);
+    const scopeFixed = ((await admin.page.getByTestId('rt-scope-fixed-1').innerText({ timeout: 5000 }).catch(() => '')) || '').includes('النظام كله');
+    await admin.page.getByRole('button', { name: 'حفظ التعديل' }).click({ timeout: 10000 }).catch(() => undefined);
+    const edited = await admin.page.locator('[data-testid="request-type-row"]:has-text("طلب إجازة سنوية"):has-text("خالد الدوسري ← المدير التنفيذي")')
+      .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    if (!edited) console.log(`    لقطة: ${await shot(admin, 'type-edit')}`);
+    check('أنواع الطلبات: «تعديل» الاسم والخطوات في النوع نفسه', editName === 'طلب إجازة' && scopeFixed && edited,
+      `loaded=${editName} scope=${scopeFixed} saved=${edited}`);
 
     // أحمد يرفع ملف الطلب.
     const reqPdf = path.join(work, 'expense.pdf');

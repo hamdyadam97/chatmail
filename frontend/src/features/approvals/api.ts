@@ -167,6 +167,11 @@ export const approvalsApi = {
     steps: Array<{ type: 'all' | 'any'; approver_selectors: Array<{ role: string; scope: SelectorScope } | { user: string }> }>;
   }) => apiFetch<WorkflowTemplate>('/approvals/workflows/', { method: 'POST', body }),
   retireType: (id: string) => apiFetch<WorkflowTemplate>(`/approvals/workflows/${id}/`, { method: 'PATCH', body: { is_active: false } }),
+  /** تعديل الاسم والخطوات: الطلبات المقدّمة تبقى بخطواتها، والجديدة تأخذ المعدَّلة. */
+  updateType: (
+    id: string,
+    body: { name: string; steps: Array<{ type: 'all' | 'any'; approver_selectors: Array<{ role: string; scope: SelectorScope } | { user: string }> }> },
+  ) => apiFetch<WorkflowTemplate>(`/approvals/workflows/${id}/`, { method: 'PATCH', body }),
   /** الأنواع التي يستطيع المستخدم تقديمها من «طلب جديد». */
   requestTypes: () => apiFetch<WorkflowTemplate[]>('/approvals/request-types/'),
   fileRequest: (body: { workflow_id: string; title: string; note: string; file: File }) => {
@@ -197,6 +202,14 @@ export const ROLE_OPTIONS: Array<{ code: string; label: string }> = [
   { code: 'executive', label: 'المدير التنفيذي' },
   { code: 'sys_admin', label: 'مدير النظام' },
 ];
+
+/** النطاق الوحيد الذي يجد أحدًا لكل دور (الخادم يرفض غيره). */
+export const ROLE_SCOPE: Record<string, SelectorScope> = {
+  branch_manager: 'sender_branch',
+  regional_manager: 'sender_branch',
+  executive: 'central',
+  sys_admin: 'central',
+};
 
 export const SCOPE_OPTIONS: Array<{ code: SelectorScope; label: string }> = [
   { code: 'sender_branch', label: 'في فرع مقدّم الطلب' },

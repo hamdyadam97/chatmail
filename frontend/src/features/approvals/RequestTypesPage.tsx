@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileSignature, Plus, Trash2 } from 'lucide-react';
+import { FileSignature, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
 import { RecipientPicker } from '../correspondence/components';
-import { approvalsApi, ROLE_OPTIONS, SCOPE_OPTIONS, type SelectorScope, type WorkflowTemplate } from './api';
+import { approvalsApi, ROLE_OPTIONS, ROLE_SCOPE, SCOPE_OPTIONS, type SelectorScope, type WorkflowTemplate } from './api';
 
 /** role = USER_PICK: موظف محدد بالاسم بدل الدور. */
 const USER_PICK = '__user';
@@ -20,6 +20,16 @@ const NEW_STEP = (role = 'branch_manager', scope: SelectorScope = 'sender_branch
 const roleLabel = (code: string) => ROLE_OPTIONS.find((r) => r.code === code)?.label ?? code;
 const scopeLabel = (code: string) => SCOPE_OPTIONS.find((s) => s.code === code)?.label ?? code;
 
+/** خطوات النوع المحفوظ في صيغة النموذج (للتعديل). */
+function toDraft(t: WorkflowTemplate): DraftStep[] {
+  return t.steps.map((s) => {
+    const sel = s.approver_selectors[0] ?? {};
+    return sel.user
+      ? { role: USER_PICK, scope: 'sender_branch' as SelectorScope, userIds: [sel.user] }
+      : { role: sel.role ?? 'branch_manager', scope: (sel.scope as SelectorScope) ?? 'sender_branch', userIds: [] };
+  });
+}
+
 function describe(t: WorkflowTemplate): string {
   return t.steps
     .map((s) => s.approver_selectors.map((sel) => (sel.role ? roleLabel(sel.role) : sel.name ?? 'موظف محدد')).join(' أو '))
@@ -33,24 +43,38 @@ export function RequestTypesPage() {
   const [name, setName] = useState('');
   const [steps, setSteps] = useState<DraftStep[]>([NEW_STEP()]);
   const [error, setError] = useState<string | null>(null);
+  /** النوع الجاري تعديله (null = نوع جديد). */
+  const [editing, setEditing] = useState<WorkflowTemplate | null>(null);
+  const reset = () => {
+    setName('');
+    setSteps([NEW_STEP()]);
+    setError(null);
+    setEditing(null);
+  };
+  const startEdit = (t: WorkflowTemplate) => {
+    setEditing(t);
+    setName(t.name);
+    setSteps(toDraft(t));
+    setError(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['approvals', 'signable-types'] });
     void queryClient.invalidateQueries({ queryKey: ['approvals', 'request-types'] });
   };
   const create = useMutation({
-    mutationFn: () =>
-      approvalsApi.createType({
+    mutationFn: () => {
+      const body = {
         name: name.trim(),
-        signable: true,
         steps: steps.map((s) => ({
           type: 'any' as const,
           approver_selectors: s.role === USER_PICK ? s.userIds.map((id) => ({ user: id })) : [{ role: s.role, scope: s.scope }],
         })),
-      }),
+      };
+      return editing ? approvalsApi.updateType(editing.id, body) : approvalsApi.createType({ ...body, signable: true });
+    },
     onSuccess: () => {
-      setName('');
-      setSteps([NEW_STEP()]);
-      setError(null);
+      reset();
       refresh();
     },
     onError: (err) => setError(toUserMessage(err, 'تعذر الحفظ')),
@@ -68,8 +92,11 @@ export function RequestTypesPage() {
         </p>
       </div>
 
-      <Card className="space-y-3 p-5" data-testid="new-request-type">
-        <h3 className="text-sm font-semibold text-gray-900">نوع جديد</h3>
+      <Card className={editing ? 'space-y-3 border-primary-300 p-5' : 'space-y-3 p-5'} data-testid="new-request-type">
+        <h3 className="text-sm font-semibold text-gray-900">{editing ? `تعديل «${editing.name}»` : 'نوع جديد'}</h3>
+        {editing && (
+          <p className="text-xs text-gray-500">الطلبات المقدّمة من قبل تكمل بخطواتها كما هي؛ التعديل يسري على الطلبات الجديدة.</p>
+        )}
         <div className="md:w-1/2">
           <Label htmlFor="rt-name">اسم النوع</Label>
           <Input id="rt-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="طلب صرف" />
@@ -80,7 +107,7 @@ export function RequestTypesPage() {
               <span className="w-20 pb-2 text-sm font-medium text-gray-700">التوقيع {i + 1}</span>
               <div>
                 <Label htmlFor={`rt-role-${i}`}>من يوقّع</Label>
-                <select id={`rt-role-${i}`} value={s.role} onChange={(e) => setStep(i, { role: e.target.value })} className="h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm">
+                <select id={`rt-role-${i}`} value={s.role} onChange={(e) => setStep(i, { role: e.target.value, ...(ROLE_SCOPE[e.target.value] ? { scope: ROLE_SCOPE[e.target.value] } : {}) })} className="h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm">
                   {ROLE_OPTIONS.map((r) => (
                     <option key={r.code} value={r.code}>
                       {r.label}
@@ -97,6 +124,10 @@ export function RequestTypesPage() {
                     value={s.userIds}
                     onChange={(ids) => setStep(i, { userIds: ids.slice(-1) })}
                   />
+                </div>
+              ) : ROLE_SCOPE[s.role] ? (
+                <div className="pb-2 text-sm text-gray-600" data-testid={`rt-scope-fixed-${i}`}>
+                  {scopeLabel(ROLE_SCOPE[s.role])}
                 </div>
               ) : (
               <div>
@@ -129,14 +160,19 @@ export function RequestTypesPage() {
           الطلب لكل من يحمله؛ لشخص واحد بعينه اختر «موظف محدد».
         </p>
         {error && <p className="text-sm text-red-600">{error}</p>}
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          {editing && (
+            <Button size="sm" variant="outline" onClick={reset}>
+              إلغاء التعديل
+            </Button>
+          )}
           <Button
             size="sm"
             disabled={!name.trim() || steps.some((s) => s.role === USER_PICK && s.userIds.length === 0)}
             loading={create.isPending}
             onClick={() => create.mutate()}
           >
-            حفظ النوع
+            {editing ? 'حفظ التعديل' : 'حفظ النوع'}
           </Button>
         </div>
       </Card>
@@ -158,9 +194,23 @@ export function RequestTypesPage() {
                   ({t.steps.map((s) => (s.approver_selectors[0]?.scope ? scopeLabel(s.approver_selectors[0].scope) : 'بالاسم')).join('، ')})
                 </span>
               </span>
-              <Button size="sm" variant="ghost" loading={retire.isPending && retire.variables === t.id} onClick={() => retire.mutate(t.id)}>
-                إيقاف
-              </Button>
+              <span className="flex gap-1">
+                <Button size="sm" variant="ghost" onClick={() => startEdit(t)} data-testid="request-type-edit">
+                  <Pencil className="h-4 w-4" />
+                  تعديل
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  loading={retire.isPending && retire.variables === t.id}
+                  onClick={() => {
+                    if (editing?.id === t.id) reset();
+                    retire.mutate(t.id);
+                  }}
+                >
+                  إيقاف
+                </Button>
+              </span>
             </div>
           ))}
         </Card>

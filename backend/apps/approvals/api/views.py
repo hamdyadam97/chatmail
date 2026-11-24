@@ -376,8 +376,27 @@ class _TemplateStep(serializers.Serializer):
                 continue
             if sel.get("scope") not in ("central", "sender_institute", "sender_branch", "sender_department") or not sel.get("role"):
                 raise serializers.ValidationError("selector: {user} أو {role, scope}.")
+            allowed = ROLE_SCOPES.get(sel["role"])
+            if allowed and sel["scope"] not in allowed:
+                # e.g. «مدير الفرع — مركزي» never finds anyone: refuse it.
+                raise serializers.ValidationError(ROLE_SCOPE_HINTS[sel["role"]])
             out.append({"role": sel["role"], "scope": sel["scope"]})
         return out
+
+
+# Where each of the five roles is assigned, so which scope can ever resolve.
+ROLE_SCOPES = {
+    "branch_manager": {"sender_branch"},
+    "regional_manager": {"sender_branch"},
+    "executive": {"central"},
+    "sys_admin": {"central"},
+}
+ROLE_SCOPE_HINTS = {
+    "branch_manager": "«مدير الفرع» يُختار «في فرع مقدّم الطلب».",
+    "regional_manager": "«المدير الإقليمي» يُختار «في فرع مقدّم الطلب».",
+    "executive": "«المدير التنفيذي» على مستوى النظام كله.",
+    "sys_admin": "«مدير النظام» على مستوى النظام كله.",
+}
 
 
 class WorkflowSerializer(serializers.Serializer):
@@ -459,8 +478,17 @@ def _workflow_unit(w):
     return w.department or w.branch or w.institute
 
 
+class WorkflowEditSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=200, required=False)
+    steps = _TemplateStep(many=True, allow_empty=False, max_length=services.MAX_STEPS, required=False)
+
+
 class WorkflowDetailView(APIView):
-    """PATCH {is_active: false}: retire a workflow / request type (approvals.define in its unit)."""
+    """PATCH (approvals.define in its unit):
+      {is_active: false} — retire a workflow / request type;
+      {name?, steps?}   — edit it. Requests already filed keep the steps they
+                          were filed with (each request snapshots its steps);
+                          new requests use the edited ones."""
 
     permission_classes = [IsAuthenticated]
 
@@ -468,6 +496,25 @@ class WorkflowDetailView(APIView):
         w = ApprovalWorkflow.objects.filter(id=workflow_id).first()
         if w is None or not has_permission(request.user, "approvals.define", unit=_workflow_unit(w)):
             raise PermissionDenied("approvals.define is not granted in this unit.")
+        if "name" in request.data or "steps" in request.data:
+            if not w.is_active:
+                raise ValidationError({"detail": "النوع موقوف."})
+            edit = WorkflowEditSerializer(data=request.data)
+            edit.is_valid(raise_exception=True)
+            data = edit.validated_data
+            with transaction.atomic():
+                if "name" in data:
+                    w.name = data["name"].strip() or w.name
+                if "steps" in data:
+                    w.steps.all().delete()
+                    for i, step in enumerate(data["steps"], start=1):
+                        ApprovalStep.objects.create(
+                            workflow=w, step_order=i, step_type=step["type"], approver_selectors=step["approver_selectors"]
+                        )
+                w.version += 1
+                w.save(update_fields=["name", "version"])
+            log(actor=request.user, action="approval_workflow_updated", target_type="approval_workflow", target_id=w.id,
+                metadata={"version": w.version, "steps": w.steps.count()})
         if request.data.get("is_active") is False and w.is_active:
             w.is_active = False
             w.save(update_fields=["is_active"])

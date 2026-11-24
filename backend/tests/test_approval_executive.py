@@ -104,3 +104,30 @@ def test_only_the_executive_may_jump_ahead(api_client, user_factory, branch_a, o
     assert _decide(api_client, h_other, rid, "rejected").status_code == 403
     assert not Notification.objects.filter(user=other, kind="approval_awaiting_manager").exists()
     assert ApprovalRequest.objects.get(id=rid).status == "pending"
+
+
+def test_admin_edits_a_request_type_and_bad_role_scopes_are_refused(api_client, org):
+    """«تعديل» نوع الطلب: الطلبات القائمة تبقى بخطواتها، والجديدة تأخذ المعدَّلة.
+    ولا تُقبل توليفة لا تجد أحدًا أبدًا (مثل «مدير الفرع — مركزي»)."""
+    h = org["h"]
+    url = f"{API}workflows/"
+    bad = api_client.post(url, {"name": "طلب اجازة", "signable": True, "steps": [
+        {"type": "any", "approver_selectors": [{"role": "branch_manager", "scope": "central"}]}]}, format="json", **h["sr_admin"])
+    assert bad.status_code == 400 and "فرع مقدّم الطلب" in bad.content.decode()
+
+    old = _file(api_client, org).json()  # filed on the 2-step type
+    wid = org["wf"]["id"]
+    one_step = [{"type": "any", "approver_selectors": [{"role": "executive", "scope": "central"}]}]
+    assert api_client.patch(f"{url}{wid}/", {"steps": one_step}, format="json", **h["sr_emp"]).status_code == 403
+    assert api_client.patch(f"{url}{wid}/", {"steps": [{"type": "any", "approver_selectors": [
+        {"role": "executive", "scope": "sender_branch"}]}]}, format="json", **h["sr_admin"]).status_code == 400
+    r = api_client.patch(f"{url}{wid}/", {"name": "طلب صرف عاجل", "steps": one_step}, format="json", **h["sr_admin"])
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["name"] == "طلب صرف عاجل" and body["version"] == 2 and len(body["steps"]) == 1
+    assert AuditLog.objects.filter(action="approval_workflow_updated").count() == 1
+
+    # the request filed before keeps its two steps; a new one has one
+    assert len(api_client.get(f"{API}{old['id']}/", **h["sr_emp"]).json()["steps"]) == 2
+    new = _file(api_client, org).json()
+    assert len(new["steps"]) == 1 and new["workflow_name"] == "طلب صرف عاجل"
