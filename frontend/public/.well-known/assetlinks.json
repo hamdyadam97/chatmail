@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "cloud.m3hadsystem.mail",
+      "sha256_cert_fingerprints": ["86:C2:32:FB:1D:05:C3:A5:E3:19:75:16:52:E4:7E:92:16:53:40:EB:D1:88:3A:38:02:1D:9C:B4:F1:21:BE:EC"]
+    }
+  }
+]
