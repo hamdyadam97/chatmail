@@ -7,7 +7,10 @@ Rules enforced here:
     correspondence) and cannot be the requester. The engine never widens
     who can read anything.
   * Steps run in order; a step of type ``all`` needs every slot approved, an
-    ``any`` step needs one. Reject/return ends the request.
+    ``any`` step needs one. Reject ends the request; return hands it back to
+    the requester, who may resubmit it (resubmit()). Defer keeps it with the
+    approver. Every action is a timeline row (ApprovalEvent) with an optional
+    sealed note, and the requester is notified of each outcome.
   * A decision is recorded server-side with the SHA-256 of the content the
     request was opened on (which version was approved). Duplicate decisions
     are impossible (UNIQUE(step, slot_user)).
@@ -35,6 +38,7 @@ from apps.notifications.services import notify
 from .models import (
     ApprovalDecision,
     ApprovalDelegation,
+    ApprovalEvent,
     ApprovalRequest,
     ApprovalRequestStep,
     ApprovalStepApprover,
@@ -212,8 +216,10 @@ def create_request(*, requester, correspondence, steps=None, workflow_id=None) -
 
 
 def _notify_step(req, step_order) -> None:
+    """Tell the step's approvers who have not decided yet (this round)."""
     step = req.steps.get(step_order=step_order)
-    approvers = [str(a.user_id) for a in step.approvers.all()]
+    decided = {str(u) for u in step.decisions.filter(round=req.round).values_list("slot_user_id", flat=True)}
+    approvers = [str(a.user_id) for a in step.approvers.all() if str(a.user_id) not in decided]
     now = timezone.now()
     delegates = [
         str(d.delegate_id)
@@ -277,7 +283,7 @@ def available_slot(user, req, step=None):
     step = step or current_step(req)
     if step is None or step.status != "active":
         return None
-    decided = {str(u) for u in step.decisions.values_list("slot_user_id", flat=True)}
+    decided = {str(u) for u in step.decisions.filter(round=req.round).values_list("slot_user_id", flat=True)}
     slots = [str(u) for u in step.approvers.values_list("user_id", flat=True) if str(u) not in decided]
     if str(user.id) in slots:
         return str(user.id), None
@@ -293,11 +299,44 @@ def is_signed_request(req) -> bool:
     return bool(req.source_file_id and req.workflow_id and req.workflow.signable)
 
 
+MAX_NOTE = 1000
+
+
+def clean_note(text) -> str:
+    return str(text or "").strip()[:MAX_NOTE]
+
+
+def _record(req, kind, actor, step_order, *, on_behalf_of=None, note="") -> ApprovalEvent:
+    """One timeline row; the note is sealed to it."""
+    import uuid as _uuid
+
+    from apps import vault
+
+    event_id = _uuid.uuid4()
+    return ApprovalEvent.objects.create(
+        id=event_id, request=req, round=req.round, step_order=step_order, kind=kind, actor=actor,
+        on_behalf_of_id=on_behalf_of,
+        note_enc=vault.seal(note.encode(), purpose="approval-note", owner=event_id) if note else None,
+    )
+
+
+def event_note(event) -> str:
+    from apps import vault
+
+    if not event.note_enc:
+        return ""
+    try:
+        return vault.open_(bytes(event.note_enc), purpose="approval-note", owner=event.id).decode()
+    except vault.VaultError:
+        return ""
+
+
 def decide(*, user, request_id, decision: str, password: str | None = None, page=None,
-           position: tuple[float, float] | None = None) -> ApprovalDecision:
+           position: tuple[float, float] | None = None, note: str = "") -> ApprovalDecision:
     req = get_viewable(user, request_id)
     if decision not in DECISIONS:
         raise ValidationError({"decision": "قرار غير معروف."})
+    note = clean_note(note)
     signing = decision == "approved" and is_signed_request(req)
     if signing:
         # Approving a signed request stamps the saved signature: confirm it is the approver.
@@ -332,11 +371,15 @@ def decide(*, user, request_id, decision: str, password: str | None = None, page
                     content_hash=req.content_hash,
                     verify_code=code,
                     signed_page=page if signing else None,
+                    round=req.round,
                 )
         except IntegrityError:
             raise Conflict("سبق اتخاذ قرار في هذه الخانة.")
         if signing:
             _sign(req, user, delegation, page, code, position)
+        step.approvers.filter(user_id=slot_user_id).update(deferred_at=None)
+        _record(req, decision, user, step.step_order,
+                on_behalf_of=slot_user_id if delegation is not None else None, note=note)
         _advance(req, step, row)
 
     log(
@@ -349,9 +392,33 @@ def decide(*, user, request_id, decision: str, password: str | None = None, page
             "step_order": step.step_order,
             "delegated": delegation is not None,
             "signed": signing,
+            "note": bool(note),
         },
     )
     return row
+
+
+def defer(*, user, request_id, note: str = "") -> ApprovalRequest:
+    """«تأجيل»: the approver keeps the request and decides later; the
+    requester is told (the optional note shows on the request page)."""
+    req = get_viewable(user, request_id)
+    note = clean_note(note)
+    with transaction.atomic():
+        req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
+        if req.status != "pending":
+            raise Conflict("الطلب ليس قيد الاعتماد.")
+        step = current_step(req)
+        slot = available_slot(user, req, step)
+        if slot is None:
+            raise PermissionDenied("You are not an approver of the current step (or already decided).")
+        slot_user_id, delegation = slot
+        step.approvers.filter(user_id=slot_user_id).update(deferred_at=timezone.now())
+        _record(req, "deferred", user, step.step_order,
+                on_behalf_of=slot_user_id if delegation is not None else None, note=note)
+        notify([req.requested_by_id], "approval_deferred", ref_type="approval_request", ref_id=req.id, actor=user)
+    log(actor=user, action="approval_deferred", target_type="approval_request", target_id=req.id,
+        metadata={"step_order": step.step_order, "delegated": delegation is not None, "note": bool(note)})
+    return req
 
 
 # --- signed requests (user decision 2026-11-21) -----------------------------------------------
@@ -457,6 +524,8 @@ def verify_signature(user, code: str) -> dict:
         "reference_number": r.correspondence.reference_number,
         "requested_by": r.requested_by.full_name or r.requested_by.username,
         "request_status": r.status,
+        # The document was replaced after this signature (a later round): an older copy.
+        "superseded": d.round != r.round,
     }
 
 
@@ -592,9 +661,10 @@ def _advance(req, step, decision) -> None:
         req.status = decision.decision
         req.decided_at = now
         req.save(update_fields=["status", "decided_at"])
-        notify([req.requested_by_id], "approval_decided", ref_type="approval_request", ref_id=req.id, actor=decision.approver)
+        kind = "approval_rejected" if decision.decision == "rejected" else "approval_returned"
+        notify([req.requested_by_id], kind, ref_type="approval_request", ref_id=req.id, actor=decision.approver)
         return
-    approved_slots = step.decisions.filter(decision="approved").count()
+    approved_slots = step.decisions.filter(decision="approved", round=req.round).count()
     if step.step_type == "all" and approved_slots < step.approvers.count():
         return
     step.status = "approved"
@@ -606,11 +676,13 @@ def _advance(req, step, decision) -> None:
         req.current_step_order = nxt.step_order
         req.save(update_fields=["current_step_order"])
         _notify_step(req, nxt.step_order)
+        notify([req.requested_by_id], "approval_step_approved", ref_type="approval_request", ref_id=req.id,
+               actor=decision.approver)
         return
     req.status = "approved"
     req.decided_at = now
     req.save(update_fields=["status", "decided_at"])
-    notify([req.requested_by_id], "approval_decided", ref_type="approval_request", ref_id=req.id, actor=decision.approver)
+    notify([req.requested_by_id], "approval_approved", ref_type="approval_request", ref_id=req.id, actor=decision.approver)
 
 
 # --- requester actions ---------------------------------------------------------------------------
@@ -632,7 +704,7 @@ def remove_approver(user, req, approver_id) -> dict:
         req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
         if req.status != "pending":
             raise Conflict("الطلب ليس قيد الاعتماد.")
-        decided = {str(d.step_id) for d in req.decisions.filter(slot_user_id=approver_id)}
+        decided = {str(d.step_id) for d in req.decisions.filter(slot_user_id=approver_id, round=req.round)}
         slots = [s for s in ApprovalStepApprover.objects.filter(step__request=req, user_id=approver_id).select_related("step")
                  if str(s.step_id) not in decided and s.step.status in ("active", "waiting")]
         if not slots:
@@ -643,9 +715,10 @@ def remove_approver(user, req, approver_id) -> dict:
         for slot in slots:
             slot.delete()
         step = current_step(req)
+        approved = step.decisions.filter(decision="approved", round=req.round) if step is not None else None
         if (step is not None and step.status == "active" and step.step_type == "all"
-                and step.decisions.filter(decision="approved").count() >= step.approvers.count()):
-            last = step.decisions.filter(decision="approved").order_by("-decided_at").first()
+                and approved.count() >= step.approvers.count()):
+            last = approved.order_by("-decided_at").first()
             _advance(req, step, last)  # the others had already approved
 
         hidden = False
@@ -663,6 +736,66 @@ def remove_approver(user, req, approver_id) -> dict:
     log(actor=user, action="approval_approver_removed", target_type="approval_request", target_id=req.id,
         metadata={"approver_id": approver_id, "slots": len(slots), "hidden": hidden})
     return {"removed": len(slots), "hidden": hidden}
+
+
+def resubmit(user, req, *, note: str = "", data: bytes | None = None, filename: str = "") -> ApprovalRequest:
+    """«تعديل وإعادة إرسال» a returned request (requester only).
+
+    Without a new document the request goes back to the step that returned
+    it: earlier approvals and signatures stay, only the returning decision is
+    withdrawn. With a new document (signed requests) nobody has signed it yet,
+    so a new round starts at step 1 and every approver signs the new file;
+    the earlier round's decisions and verification codes stay recorded."""
+    if req.requested_by_id != user.id:
+        raise PermissionDenied("Only the requester can resubmit.")
+    note = clean_note(note)
+    new_file = bool(data)
+    if new_file:
+        if not is_signed_request(req):
+            raise ValidationError({"file": "استبدال الملف للطلبات المقدّمة بملف فقط."})
+        if len(data) > MAX_REQUEST_FILE_BYTES:
+            raise ValidationError({"file": "الملف أكبر من 15 م.ب."})
+        from apps.correspondence.services import store_blob
+
+        from . import signing
+
+        pdf = signing.to_pdf(data)
+        base_name = (filename or "طلب").rsplit(".", 1)[0][:150]
+    try:
+        with transaction.atomic():
+            req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
+            if req.status != "returned":
+                raise Conflict("لا يُعاد إرسال إلا طلب أُعيد للمراجعة.")
+            returning = req.decisions.filter(decision="returned", round=req.round).select_related("step").first()
+            if returning is None:
+                raise Conflict("لا يوجد قرار إعادة لهذا الطلب.")
+            ApprovalStepApprover.objects.filter(step__request=req).update(deferred_at=None)
+            if new_file:
+                req.round += 1
+                req.source_file = store_blob(user, pdf, name=f"{base_name}.pdf", mime="application/pdf")
+                req.signed_file = None
+                req.signature_count = 0
+                req.page_signatures = {}
+                req.signature_boxes = []
+                req.page_count = signing.page_count(pdf)
+                start = 1
+                req.steps.update(status="waiting")
+            else:
+                start = returning.step.step_order
+                returning.delete()
+                req.steps.filter(step_order__gt=start).update(status="waiting")
+            req.steps.filter(step_order=start).update(status="active")
+            req.status = "pending"
+            req.decided_at = None
+            req.current_step_order = start
+            req.save()
+            _record(req, "resubmitted_file" if new_file else "resubmitted", user, start, note=note)
+            _notify_step(req, start)
+    except IntegrityError:
+        raise Conflict("يوجد طلب اعتماد قائم لهذه المراسلة.")
+    log(actor=user, action="approval_resubmitted", target_type="approval_request", target_id=req.id,
+        metadata={"new_file": new_file, "step_order": start, "round": req.round, "note": bool(note)})
+    return req
 
 
 def cancel_request(user, req) -> ApprovalRequest:

@@ -73,6 +73,11 @@ export function VerifySignaturePage() {
             <div><dt className="inline text-gray-500">مقدّم الطلب: </dt><dd className="inline">{r.requested_by}</dd></div>
             <div><dt className="inline text-gray-500">حالة الطلب الآن: </dt><dd className="inline">{STATUS_LABELS[r.request_status]}</dd></div>
           </dl>
+          {r.superseded && (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800" data-testid="verify-superseded">
+              هذا التوقيع على نسخة سابقة من الطلب — استبدل مقدّم الطلب الملف بعده، فاطلب النسخة الأحدث.
+            </p>
+          )}
           <p className="text-xs text-gray-500">تأكد أن الاسم والتاريخ ورقم الطلب على الورقة تطابق ما يظهر هنا.</p>
         </Card>
       )}

@@ -107,6 +107,9 @@ class ApprovalRequest(models.Model):
     # Where each stamped box sits: [{"page", "x", "y", "w", "h"}] in PDF points
     # from the page's top-left — a new signature may not cover an earlier one.
     signature_boxes = models.JSONField(default=list, blank=True)
+    # Resubmitting a returned request with a new document starts a new round:
+    # everyone signs the new file; the earlier round's decisions stay recorded.
+    round = models.PositiveSmallIntegerField(default=1)
 
     class Meta:
         db_table = "approval_requests"
@@ -154,6 +157,8 @@ class ApprovalStepApprover(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     step = models.ForeignKey(ApprovalRequestStep, on_delete=models.CASCADE, related_name="approvers")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    # «تأجيل»: the approver keeps the request and decides later (cleared on decision).
+    deferred_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "approval_step_approvers"
@@ -186,17 +191,50 @@ class ApprovalDecision(models.Model):
     # anyone in the system checks it at «التحقق من توقيع».
     verify_code = models.CharField(max_length=9, null=True, blank=True, unique=True)
     signed_page = models.PositiveSmallIntegerField(null=True, blank=True)
+    round = models.PositiveSmallIntegerField(default=1)
 
     class Meta:
         db_table = "approval_decisions"
         constraints = [
-            # Duplicate-approval guard: a slot is filled exactly once.
-            models.UniqueConstraint(fields=["step", "slot_user"], name="uq_decision_step_slot"),
+            # Duplicate-approval guard: a slot is filled exactly once per round.
+            models.UniqueConstraint(fields=["step", "slot_user", "round"], name="uq_decision_step_slot_round"),
             models.CheckConstraint(
                 condition=Q(delegation__isnull=False) | Q(approver=F("slot_user")),
                 name="ck_decision_self_or_delegated",
             ),
         ]
+
+
+class ApprovalEvent(models.Model):
+    """The request's timeline: every decision, deferral and resubmission, with
+    the optional note (sealed, apps.vault purpose "approval-note", bound to
+    the row). Notifications never carry the note (SEC-11)."""
+
+    KINDS = [
+        ("approved", "اعتماد"),
+        ("rejected", "رفض"),
+        ("returned", "إعادة للمراجعة"),
+        ("deferred", "تأجيل"),
+        ("resubmitted", "إعادة إرسال"),
+        ("resubmitted_file", "إعادة إرسال بملف جديد"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request = models.ForeignKey(ApprovalRequest, on_delete=models.CASCADE, related_name="events")
+    round = models.PositiveSmallIntegerField(default=1)
+    step_order = models.PositiveSmallIntegerField()
+    kind = models.CharField(max_length=20, choices=KINDS)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    # Delegated decisions: the approver whose slot was filled.
+    on_behalf_of = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    note_enc = models.BinaryField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "approval_events"
+        indexes = [models.Index(fields=["request", "created_at"], name="idx_approval_event_time")]
 
 
 class ApprovalDelegation(models.Model):

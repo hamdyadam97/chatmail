@@ -1106,8 +1106,8 @@ async function main() {
     // كل معتمد: اعتماد ← يرسم توقيعه مرة ← كلمة المرور ← توقيع واعتماد.
     let noPageBlocked = true;
     let placedBoxes = true;
-    const signAs = async (dev, password, expectedCount, spot) => {
-      await dev.page.goto(requestUrl);
+    const signAs = async (dev, password, expectedCount, spot, url = requestUrl) => {
+      await dev.page.goto(url);
       await dev.page.getByRole('button', { name: 'اعتماد', exact: true }).click({ timeout: 15000 }).catch(() => undefined);
       const pad = dev.page.locator('[data-testid="signature-pad"]');
       if (await pad.waitFor({ timeout: 8000 }).then(() => true).catch(() => false)) {
@@ -1245,6 +1245,66 @@ async function main() {
     await runPython(
       'from apps.authorization.models import UserRoleAssignment; UserRoleAssignment.objects.filter(user__username="mohamed", role__code="branch_manager").delete()',
     );
+
+    section('8د) متابعة الطلب: تأجيل، إعادة بملاحظة، إعادة إرسال');
+    await ahmed.page.goto(`${UI}/approvals`);
+    await ahmed.page.getByRole('button', { name: 'طلب جديد' }).click({ timeout: 15000 }).catch(() => undefined);
+    await ahmed.page.selectOption('#req-type', { label: 'طلب صرف' }).catch(() => undefined);
+    await ahmed.page.fill('#req-title', 'طلب للمتابعة').catch(() => undefined);
+    await ahmed.page.setInputFiles('#req-file', reqPdf).catch(() => undefined);
+    await ahmed.page.getByRole('button', { name: 'تقديم الطلب' }).click({ timeout: 10000 }).catch(() => undefined);
+    await ahmed.page.waitForURL(/\/approvals\/[0-9a-f-]{36}$/, { timeout: 20000 }).catch(() => undefined);
+    const followUrl = ahmed.page.url();
+    const followId = followUrl.split('/').pop();
+    // مدير الفرع يؤجّل بملاحظة.
+    await manager.page.goto(followUrl);
+    await manager.page.getByRole('button', { name: 'تأجيل' }).click({ timeout: 15000 }).catch(() => undefined);
+    await manager.page.fill('#decision-note', 'بعد اجتماع الأحد').catch(() => undefined);
+    await manager.page.getByRole('button', { name: 'تأكيد', exact: true }).click({ timeout: 10000 }).catch(() => undefined);
+    const deferredShown = await manager.page.locator('[data-testid="deferred-chip"]').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    await ahmed.page.goto(followUrl);
+    const ahmedSeesDefer = await ahmed.page.locator('[data-testid="deferred-chip"]').waitFor({ timeout: 15000 }).then(() => true).catch(() => false)
+      && (await ahmed.page.locator('[data-testid="event-note"]', { hasText: 'بعد اجتماع الأحد' }).count()) === 1;
+    check('تأجيل: المدير يؤجّل بملاحظة، وأحمد يرى «مؤجَّل» والملاحظة في سجل الطلب', deferredShown && ahmedSeesDefer,
+      `manager=${deferredShown} ahmed=${ahmedSeesDefer}`);
+    // المدير يوقّع لاحقًا، ثم مدير النظام يعيده بملاحظة.
+    const bmLater = await signAs(manager, 'Riyadh#Branch2026', 1, [0.3, 0.25], followUrl);
+    await admin.page.goto(followUrl);
+    await admin.page.getByRole('button', { name: 'إعادة للمراجعة' }).click({ timeout: 15000 }).catch(() => undefined);
+    await admin.page.fill('#decision-note', 'أضف عرض السعر').catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'تأكيد', exact: true }).click({ timeout: 10000 }).catch(() => undefined);
+    const returnedShown = await admin.page.locator('text=معاد للمراجعة').first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    // أحمد يرى السبب ويعيد الإرسال بلا ملف جديد: يعود للخطوة 2 ويبقى توقيع المدير.
+    await ahmed.page.goto(followUrl);
+    const panel = await ahmed.page.locator('[data-testid="resubmit-panel"]').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    const reasonShown = (await ahmed.page.locator('[data-testid="event-note"]', { hasText: 'أضف عرض السعر' }).count()) === 1;
+    await ahmed.page.fill('#resubmit-note', 'أرسلت عرض السعر في رد على المراسلة').catch(() => undefined);
+    await ahmed.page.getByRole('button', { name: 'إعادة الإرسال' }).click({ timeout: 10000 }).catch(() => undefined);
+    const backPending = await ahmed.page.locator('[data-testid="resubmit-panel"]').waitFor({ state: 'detached', timeout: 15000 })
+      .then(() => true).catch(() => false);
+    const resumed = await runPython(
+      'from apps.approvals.models import ApprovalRequest as R; from apps.notifications.models import Notification as N; ' +
+        `r = R.objects.get(id=${JSON.stringify(followId)}); ` +
+        'assert r.status == "pending" and r.current_step_order == 2 and r.signature_count == 1; ' +
+        'k = set(N.objects.filter(user=r.requested_by, ref_id=r.id).values_list("kind", flat=True)); ' +
+        'assert {"approval_deferred", "approval_step_approved", "approval_returned"} <= k, k',
+    ).then(() => true).catch(() => false);
+    check('إعادة للمراجعة: السبب يظهر لأحمد، وإعادة الإرسال ترجعه للخطوة 2 مع بقاء توقيع المدير',
+      bmLater && returnedShown && panel && reasonShown && backPending && resumed,
+      `bm=${bmLater} returned=${returnedShown} panel=${panel} reason=${reasonShown} pending=${backPending} db=${resumed}`);
+    const adminFinal = await signAs(admin, 'Admin@12345', 2, [0.7, 0.6], followUrl);
+    const approvedNotified = await runPython(
+      'from apps.approvals.models import ApprovalRequest as R; from apps.notifications.models import Notification as N; ' +
+        `r = R.objects.get(id=${JSON.stringify(followId)}); assert r.status == "approved"; ` +
+        'assert N.objects.filter(user=r.requested_by, ref_id=r.id, kind="approval_approved").exists()',
+    ).then(() => true).catch(() => false);
+    check('بعد إعادة الإرسال: مدير النظام يوقّع فيُعتمد الطلب ويُبلَّغ أحمد «اعتُمد طلبك»', adminFinal && approvedNotified,
+      `signed=${adminFinal} notified=${approvedNotified}`);
+    if (process.env.SHOTS) {
+      await ahmed.page.goto(followUrl);
+      await ahmed.page.locator('[data-testid="request-timeline"]').waitFor({ timeout: 10000 }).catch(() => undefined);
+      console.log(`    لقطة سجل الطلب: ${await shot(ahmed, 'request-timeline')}`);
+    }
 
     section('9) أخطاء الـConsole');
     for (const dev of [ahmed, mohamed2, manager, archivist, sara]) {

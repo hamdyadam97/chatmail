@@ -34,13 +34,28 @@ export type VerifyResult =
       reference_number: string | null;
       requested_by: string;
       request_status: RequestStatus;
+      /** استُبدل ملف الطلب بعد هذا التوقيع (نسخة سابقة). */
+      superseded: boolean;
     };
+
+export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file';
+
+/** سجل الطلب: القرارات والتأجيل وإعادة الإرسال، مع الملاحظة إن وُجدت. */
+export interface RequestEvent {
+  kind: EventKind;
+  actor: UserRef;
+  on_behalf_of: UserRef | null;
+  step_order: number;
+  round: number;
+  note: string;
+  created_at: string;
+}
 
 export interface RequestStep {
   step_order: number;
   step_type: 'all' | 'any';
   status: 'waiting' | 'active' | 'approved' | 'rejected' | 'returned' | 'cancelled';
-  approvers: Array<{ user: UserRef; decision: DecisionRecord | null }>;
+  approvers: Array<{ user: UserRef; decision: DecisionRecord | null; deferred_at: string | null }>;
 }
 
 export interface ApprovalRequest {
@@ -69,6 +84,11 @@ export interface ApprovalRequest {
   /** أماكن التوقيعات المختومة (نقاط PDF من أعلى يسار الصفحة)، ومقاس مربع التوقيع. */
   signature_boxes: Array<{ page: number; x: number; y: number; w: number; h: number }>;
   signature_box: { w: number; h: number } | null;
+  /** الجولة: تزيد حين يُعاد إرسال الطلب بملف جديد (يوقّع الجميع من جديد). */
+  round: number;
+  events: RequestEvent[];
+  /** مقدّم الطلب وطلبه معاد للمراجعة: «تعديل وإعادة إرسال». */
+  can_resubmit: boolean;
 }
 
 export interface FileRef {
@@ -110,8 +130,23 @@ export const approvalsApi = {
   get: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/`),
   create: (body: { correspondence_id: string; steps?: StepSpec[]; workflow_id?: string }) =>
     apiFetch<ApprovalRequest>('/approvals/', { method: 'POST', body }),
-  decide: (id: string, decision: Decision, sign?: { password: string; page: number; x?: number; y?: number }) =>
-    apiFetch<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body: { decision, ...(sign ?? {}) } }),
+  decide: (id: string, decision: Decision, note: string, sign?: { password: string; page: number; x?: number; y?: number }) =>
+    apiFetch<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body: { decision, note, ...(sign ?? {}) } }),
+  /** تأجيل: يبقى الطلب عندي وأقرر لاحقًا، ويُبلَّغ مقدّمه. */
+  defer: (id: string, note: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/defer/`, { method: 'POST', body: { note } }),
+  /** تعديل وإعادة إرسال طلب معاد (ملف جديد اختياري للطلبات بتوقيع). */
+  resubmit: (id: string, body: { note: string; file?: File | null }) => {
+    const form = new FormData();
+    form.append('note', body.note);
+    if (body.file) form.append('file', body.file, body.file.name);
+    return rawFetch(`/approvals/${id}/resubmit/`, { method: 'POST', headers: { Accept: 'application/json' }, body: form }).then(
+      async (res) => {
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new ApiError(res.status, data);
+        return data as ApprovalRequest;
+      },
+    );
+  },
   removeApprover: (id: string, approverId: string) =>
     apiFetch<ApprovalRequest>(`/approvals/${id}/remove-approver/`, { method: 'POST', body: { approver_id: approverId } }),
   cancel: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/cancel/`, { method: 'POST' }),
@@ -180,4 +215,13 @@ export const DECISION_LABELS: Record<Decision, string> = {
   approved: 'اعتماد',
   rejected: 'رفض',
   returned: 'إعادة للمراجعة',
+};
+
+export const EVENT_LABELS: Record<EventKind, string> = {
+  approved: 'اعتمد',
+  rejected: 'رفض',
+  returned: 'أعاده للمراجعة',
+  deferred: 'أجّل البتّ',
+  resubmitted: 'أعاد إرساله',
+  resubmitted_file: 'أعاد إرساله بملف جديد',
 };

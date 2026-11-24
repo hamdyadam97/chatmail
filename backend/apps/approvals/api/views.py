@@ -51,10 +51,22 @@ def _decision_dict(d) -> dict:
     }
 
 
+def _event_dict(e) -> dict:
+    return {
+        "kind": e.kind,
+        "actor": _user_ref(e.actor),
+        "on_behalf_of": _user_ref(e.on_behalf_of) if e.on_behalf_of_id else None,
+        "step_order": e.step_order,
+        "round": e.round,
+        "note": services.event_note(e),
+        "created_at": e.created_at.isoformat(),
+    }
+
+
 def request_dict(req: ApprovalRequest, viewer) -> dict:
     steps = []
     for step in req.steps.prefetch_related("approvers__user", "decisions__approver").order_by("step_order"):
-        by_slot = {str(d.slot_user_id): d for d in step.decisions.all()}
+        by_slot = {str(d.slot_user_id): d for d in step.decisions.all() if d.round == req.round}
         steps.append(
             {
                 "step_order": step.step_order,
@@ -64,6 +76,7 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
                     {
                         "user": _user_ref(a.user),
                         "decision": _decision_dict(by_slot[str(a.user_id)]) if str(a.user_id) in by_slot else None,
+                        "deferred_at": a.deferred_at.isoformat() if a.deferred_at else None,
                     }
                     for a in step.approvers.all()
                 ],
@@ -98,6 +111,10 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         "page_signatures": req.page_signatures or {},
         "signature_boxes": req.signature_boxes or [],
         "signature_box": {"w": signing.BOX_W, "h": signing.BOX_H} if signed_request else None,
+        # Timeline (decisions, deferrals, resubmissions) with their notes, oldest first.
+        "round": req.round,
+        "events": [_event_dict(e) for e in req.events.select_related("actor", "on_behalf_of").order_by("created_at")],
+        "can_resubmit": req.status == "returned" and req.requested_by_id == viewer.id,
     }
 
 
@@ -194,6 +211,8 @@ class DecideSerializer(serializers.Serializer):
     # Where the approver placed the box: top-left in PDF points (optional; default bottom of the page).
     x = serializers.FloatField(required=False)
     y = serializers.FloatField(required=False)
+    # Optional note to the requester (reason for return/rejection…), sealed.
+    note = serializers.CharField(required=False, allow_blank=True, max_length=services.MAX_NOTE)
 
     def validate(self, attrs):
         if ("x" in attrs) != ("y" in attrs):
@@ -214,8 +233,44 @@ class DecideView(APIView):
             page=serializer.validated_data.get("page"),
             position=(serializer.validated_data["x"], serializer.validated_data["y"])
             if "x" in serializer.validated_data else None,
+            note=serializer.validated_data.get("note", ""),
         )
         return Response(request_dict(decision.request, request.user), status=status.HTTP_201_CREATED)
+
+
+class DeferView(APIView):
+    """POST {note?}: «تأجيل» — the approver keeps the request and decides later."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [DecisionThrottle]
+
+    def post(self, request, request_id):
+        note = request.data.get("note") or ""
+        if len(str(note)) > services.MAX_NOTE:
+            raise ValidationError({"note": f"الملاحظة حتى {services.MAX_NOTE} حرف."})
+        req = services.defer(user=request.user, request_id=request_id, note=note)
+        return Response(request_dict(req, request.user))
+
+
+class ResubmitView(APIView):
+    """POST multipart|json {note?, file?}: the requester sends a returned request back."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [DecisionThrottle]
+
+    def post(self, request, request_id):
+        req = services.get_viewable(request.user, request_id)
+        note = request.data.get("note") or ""
+        if len(str(note)) > services.MAX_NOTE:
+            raise ValidationError({"note": f"الملاحظة حتى {services.MAX_NOTE} حرف."})
+        upload = request.FILES.get("file")
+        if upload is not None and upload.size > services.MAX_REQUEST_FILE_BYTES:
+            raise ValidationError({"file": "الملف أكبر من 15 م.ب."})
+        req = services.resubmit(
+            request.user, req, note=note,
+            data=upload.read() if upload is not None else None, filename=upload.name if upload is not None else "",
+        )
+        return Response(request_dict(req, request.user))
 
 
 class CancelView(APIView):

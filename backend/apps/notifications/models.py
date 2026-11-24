@@ -16,7 +16,12 @@ class Notification(models.Model):
         ("correspondence_reply", "رد على مراسلة"),
         ("correspondence_forward", "إحالة"),
         ("approval_requested", "طلب اعتماد"),
-        ("approval_decided", "قرار اعتماد"),
+        ("approval_decided", "قرار اعتماد"),  # older rows; new decisions use the kinds below
+        ("approval_approved", "اعتماد طلب"),
+        ("approval_rejected", "رفض طلب"),
+        ("approval_returned", "إعادة طلب للمراجعة"),
+        ("approval_deferred", "تأجيل طلب"),
+        ("approval_step_approved", "تقدّم طلب"),
         ("device_alert", "تنبيه أجهزة"),
         ("announcement", "تعميم"),
         ("announcement_reminder", "تذكير بتعميم"),

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCheck, Download, FilePlus2, FileSignature, Lock, PenLine } from 'lucide-react';
+import { CheckCheck, Clock, Download, FilePlus2, FileSignature, Lock, PenLine, RotateCcw } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
@@ -12,7 +12,7 @@ import { approvalsApi, DECISION_LABELS, type ApprovalRequest, type Decision, typ
 import { SignatureManager } from './SignaturePad';
 import { SignPlacer, type Placement } from './SignPlacer';
 import { saveBlob } from '../../shared/lib/download';
-import { StatusBadge, StepsView, formatDate } from './components';
+import { StatusBadge, StepsView, Timeline, formatDate } from './components';
 
 type Tab = 'pending_mine' | 'received' | 'requested_by_me' | 'delegations';
 
@@ -61,6 +61,10 @@ function RowBody({ r }: { r: ApprovalRequest }) {
         الخطوة {r.current_step_order}/{r.steps.length}
       </span>
       {r.my_slot?.delegated && <span className="text-xs text-purple-700">بالتفويض</span>}
+      {r.status === 'pending' &&
+        r.steps.some((s) => s.status === 'active' && s.approvers.some((a) => a.deferred_at && !a.decision)) && (
+          <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700">مؤجَّل</span>
+        )}
       <StatusBadge status={r.status} />
       <span className="w-36 text-end text-xs text-gray-500">{formatDate(r.created_at)}</span>
     </>
@@ -335,7 +339,8 @@ function ApprovalDetail({ id }: { id: string }) {
     enabled: Boolean(request),
   });
   const [actionError, setActionError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<Decision | null>(null);
+  const [confirming, setConfirming] = useState<Decision | 'deferred' | null>(null);
+  const [note, setNote] = useState('');
   const [password, setPassword] = useState('');
   const [signPage, setSignPage] = useState('');
   const [placement, setPlacement] = useState<Placement | null>(null);
@@ -347,16 +352,20 @@ function ApprovalDetail({ id }: { id: string }) {
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['approvals'] });
   const decide = useMutation({
-    mutationFn: (decision: Decision) =>
-      approvalsApi.decide(
-        id,
-        decision,
-        decision === 'approved' && request?.signable
-          ? { password, page: Number(signPage), ...(placement ? { x: placement.x, y: placement.y } : {}) }
-          : undefined,
-      ),
+    mutationFn: (decision: Decision | 'deferred') =>
+      decision === 'deferred'
+        ? approvalsApi.defer(id, note)
+        : approvalsApi.decide(
+            id,
+            decision,
+            note,
+            decision === 'approved' && request?.signable
+              ? { password, page: Number(signPage), ...(placement ? { x: placement.x, y: placement.y } : {}) }
+              : undefined,
+          ),
     onSuccess: () => {
       setConfirming(null);
+      setNote('');
       setPassword('');
       setSignPage('');
       setPlacement(null);
@@ -470,6 +479,7 @@ function ApprovalDetail({ id }: { id: string }) {
           onRemove={isRequester ? (uid, name) => setRemovingUser({ id: uid, name }) : undefined}
           removing={removeApprover.isPending ? removeApprover.variables : null}
         />
+        {request.can_resubmit && <ResubmitPanel request={request} onDone={() => void refresh()} />}
         {removingUser && (
           <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/60 p-3 text-sm" data-testid="remove-approver-box">
             <p className="text-gray-800">
@@ -539,6 +549,7 @@ function ApprovalDetail({ id }: { id: string }) {
                         onChange={setPlacement}
                       />
                     )}
+                    <NoteField value={note} onChange={setNote} />
                     <div className="flex gap-2">
                       <Button size="sm" disabled={!password || !signPage} loading={decide.isPending} onClick={() => decide.mutate('approved')}>
                         <PenLine className="h-4 w-4" />
@@ -552,32 +563,56 @@ function ApprovalDetail({ id }: { id: string }) {
                 )}
               </div>
             ) : confirming ? (
-              <div className="flex items-center gap-2">
-                <span className="text-sm">تأكيد «{DECISION_LABELS[confirming]}»؟ لا يمكن التراجع عن القرار.</span>
-                <Button size="sm" loading={decide.isPending} onClick={() => decide.mutate(confirming)}>
-                  تأكيد
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
-                  تراجع
-                </Button>
+              <div className="space-y-2" data-testid="decision-confirm">
+                <NoteField
+                  value={note}
+                  onChange={setNote}
+                  label={
+                    confirming === 'returned'
+                      ? 'ما المطلوب تعديله؟ (يظهر لمقدّم الطلب)'
+                      : confirming === 'rejected'
+                        ? 'سبب الرفض (اختياري، يظهر لمقدّم الطلب)'
+                        : confirming === 'deferred'
+                          ? 'سبب التأجيل أو موعد البتّ (اختياري)'
+                          : undefined
+                  }
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm">
+                    {confirming === 'deferred'
+                      ? 'تأجيل: يبقى الطلب عندك لتقرر لاحقًا، ويُبلَّغ مقدّمه.'
+                      : `تأكيد «${DECISION_LABELS[confirming]}»؟ لا يمكن التراجع عن القرار.`}
+                  </span>
+                  <Button size="sm" loading={decide.isPending} onClick={() => decide.mutate(confirming)}>
+                    تأكيد
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
+                    تراجع
+                  </Button>
+                </div>
               </div>
             ) : (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button size="sm" disabled={!contentReady} onClick={() => setConfirming('approved')}>
                   اعتماد
                 </Button>
                 <Button size="sm" variant="outline" disabled={!contentReady} onClick={() => setConfirming('returned')}>
                   إعادة للمراجعة
                 </Button>
+                <Button size="sm" variant="outline" disabled={!contentReady} onClick={() => setConfirming('deferred')}>
+                  <Clock className="h-4 w-4" />
+                  تأجيل
+                </Button>
                 <Button size="sm" variant="danger" disabled={!contentReady} onClick={() => setConfirming('rejected')}>
                   رفض
                 </Button>
               </div>
             )}
-            <p className="text-xs text-gray-500">لإبداء ملاحظات، أرسل ردًّا مشفّرًا على المراسلة نفسها.</p>
           </div>
         )}
         {actionError && <p className="text-sm text-red-600">{actionError}</p>}
+
+        <Timeline request={request} />
 
         {isRequester && (
           <div className="flex justify-end gap-2">
@@ -594,6 +629,82 @@ function ApprovalDetail({ id }: { id: string }) {
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+function NoteField({ value, onChange, label }: { value: string; onChange: (v: string) => void; label?: string }) {
+  return (
+    <div>
+      <Label htmlFor="decision-note">{label ?? 'ملاحظة لمقدّم الطلب (اختياري)'}</Label>
+      <textarea
+        id="decision-note"
+        value={value}
+        maxLength={1000}
+        onChange={(e) => onChange(e.target.value)}
+        rows={2}
+        className="w-full rounded-lg border border-gray-300 bg-white p-2 text-sm"
+      />
+    </div>
+  );
+}
+
+/** مقدّم طلب أُعيد إليه: يكتب ما عدّله، ويرفق ملفًا جديدًا إن لزم (طلب بتوقيع). */
+function ResubmitPanel({ request, onDone }: { request: ApprovalRequest; onDone: () => void }) {
+  const [note, setNote] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const returnedAt = request.steps.find((s) => s.status === 'returned')?.step_order;
+  const send = useMutation({
+    mutationFn: () => approvalsApi.resubmit(request.id, { note, file }),
+    onSuccess: () => {
+      setNote('');
+      setFile(null);
+      setError(null);
+      onDone();
+    },
+    onError: (err) => setError(toUserMessage(err, 'تعذرت إعادة الإرسال')),
+  });
+  return (
+    <div className="space-y-3 rounded-lg border border-orange-200 bg-orange-50/50 p-4" data-testid="resubmit-panel">
+      <p className="flex items-center gap-2 text-sm font-medium text-gray-900">
+        <RotateCcw className="h-4 w-4 text-orange-700" />
+        أُعيد إليك الطلب للمراجعة — عدّله وأعد إرساله
+      </p>
+      <div>
+        <Label htmlFor="resubmit-note">ما الذي عدّلته؟ (يظهر للمعتمدين)</Label>
+        <textarea
+          id="resubmit-note"
+          value={note}
+          maxLength={1000}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          className="w-full rounded-lg border border-gray-300 bg-white p-2 text-sm"
+        />
+      </div>
+      {request.signable && (
+        <div>
+          <Label htmlFor="resubmit-file">ملف جديد بدل الحالي (اختياري — PDF أو صورة)</Label>
+          <input
+            id="resubmit-file"
+            type="file"
+            accept="application/pdf,image/png,image/jpeg"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="block w-full text-sm text-gray-700 file:me-3 file:rounded-md file:border-0 file:bg-primary-50 file:px-3 file:py-1.5 file:text-primary-700"
+          />
+        </div>
+      )}
+      <p className="text-xs text-gray-600">
+        {file
+          ? 'ملف جديد: يبدأ الطلب من الخطوة الأولى ويوقّع كل المعتمدين على الملف الجديد، لأن أحدًا لم يوقّع عليه بعد.'
+          : `بلا ملف جديد: يعود الطلب إلى الخطوة ${returnedAt ?? ''} التي أعادته، وتبقى الاعتمادات والتوقيعات السابقة.`}
+      </p>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex justify-end">
+        <Button size="sm" loading={send.isPending} onClick={() => send.mutate()}>
+          إعادة الإرسال
+        </Button>
+      </div>
     </div>
   );
 }

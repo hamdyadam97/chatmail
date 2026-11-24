@@ -65,7 +65,7 @@ def test_full_two_step_flow(api_client, board):
     final = _ok(decide(api_client, b["h_r3"], after2))
     assert final["status"] == "approved"
     assert [s["status"] for s in final["steps"]] == ["approved", "approved"]
-    assert Notification.objects.filter(kind="approval_decided", user=b["s"]).exists()
+    assert Notification.objects.filter(kind="approval_approved", user=b["s"]).exists()
     assert AuditLog.objects.filter(action="approval_decided").count() == 3
 
     done = _ok(api_client.post(f"{APPROVALS_URL}{req['id']}/complete/", **b["h_s"]), 200)

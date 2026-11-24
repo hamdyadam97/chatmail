@@ -9,8 +9,10 @@ import type { CorrespondenceDetail } from '../correspondence/api';
 import {
   approvalsApi,
   DECISION_LABELS,
+  EVENT_LABELS,
   STATUS_LABELS,
   type ApprovalRequest,
+  type EventKind,
   type RequestStatus,
   type StepSpec,
 } from './api';
@@ -63,7 +65,7 @@ export function StepsView({ request, onRemove, removing }: {
             </span>
           </div>
           <ul className="space-y-1.5">
-            {step.approvers.map(({ user, decision }) => (
+            {step.approvers.map(({ user, decision, deferred_at }) => (
               <li key={user.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="flex items-center gap-1.5">
                   {decision?.decision === 'approved' ? (
@@ -74,6 +76,11 @@ export function StepsView({ request, onRemove, removing }: {
                     <CircleDashed className="h-4 w-4 text-gray-400" />
                   )}
                   {user.full_name}
+                  {!decision && deferred_at && request.status === 'pending' && (
+                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-700" data-testid="deferred-chip">
+                      مؤجَّل · {formatDate(deferred_at)}
+                    </span>
+                  )}
                 </span>
                 {decision ? (
                   <span className="flex flex-wrap items-center gap-3">
@@ -112,6 +119,43 @@ export function StepsView({ request, onRemove, removing }: {
         </li>
       ))}
     </ol>
+  );
+}
+
+const EVENT_STYLES: Record<EventKind, string> = {
+  approved: 'bg-emerald-500',
+  rejected: 'bg-red-500',
+  returned: 'bg-orange-500',
+  deferred: 'bg-sky-500',
+  resubmitted: 'bg-primary-500',
+  resubmitted_file: 'bg-primary-500',
+};
+
+/** سجل الطلب: من قرر ماذا ومتى، مع الملاحظات. */
+export function Timeline({ request }: { request: ApprovalRequest }) {
+  if (!request.events.length) return null;
+  return (
+    <div className="space-y-2" data-testid="request-timeline">
+      <h3 className="text-sm font-semibold text-gray-900">سجل الطلب</h3>
+      <ol className="space-y-2 border-s border-gray-200 ps-4">
+        {request.events.map((e, i) => (
+          <li key={i} className="relative text-sm">
+            <span className={cn('absolute -start-[21px] top-1.5 h-2.5 w-2.5 rounded-full', EVENT_STYLES[e.kind])} />
+            <p className="text-gray-800">
+              <span className="font-medium">{e.actor.full_name}</span> {EVENT_LABELS[e.kind]}
+              {e.on_behalf_of && <span className="text-gray-500"> (بالتفويض عن {e.on_behalf_of.full_name})</span>}
+              <span className="text-gray-500"> — <bdi>الخطوة {e.step_order}</bdi></span>
+              <bdi className="ms-3 text-xs text-gray-400">{formatDate(e.created_at)}</bdi>
+            </p>
+            {e.note && (
+              <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-gray-50 px-3 py-2 text-gray-700" data-testid="event-note">
+                {e.note}
+              </p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 

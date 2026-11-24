@@ -747,12 +747,15 @@ def can_download(user, stored_file) -> bool:
     if not bindings:
         if stored_file.uploader_id == user.id:
             return True
-        # The signed copy of a request: whoever reads the request's correspondence.
+        # The signed copy of a request, or a document that replaced the original
+        # on resubmission: whoever reads the request's correspondence.
         from apps.approvals.models import ApprovalRequest
 
         return any(
             can_read(user, r.correspondence)
-            for r in ApprovalRequest.objects.filter(signed_file=stored_file).select_related("correspondence")
+            for r in ApprovalRequest.objects.filter(
+                Q(signed_file=stored_file) | Q(source_file=stored_file)
+            ).select_related("correspondence")
         )
     return any(can_read(user, b.correspondence) for b in bindings) or officer_may_download(user, stored_file)
 
