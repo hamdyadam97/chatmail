@@ -18,6 +18,7 @@ import base64
 import json
 import logging
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
@@ -124,18 +125,93 @@ def _muted(user_ids, kind: str) -> set[str]:
 
 
 def push_to_users(user_ids, *, kind: str, title: str, body: str = "", url: str = "/", tag: str = "") -> None:
-    """Queue a push to every subscribed browser of these users (after commit)."""
-    if not enabled():
-        return
+    """Queue a push to every subscribed browser and app of these users (after commit)."""
     ids = [str(u) for u in user_ids]
-    if not ids:
+    if not ids or not (enabled() or getattr(settings, "APP_PUSH_ENABLED", True)):
         return
     muted = _muted(ids, kind)
     targets = [u for u in ids if u not in muted]
     if not targets:
         return
-    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag or kind}, ensure_ascii=False)
+    message = {"title": title, "body": body, "url": url, "tag": tag or kind}
+    transaction.on_commit(lambda: app_deliver_async(targets, message))
+    if not enabled():
+        return
+    payload = json.dumps(message, ensure_ascii=False)
     transaction.on_commit(lambda: deliver_async(targets, payload))
+
+
+# --- the mobile app (Expo push → FCM / APNs) ----------------------------------------
+
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"  # fixed host: no SSRF surface
+EXPO_TOKEN_RE = re.compile(r"^Expo(nent)?PushToken\[[A-Za-z0-9_\-]{10,120}\]$")
+
+
+def app_token_valid(token) -> bool:
+    return isinstance(token, str) and bool(EXPO_TOKEN_RE.match(token))
+
+
+def app_deliver_async(user_ids: list[str], message: dict) -> None:
+    from .models import AppPushToken
+
+    if not getattr(settings, "APP_PUSH_ENABLED", True):
+        return
+    tokens = list(AppPushToken.objects.filter(user_id__in=user_ids).values_list("token", flat=True))
+    if tokens:
+        _executor.submit(_app_deliver_safely, tokens, message)
+
+
+def _app_deliver_safely(tokens: list[str], message: dict) -> None:
+    try:
+        app_deliver(tokens, message)
+    except Exception:  # never kill the worker
+        logger.exception("app push delivery crashed")
+    finally:
+        close_old_connections()
+
+
+def app_deliver(tokens: list[str], message: dict) -> None:
+    import requests
+
+    from .models import AppPushToken
+
+    for start in range(0, len(tokens), 100):  # Expo accepts up to 100 per request
+        batch = tokens[start:start + 100]
+        body = [
+            {
+                "to": t,
+                "title": message["title"],
+                "body": message.get("body") or "",
+                "data": {"url": message.get("url") or "/"},
+                "sound": "default",
+                "channelId": "default",
+                "priority": "high",
+                "ttl": TTL_SECONDS,
+            }
+            for t in batch
+        ]
+        try:
+            resp = requests.post(EXPO_PUSH_URL, json=body, timeout=10, headers={"Accept": "application/json"})
+            tickets = resp.json().get("data") or []
+        except Exception:  # noqa: BLE001 - network / bad JSON
+            logger.warning("app push request failed")
+            continue
+        for token, ticket in zip(batch, tickets):
+            row = AppPushToken.objects.filter(token=token).first()
+            if row is None:
+                continue
+            if ticket.get("status") == "ok":
+                row.failures = 0
+                row.last_success_at = timezone.now()
+                row.save(update_fields=["failures", "last_success_at"])
+            elif (ticket.get("details") or {}).get("error") == "DeviceNotRegistered":
+                row.delete()  # app uninstalled / token rotated
+            else:
+                row.failures += 1
+                if row.failures >= MAX_FAILURES:
+                    row.delete()
+                else:
+                    row.save(update_fields=["failures"])
 
 
 def deliver_async(user_ids: list[str], payload: str) -> None:

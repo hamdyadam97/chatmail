@@ -12,6 +12,8 @@ urlpatterns = [
     path("push/public-key/", views.PushPublicKeyView.as_view(), name="push-public-key"),
     path("push/subscribe/", views.PushSubscribeView.as_view(), name="push-subscribe"),
     path("push/unsubscribe/", views.PushUnsubscribeView.as_view(), name="push-unsubscribe"),
+    path("push/app/register/", views.AppPushRegisterView.as_view(), name="push-app-register"),
+    path("push/app/unregister/", views.AppPushUnregisterView.as_view(), name="push-app-unregister"),
     path("push/test/", views.PushTestView.as_view(), name="push-test"),
     path("<uuid:notification_id>/read/", views.MarkReadView.as_view(), name="notification-read"),
 ]

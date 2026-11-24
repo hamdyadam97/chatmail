@@ -189,6 +189,8 @@ ANNOUNCEMENT_MAX_RECIPIENTS = int(os.environ.get("ANNOUNCEMENT_MAX_RECIPIENTS", 
 # unset in production = push disabled, in DEBUG a dev key is generated.
 WEB_PUSH_VAPID_PRIVATE_KEY = os.environ.get("WEB_PUSH_VAPID_PRIVATE_KEY", "")
 WEB_PUSH_SUBJECT = os.environ.get("WEB_PUSH_SUBJECT", "mailto:it@example.org")
+# Mobile app push (Expo → FCM/APNs). Needs no key on our side; off = no calls out.
+APP_PUSH_ENABLED = os.environ.get("APP_PUSH_ENABLED", "1") == "1"
 
 # --- Auth / crypto configuration -------------------------------------------
 AUTH_JWT_ALGORITHM = "HS256"

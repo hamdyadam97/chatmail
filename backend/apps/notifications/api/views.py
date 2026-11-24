@@ -138,16 +138,51 @@ class PushUnsubscribeView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class PushTestView(APIView):
-    """Send a test notification to the caller's own browsers."""
+class AppPushRegisterView(APIView):
+    """The mobile app registers its push token for the caller (moves from
+    another account if this phone signed in with one before)."""
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         from .. import push
+        from ..models import AppPushToken
 
-        count = PushSubscription.objects.filter(user=request.user).count()
-        if not push.enabled() or count == 0:
+        token = request.data.get("token")
+        if not push.app_token_valid(token):
+            raise ValidationError({"token": "invalid push token."})
+        platform = str(request.data.get("platform") or "")[:16]
+        AppPushToken.objects.update_or_create(
+            token=token, defaults={"user": request.user, "platform": platform, "failures": 0}
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AppPushUnregisterView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from ..models import AppPushToken
+
+        token = request.data.get("token")
+        if not isinstance(token, str):
+            raise ValidationError({"token": "required."})
+        AppPushToken.objects.filter(token=token, user=request.user).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PushTestView(APIView):
+    """Send a test notification to the caller's own browsers and app."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .. import push
+        from ..models import AppPushToken
+
+        count = (PushSubscription.objects.filter(user=request.user).count() if push.enabled() else 0) + \
+            AppPushToken.objects.filter(user=request.user).count()
+        if count == 0:
             raise ValidationError({"detail": "no push subscription for this account."})
         push.push_to_users(
             [request.user.id], kind="test", title="تجربة الإشعارات", body="الإشعارات تعمل على هذا الجهاز", url="/notifications", tag="test"

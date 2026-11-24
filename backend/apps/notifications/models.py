@@ -71,6 +71,25 @@ class PushSubscription(models.Model):
         db_table = "push_subscriptions"
 
 
+class AppPushToken(models.Model):
+    """The mobile app's push address (an Expo push token, relayed by Expo to
+    FCM / APNs). Unique: the same phone signing in with another account moves
+    it, like PushSubscription. Carries the same fixed titles + actor name only."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="app_push_tokens"
+    )
+    token = models.CharField(max_length=200, unique=True)
+    platform = models.CharField(max_length=16, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    failures = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = "app_push_tokens"
+
+
 class NotificationPreference(models.Model):
     """Per-user delivery preferences. Today only ``muted_kinds`` is honoured
     (muted kinds are still stored, just not pushed over WebSocket)."""

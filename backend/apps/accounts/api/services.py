@@ -27,6 +27,7 @@ def parse_device_info(user_agent: str) -> tuple[str, str]:
             break
     browser = "unknown"
     for token, name in [
+        ("CorrApp/", "التطبيق"),
         ("Edg/", "Edge"),
         ("Chrome/", "Chrome"),
         ("Firefox/", "Firefox"),

@@ -12,6 +12,12 @@ DEFAULT_PASSWORD = "Str0ng!Passw0rd"
 
 
 @pytest.fixture(autouse=True)
+def _no_app_push(settings):
+    """Tests never call Expo's push service."""
+    settings.APP_PUSH_ENABLED = False
+
+
+@pytest.fixture(autouse=True)
 def _clear_throttle_cache():
     """Throttle counters must not leak between tests."""
     cache.clear()

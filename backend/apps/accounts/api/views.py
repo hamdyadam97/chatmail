@@ -73,6 +73,22 @@ def _set_refresh_cookie(response: Response, raw_token: str) -> None:
     )
 
 
+def is_app(request) -> bool:
+    """The mobile app (React Native) has no cookie jar it controls: it sends
+    `X-Corr-Client: app`, gets the refresh and device tokens in the response
+    body, keeps them in the phone's secure storage and sends them back
+    (refresh in the body, device in `X-Corr-Device`). Same tokens, same rules."""
+    return request is not None and request.META.get("HTTP_X_CORR_CLIENT") == "app"
+
+
+def _raw_refresh(request) -> str:
+    raw = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME) or ""
+    if not raw and is_app(request):
+        value = request.data.get("refresh") if hasattr(request.data, "get") else None
+        raw = value if isinstance(value, str) else ""
+    return raw
+
+
 def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         settings.AUTH_REFRESH_COOKIE_NAME,
@@ -132,6 +148,11 @@ def _issue_session(user, request, device, raw_device=None) -> Response:
             "user": PublicUserSerializer(user).data,
         }
     )
+    if is_app(request):
+        response.data["refresh"] = raw_refresh
+        if raw_device:
+            response.data["device_token"] = raw_device
+        return response
     _set_refresh_cookie(response, raw_refresh)
     if raw_device:
         login_approval.set_device_cookie(response, user, raw_device)
@@ -340,7 +361,8 @@ class LoginApprovalRejectView(APIView):
 
 class RefreshView(APIView):
     def post(self, request):
-        raw = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME)
+        raw = _raw_refresh(request)
+        app = is_app(request)
         session = get_session_by_refresh_token(raw or "")
         if session is None:
             # Reuse interval: the previous rotation's response was lost (page
@@ -361,11 +383,15 @@ class RefreshView(APIView):
                 _clear_refresh_cookie(response)
                 return response
             access = issue_access_token(new_session.user, new_session)
+            if app:
+                return Response({"access": access, "refresh": raw_refresh})
             response = Response({"access": access})
             _set_refresh_cookie(response, raw_refresh)
             return response
         new_session, raw_refresh = rotate_session(session, request)
         access = issue_access_token(new_session.user, new_session)
+        if app:
+            return Response({"access": access, "refresh": raw_refresh})
         response = Response({"access": access})
         _set_refresh_cookie(response, raw_refresh)
         # Browsers signed in before new-browser approval existed become known
@@ -381,7 +407,7 @@ class RefreshView(APIView):
 
 class LogoutView(APIView):
     def post(self, request):
-        raw = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME)
+        raw = _raw_refresh(request)
         session = get_session_by_refresh_token(raw or "")
         if session is not None:
             revoke_session(session, reason="logout")

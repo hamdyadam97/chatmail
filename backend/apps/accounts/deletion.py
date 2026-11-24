@@ -23,7 +23,8 @@ from .models import User
 DISPOSABLE = {
     "accounts.usersession", "accounts.trusteddevice", "accounts.loginintent", "accounts.loginapproval",
     "org.employeemembership", "authorization.userroleassignment",
-    "notifications.notification", "notifications.pushsubscription", "notifications.notificationpreference",
+    "notifications.notification", "notifications.pushsubscription", "notifications.apppushtoken",
+    "notifications.notificationpreference",
     "external_mail.externalmailbox", "approvals.usersignature",
 }
 
@@ -77,7 +78,7 @@ def purge(user: User) -> dict:
     from apps.correspondence.services import blob_storage, discard_draft
     from apps.external_mail.models import ExternalAttachment, ExternalContact, ExternalMailbox, ExternalMessage
     from apps.messaging.models import ConversationMember
-    from apps.notifications.models import Notification, NotificationPreference, PushSubscription
+    from apps.notifications.models import AppPushToken, Notification, NotificationPreference, PushSubscription
     from apps.org.models import EmployeeMembership
 
     from .models import LoginApproval, LoginIntent, TrustedDevice, UserSession
@@ -113,6 +114,7 @@ def purge(user: User) -> dict:
         counts["roles"] = UserRoleAssignment.objects.filter(user=user).delete()[0]
         Notification.objects.filter(user=user).delete()
         PushSubscription.objects.filter(user=user).delete()
+        AppPushToken.objects.filter(user=user).delete()
         NotificationPreference.objects.filter(user=user).delete()
         UserSignature.objects.filter(user=user).delete()
         # Memberships stay as history (sent mail names the sender's unit) but end.

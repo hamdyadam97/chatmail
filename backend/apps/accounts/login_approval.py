@@ -31,6 +31,7 @@ DEVICE_COOKIE = "corr_device"
 DEVICE_COOKIE_MAX_AGE = 2 * 365 * 86400
 MAX_ATTEMPTS = 5
 APPROVER_PERMISSION = "accounts.manage_users"
+APP_DEVICE_HEADER = "HTTP_X_CORR_DEVICE"
 
 
 def enabled() -> bool:
@@ -54,8 +55,11 @@ def known_device(user, request) -> TrustedDevice | None:
     single shared cookie of earlier releases (still honoured)."""
     if request is None:
         return None
-    for name in (cookie_name(user), DEVICE_COOKIE):
-        raw = request.COOKIES.get(name)
+    # The mobile app keeps its device token in secure storage and sends it
+    # as a header (no cookie jar) — same secret, same check.
+    candidates = [request.META.get(APP_DEVICE_HEADER, "")]
+    candidates += [request.COOKIES.get(name) for name in (cookie_name(user), DEVICE_COOKIE)]
+    for raw in candidates:
         if raw:
             device = TrustedDevice.objects.filter(user=user, browser_token_hash=_digest(raw)).first()
             if device is not None:
