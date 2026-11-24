@@ -50,6 +50,15 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'المحادثات',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'chatbubbles' : 'chatbubbles-outline'} size={25} color={color as string} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="approvals"
         options={{
           title: 'الموافقات',

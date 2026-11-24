@@ -1,13 +1,14 @@
 /** حسابي: البيانات، طلبات الدخول، تغيير كلمة المرور، والخروج. */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Constants from 'expo-constants';
-import { router } from 'expo-router';
-import { useEffect, useState, type ReactNode } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar, Header, IconName, T, tap } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { announcementsApi } from '@/lib/chat';
 import { pushSupported } from '@/lib/push';
 import { colors, font, forwardIcon, radius, row } from '@/lib/theme';
 import type { Profile } from '@/lib/types';
@@ -16,9 +17,20 @@ export default function AccountScreen() {
   const { user, logout } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
 
+  const [pendingAck, setPendingAck] = useState(0);
+
   useEffect(() => {
     api<Profile>('/users/me/profile/').then(setProfile).catch(() => undefined);
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      announcementsApi
+        .received(true)
+        .then((p) => setPendingAck(p.count))
+        .catch(() => undefined);
+    }, []),
+  );
 
   const unitText = [profile?.membership?.branch || profile?.membership?.institute, profile?.membership?.job_title].filter(Boolean).join(' — ');
 
@@ -43,7 +55,17 @@ export default function AccountScreen() {
         </View>
 
         <Group>
-          {!!profile?.external_address && <Item icon="globe-outline" title="بريدي الخارجي" value={profile.external_address} />}
+          <Item
+            icon="megaphone-outline"
+            title="التعاميم"
+            hint={pendingAck ? `${pendingAck} بانتظار تأكيد اطلاعك` : 'التعاميم الموجهة إليك'}
+            badge={pendingAck}
+            onPress={() => router.push('/announcements')}
+          />
+        </Group>
+
+        <Group>
+          {!!profile?.external_address &&<Item icon="globe-outline" title="بريدي الخارجي" value={profile.external_address} />}
           {!!profile?.phone && <Item icon="call-outline" title="الجوال" value={profile.phone} />}
           <Item icon="key-outline" title="طلبات الدخول" hint="أكواد الدخول المرسلة لي" onPress={() => router.push('/login-approvals')} />
           <Item icon="lock-closed-outline" title="تغيير كلمة المرور" onPress={() => router.push('/password')} />
@@ -78,7 +100,7 @@ function Group({ children }: { children: ReactNode }) {
   return <View style={[styles.card, { overflow: 'hidden' }]}>{children}</View>;
 }
 
-function Item({ icon, title, value, hint, danger, onPress }: { icon: IconName; title: string; value?: string; hint?: string; danger?: boolean; onPress?: () => void }) {
+function Item({ icon, title, value, hint, danger, badge, onPress }: { icon: IconName; title: string; value?: string; hint?: string; danger?: boolean; badge?: number; onPress?: () => void }) {
   return (
     <Pressable
       disabled={!onPress}
@@ -100,6 +122,7 @@ function Item({ icon, title, value, hint, danger, onPress }: { icon: IconName; t
           {value}
         </Text>
       )}
+      {!!badge && <Text style={styles.badge}>{badge}</Text>}
       {onPress && !danger && <Ionicons name={forwardIcon} size={18} color={colors.textMuted} />}
     </Pressable>
   );
@@ -130,5 +153,6 @@ const styles = StyleSheet.create({
   },
   itemIcon: { width: 34, height: 34, borderRadius: 9, backgroundColor: colors.navySoft, alignItems: 'center', justifyContent: 'center' },
   value: { fontSize: font.small, color: colors.textMuted, maxWidth: '55%' },
+  badge: { minWidth: 22, textAlign: 'center', color: '#fff', backgroundColor: colors.gold, borderRadius: 11, paddingHorizontal: 6, paddingVertical: 2, fontSize: 12, fontWeight: '700', overflow: 'hidden' },
   version: { textAlign: 'center', color: colors.textMuted, fontSize: font.tiny },
 });

@@ -71,6 +71,10 @@ export function routeForUrl(url: string | undefined): string | null {
   if (mail) return `/mail/${mail[1]}`;
   const approval = url.match(/^\/approvals\/([0-9a-f-]{36})/);
   if (approval) return `/approvals/${approval[1]}`;
+  const announcement = url.match(/^\/announcements\/([0-9a-f-]{36})/);
+  if (announcement) return `/announcements/${announcement[1]}`;
+  const chat = url.match(/^\/chat\/([0-9a-f-]{36})/);
+  if (chat) return `/chat/${chat[1]}`;
   if (url.startsWith('/login-approvals')) return '/login-approvals';
   return '/notifications';
 }

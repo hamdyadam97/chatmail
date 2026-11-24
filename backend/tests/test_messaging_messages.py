@@ -85,3 +85,16 @@ def test_tampered_blob_is_not_shown(api_client, group):
     Message.objects.filter(id=m.id).update(content_enc=bytes(blob))
     [shown] = _messages(api_client, group["h_a"], group["conv_id"])
     assert shown["content"] is None
+
+
+def test_conversation_list_carries_the_last_message_for_the_phone_list(api_client, group):
+    """The mobile chat list shows the last message, its time and an unread dot
+    (last.seq > last_read_seq) — for members only, like the messages themselves."""
+    conv, h_a, h_b = {"id": group["conv_id"]}, group["h_a"], group["h_b"]
+    rows = {r["id"]: r for r in api_client.get(CONV_URL, **h_b).json()}
+    assert rows[conv["id"]]["last"] is None
+    post_message(api_client, h_a, conv["id"], "أول\n  رسالة")
+    post_message(api_client, h_a, conv["id"], "اجتماع الساعة 10")
+    row = {r["id"]: r for r in api_client.get(CONV_URL, **h_b).json()}[conv["id"]]
+    assert row["last"]["preview"] == "اجتماع الساعة 10" and row["last"]["seq"] == 2
+    assert row["last"]["seq"] > row["last_read_seq"]

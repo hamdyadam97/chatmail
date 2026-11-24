@@ -28,6 +28,22 @@ def conversation_to_dict(conversation: Conversation, membership) -> dict:
     }
 
 
+def last_message_summary(conversation: Conversation) -> dict | None:
+    """The latest message for the conversation list (member-only data): its
+    seq (unread = seq > last_read_seq), time, sender and a short preview."""
+    message = conversation.messages.order_by("-seq").first()
+    if message is None:
+        return None
+    content = message_content(message) or {}
+    text = " ".join(str(content.get("text") or "").split())
+    return {
+        "seq": message.seq,
+        "sender_user_id": str(message.sender_id) if message.sender_id else None,
+        "preview": text[:120],
+        "created_at": message.created_at.isoformat(),
+    }
+
+
 def message_to_dict(message: Message) -> dict:
     return message_payload(message, message_content(message))
 

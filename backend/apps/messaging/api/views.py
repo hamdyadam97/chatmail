@@ -25,6 +25,7 @@ from .serializers import (
     PostMessageSerializer,
     ReadSerializer,
     conversation_to_dict,
+    last_message_summary,
     message_to_dict,
 )
 
@@ -43,7 +44,8 @@ class ConversationListCreateView(APIView):
             .order_by("conversation__created_at")
         )
         data = [
-            conversation_to_dict(m.conversation, m) for m in memberships
+            {**conversation_to_dict(m.conversation, m), "last": last_message_summary(m.conversation)}
+            for m in memberships
         ]
         return Response(data)
 
