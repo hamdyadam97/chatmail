@@ -140,8 +140,22 @@ def _issue_session(user, request, device, raw_device=None) -> Response:
     return response
 
 
+def find_login_user(username: str):
+    """The account a typed login name means — capital or small letters do not
+    matter (user decision 2026-11-24). The exact spelling wins; otherwise a
+    case-insensitive match, only when it is unambiguous."""
+    username = (username or "").strip()
+    if not username:
+        return None
+    exact = User.objects.filter(username=username).first()
+    if exact is not None:
+        return exact
+    matches = list(User.objects.filter(username__iexact=username)[:2])
+    return matches[0] if len(matches) == 1 else None
+
+
 def _authenticate_credentials(username: str, password: str):
-    user = User.objects.filter(username=username).first()
+    user = find_login_user(username)
     if user is None or not user.check_password(password) or not user.is_active:
         return None
     return user
@@ -169,7 +183,7 @@ class LoginView(APIView):
         user = _authenticate_credentials(username, password)
         if user is None:
             # actor=None for failures: identity is NOT proven at this point.
-            known = User.objects.filter(username=username).first()
+            known = find_login_user(username)
             log(
                 actor=None,
                 action="login_failed",

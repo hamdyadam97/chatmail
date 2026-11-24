@@ -219,3 +219,16 @@ def test_code_sent_to_myself_shows_on_my_signed_in_browser(people, mails, django
     assert APIClient().post(f"{AUTH}login-approvals/{rows[0]['id']}/reject/", **h_first).status_code == 204
     assert other.post(f"{AUTH}login/code/", {"approval_token": body["approval_token"], "code": code},
                       format="json").status_code == 401
+
+
+def test_login_name_ignores_letter_case(people, settings, user_factory):
+    settings.LOGIN_NEW_DEVICE_APPROVAL = False
+    for typed in ("LA_EMP", "La_Emp", " la_emp "):
+        r = APIClient().post(f"{AUTH}login/", {"username": typed, "password": DEFAULT_PASSWORD}, format="json")
+        assert r.status_code == 200 and r.json()["user"]["username"] == "la_emp", (typed, r.content)
+    assert APIClient().post(f"{AUTH}login/", {"username": "LA_EMP", "password": "wrong-password"},
+                            format="json").status_code == 401
+    # a name differing only in case cannot be created by the admins
+    h_admin = auth_headers(login(APIClient(), "la_admin").json()["access"])
+    r = APIClient().post("/api/v1/users/", {"username": "LA_Emp", "first_name": "x"}, format="json", **h_admin)
+    assert r.status_code == 400 and "username" in r.json()

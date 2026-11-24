@@ -110,7 +110,13 @@ def plan(records, *, include_test=False, create_branches=False, allowed=None):
     """Annotate each record with status / branch_obj. `allowed(branch_or_None)`
     limits which rows this admin may create. Returns (plan, new_branches)."""
     seen = Counter(rec["username"] for rec in records)
-    existing = set(User.objects.filter(username__in=list(seen)).values_list("username", flat=True))
+    # Usernames here are lower-cased; sign-in ignores case, so compare that way.
+    from django.db.models.functions import Lower
+
+    existing = set(
+        User.objects.annotate(u_lower=Lower("username")).filter(u_lower__in=list(seen))
+        .values_list("u_lower", flat=True)
+    )
     branches = {_key(b.name): b for b in Branch.objects.select_related("institute")}
     institutes = {_key(i.name): i for i in Institute.objects.all()}
     new_branches: dict[str, Branch] = {}

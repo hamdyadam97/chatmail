@@ -130,7 +130,8 @@ class AdminUserCreateSerializer(serializers.Serializer):
     membership = MembershipInputSerializer(required=False)
 
     def validate_username(self, value):
-        if User.objects.filter(username=value).exists():
+        # Sign-in ignores letter case, so names differing only in case would clash.
+        if User.objects.filter(username__iexact=value).exists():
             raise serializers.ValidationError("اسم المستخدم مستخدم مسبقًا.")
         return value
 
