@@ -1100,6 +1100,20 @@ async function main() {
     if (!edited) console.log(`    لقطة: ${await shot(admin, 'type-edit')}`);
     check('أنواع الطلبات: «تعديل» الاسم والخطوات في النوع نفسه', editName === 'طلب إجازة' && scopeFixed && edited,
       `loaded=${editName} scope=${scopeFixed} saved=${edited}`);
+    // نوع قديم محفوظ بتوليفة معطوبة («مدير الفرع — مركزي»): التعديل والحفظ يصحّحها.
+    await runPython(
+      'from apps.accounts.models import User; from apps.approvals.models import ApprovalStep, ApprovalWorkflow; ' +
+        'w = ApprovalWorkflow.objects.create(name="طلب قديم معطوب", signable=True, created_by=User.objects.get(username="admin")); ' +
+        'ApprovalStep.objects.create(workflow=w, step_order=1, step_type="any", approver_selectors=[{"role": "branch_manager", "scope": "central"}])',
+    );
+    await admin.page.reload();
+    await admin.page.locator('[data-testid="request-type-row"]:has-text("طلب قديم معطوب")').getByTestId('request-type-edit').click({ timeout: 15000 }).catch(() => undefined);
+    await admin.page.getByRole('button', { name: 'حفظ التعديل' }).click({ timeout: 10000 }).catch(() => undefined);
+    const healed = await admin.page.locator('[data-testid="request-type-row"]:has-text("طلب قديم معطوب"):has-text("في فرع مقدّم الطلب")')
+      .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    if (!healed) console.log(`    لقطة: ${await shot(admin, 'type-heal')}`);
+    check('أنواع الطلبات: تعديل نوع قديم بنطاق خاطئ يُحفظ مصحَّحًا', healed);
+    await runPython('from apps.approvals.models import ApprovalWorkflow; ApprovalWorkflow.objects.filter(name="طلب قديم معطوب").update(is_active=False)');
 
     // أحمد يرفع ملف الطلب.
     const reqPdf = path.join(work, 'expense.pdf');

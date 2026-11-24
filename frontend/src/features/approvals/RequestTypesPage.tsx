@@ -26,7 +26,12 @@ function toDraft(t: WorkflowTemplate): DraftStep[] {
     const sel = s.approver_selectors[0] ?? {};
     return sel.user
       ? { role: USER_PICK, scope: 'sender_branch' as SelectorScope, userIds: [sel.user] }
-      : { role: sel.role ?? 'branch_manager', scope: (sel.scope as SelectorScope) ?? 'sender_branch', userIds: [] };
+      : {
+          role: sel.role ?? 'branch_manager',
+          // نوع قديم بنطاق لا يناسب الدور (مثل «مدير الفرع — مركزي»): يُصحَّح هنا.
+          scope: ROLE_SCOPE[sel.role ?? ''] ?? (sel.scope as SelectorScope) ?? 'sender_branch',
+          userIds: [],
+        };
   });
 }
 
@@ -68,7 +73,8 @@ export function RequestTypesPage() {
         name: name.trim(),
         steps: steps.map((s) => ({
           type: 'any' as const,
-          approver_selectors: s.role === USER_PICK ? s.userIds.map((id) => ({ user: id })) : [{ role: s.role, scope: s.scope }],
+          approver_selectors:
+            s.role === USER_PICK ? s.userIds.map((id) => ({ user: id })) : [{ role: s.role, scope: ROLE_SCOPE[s.role] ?? s.scope }],
         })),
       };
       return editing ? approvalsApi.updateType(editing.id, body) : approvalsApi.createType({ ...body, signable: true });

@@ -141,14 +141,25 @@ export async function rawFetch(path: string, init: RequestInit): Promise<Respons
   return res;
 }
 
-function extractErrorMessage(data: unknown): string | undefined {
+function extractErrorMessage(data: unknown, depth = 0): string | undefined {
+  if (Array.isArray(data) && depth < 4) {
+    // أخطاء متداخلة (مثل {steps: [{approver_selectors: ["…"]}, {}]}): أول رسالة فيها.
+    for (const item of data) {
+      const found = typeof item === 'string' ? item : extractErrorMessage(item, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
   if (data && typeof data === 'object') {
     const record = data as Record<string, unknown>;
     const direct = record.detail ?? record.message;
     if (typeof direct === 'string') return direct;
     for (const value of Object.values(record)) {
-      if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
       if (typeof value === 'string') return value;
+      if (depth < 4 && value && typeof value === 'object') {
+        const found = extractErrorMessage(value, depth + 1);
+        if (found) return found;
+      }
     }
   }
   // نص قصير فقط — صفحة HTML (خطأ 500/502 من الخادم أو nginx) ليست رسالة للمستخدم.
