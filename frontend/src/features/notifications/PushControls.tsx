@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BellRing, X } from 'lucide-react';
 import { Button, Card } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
+import { isInstalledApp } from '../../shared/lib/installed-app';
 import { disablePush, enablePush, pushStatus, sendTestPush, type PushState } from './push';
 
 const DISMISS_KEY = 'push-prompt-dismissed';
@@ -56,7 +57,7 @@ function readDismissed(): boolean {
   }
 }
 
-/** شريط أعلى التطبيق يدعو لتفعيل إشعارات سطح المكتب (مرة واحدة حتى يُغلق). */
+/** شريط أعلى التطبيق يدعو لتفعيل الإشعارات على هذا الجهاز (مرة واحدة حتى يُغلق). */
 export function PushPrompt() {
   const push = usePush();
   const [dismissed, setDismissed] = useState(readDismissed);
@@ -75,7 +76,7 @@ export function PushPrompt() {
     <div className="flex items-center gap-3 border-b border-primary-100 bg-primary-50 px-4 py-2 text-sm text-primary-900">
       <BellRing className="h-4 w-4 shrink-0" />
       <span className="flex-1">
-        فعّل إشعارات سطح المكتب لتعرف بوصول المراسلات والرسائل حتى والموقع مغلق.
+        فعّل الإشعارات لتعرف بوصول المراسلات والرسائل حتى والتطبيق مغلق.
         {push.message && <span className="ms-2 text-red-700">{push.message}</span>}
       </span>
       <Button size="sm" onClick={() => void push.enable()} loading={push.busy}>
@@ -88,13 +89,19 @@ export function PushPrompt() {
   );
 }
 
+function deniedText(): string {
+  return isInstalledApp()
+    ? 'الإشعارات محظورة لهذا التطبيق — اسمح بها من إعدادات الجهاز ← التطبيقات ← الإشعارات، ثم أعد فتحه.'
+    : 'الإشعارات محظورة لهذا الموقع في المتصفح — اسمح بها من رمز القفل بجوار العنوان ثم أعد تحميل الصفحة.';
+}
+
 const STATE_TEXT: Record<PushState | 'loading', string> = {
   loading: 'جارٍ التحقق…',
-  unsupported: 'هذا المتصفح لا يدعم إشعارات سطح المكتب، أو الموقع لا يعمل عبر HTTPS.',
-  'disabled-server': 'إشعارات سطح المكتب غير مُعدّة على الخادم (مفتاح VAPID).',
-  denied: 'الإشعارات محظورة لهذا الموقع في المتصفح — اسمح بها من رمز القفل بجوار العنوان ثم أعد تحميل الصفحة.',
-  off: 'غير مفعّلة على هذا المتصفح.',
-  on: 'مفعّلة على هذا المتصفح — ستصلك تنبيهات المراسلات والرسائل والاعتمادات حتى والموقع مغلق.',
+  unsupported: 'هذا الجهاز أو المتصفح لا يدعم الإشعارات، أو الموقع لا يعمل عبر HTTPS.',
+  'disabled-server': 'الإشعارات غير مُعدّة على الخادم (مفتاح VAPID).',
+  denied: '',
+  off: 'غير مفعّلة على هذا الجهاز.',
+  on: 'مفعّلة على هذا الجهاز — ستصلك تنبيهات المراسلات والرسائل والاعتمادات حتى والتطبيق مغلق.',
 };
 
 /** بطاقة الإعداد في صفحة الإشعارات. */
@@ -104,8 +111,8 @@ export function PushSettingsCard() {
     <Card className="flex flex-wrap items-center gap-3 p-4">
       <BellRing className="h-5 w-5 text-primary-700" />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-gray-900">إشعارات سطح المكتب</p>
-        <p className="text-xs text-gray-600">{STATE_TEXT[push.state]}</p>
+        <p className="text-sm font-semibold text-gray-900">إشعارات الجهاز</p>
+        <p className="text-xs text-gray-600">{push.state === 'denied' ? deniedText() : STATE_TEXT[push.state]}</p>
         {push.message && <p className="mt-1 text-xs text-gray-700">{push.message}</p>}
       </div>
       {push.state === 'off' && (

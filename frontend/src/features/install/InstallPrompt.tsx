@@ -1,19 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Download, Share, X } from 'lucide-react';
 import { Button } from '../../shared/ui';
+import { isInstalledApp } from '../../shared/lib/installed-app';
 
 const DISMISS_KEY = 'install-prompt-dismissed';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
-
-function isStandalone(): boolean {
-  return (
-    window.matchMedia('(display-mode: standalone)').matches ||
-    (navigator as Navigator & { standalone?: boolean }).standalone === true
-  );
 }
 
 function isIos(): boolean {
@@ -34,7 +28,7 @@ function dismissed(): boolean {
  */
 export function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
-  const [hidden, setHidden] = useState(() => dismissed() || isStandalone());
+  const [hidden, setHidden] = useState(() => dismissed() || isInstalledApp());
 
   useEffect(() => {
     const onPrompt = (e: Event) => {
