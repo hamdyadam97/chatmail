@@ -69,6 +69,8 @@ export function routeForUrl(url: string | undefined): string | null {
   if (!url) return null;
   const mail = url.match(/^\/correspondence\/([0-9a-f-]{36})/);
   if (mail) return `/mail/${mail[1]}`;
+  const approval = url.match(/^\/approvals\/([0-9a-f-]{36})/);
+  if (approval) return `/approvals/${approval[1]}`;
   if (url.startsWith('/login-approvals')) return '/login-approvals';
   return '/notifications';
 }

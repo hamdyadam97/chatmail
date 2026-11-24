@@ -37,6 +37,13 @@ export function setAccessToken(token: string | null) {
   accessToken = token;
 }
 
+/** رؤوس طلب مصادَق (لتنزيل الملفات خارج api()). */
+export async function authHeaders(): Promise<Record<string, string>> {
+  const h = await baseHeaders(false);
+  if (accessToken) h.Authorization = `Bearer ${accessToken}`;
+  return h;
+}
+
 /** يُستدعى حين تنتهي الجلسة نهائيًا (التجديد مرفوض) — يعيد التطبيق لشاشة الدخول. */
 export function onSessionEnded(cb: () => void) {
   onSignedOut = cb;

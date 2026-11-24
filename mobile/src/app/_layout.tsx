@@ -47,6 +47,8 @@ function RootStack() {
       <Stack.Protected guard={signedIn && !mustChange}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="mail/[id]" />
+        <Stack.Screen name="approvals/[id]" />
+        <Stack.Screen name="approvals/new" />
         <Stack.Screen name="compose" options={{ presentation: 'modal' }} />
         <Stack.Screen name="login-approvals" />
         <Stack.Screen name="password" />

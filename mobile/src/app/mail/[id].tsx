@@ -2,12 +2,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar, Button, Empty, Header, IconButton, Loading, T, tap } from '@/components/ui';
 import { api, errorText } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { openAttachment } from '@/lib/files';
 import { formatBytes, fullDate, shortDate } from '@/lib/format';
 import { colors, font, radius, row } from '@/lib/theme';
 import type { MailDetail, ThreadItem } from '@/lib/types';
@@ -145,6 +146,7 @@ export default function MailDetailScreen() {
 }
 
 function Message({ item, sender, open, onToggle }: { item: ThreadItem; sender: string; open: boolean; onToggle: () => void }) {
+  const [opening, setOpening] = useState<string | null>(null);
   return (
     <View style={[styles.card, item.unread && { borderColor: colors.gold }]}>
       <Pressable onPress={onToggle} style={[styles.cardHead, { flexDirection: row }]}>
@@ -183,10 +185,16 @@ function Message({ item, sender, open, onToggle }: { item: ThreadItem; sender: s
               {item.attachments.map((a) => (
                 <Pressable
                   key={a.id}
-                  onPress={() => Alert.alert('المرفقات', 'فتح المرفقات من التطبيق في التحديث القادم — افتحها حاليًا من الموقع.')}
-                  style={[styles.attachment, { flexDirection: row }]}
+                  onPress={() => {
+                    tap();
+                    setOpening(a.id);
+                    openAttachment(a)
+                      .catch((err) => Alert.alert('تعذر فتح الملف', errorText(err)))
+                      .finally(() => setOpening(null));
+                  }}
+                  style={({ pressed }) => [styles.attachment, { flexDirection: row }, pressed && { backgroundColor: colors.navySoft }]}
                 >
-                  <Ionicons name="document-attach-outline" size={22} color={colors.navy} />
+                  {opening === a.id ? <ActivityIndicator color={colors.navy} /> : <Ionicons name="document-attach-outline" size={22} color={colors.navy} />}
                   <View style={{ flex: 1 }}>
                     <T style={{ fontSize: font.small, fontWeight: '600' }} numberOfLines={1}>
                       {a.name}

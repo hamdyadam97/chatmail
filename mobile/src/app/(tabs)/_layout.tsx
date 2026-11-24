@@ -10,10 +10,12 @@ import { colors } from '@/lib/theme';
 function useBadges() {
   const [mail, setMail] = useState(0);
   const [notes, setNotes] = useState(0);
+  const [approvals, setApprovals] = useState(0);
   useEffect(() => {
     const load = () => {
       api<{ inbox_unread: number }>('/correspondences/counts/').then((c) => setMail(c.inbox_unread)).catch(() => undefined);
       api<{ unread: number }>('/notifications/unread-count/').then((c) => setNotes(c.unread)).catch(() => undefined);
+      api<unknown[]>('/approvals/?box=pending_mine').then((l) => setApprovals(l.length)).catch(() => undefined);
     };
     load();
     const timer = setInterval(load, 60_000);
@@ -23,7 +25,7 @@ function useBadges() {
       sub.remove();
     };
   }, []);
-  return { mail, notes };
+  return { mail, notes, approvals };
 }
 
 export default function TabsLayout() {
@@ -45,6 +47,16 @@ export default function TabsLayout() {
           title: 'البريد',
           tabBarBadge: badges.mail || undefined,
           tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'mail' : 'mail-outline'} size={25} color={color as string} />,
+        }}
+      />
+      <Tabs.Screen
+        name="approvals"
+        options={{
+          title: 'الموافقات',
+          tabBarBadge: badges.approvals || undefined,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'checkmark-done-circle' : 'checkmark-done-circle-outline'} size={26} color={color as string} />
+          ),
         }}
       />
       <Tabs.Screen

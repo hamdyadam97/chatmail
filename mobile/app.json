@@ -36,7 +36,9 @@
         {
           "supportsRTL": true,
           "forcesRTL": true,
-          "supportedLocales": ["ar"]
+          "supportedLocales": [
+            "ar"
+          ]
         }
       ],
       [
@@ -52,6 +54,15 @@
         "expo-notifications",
         {
           "color": "#28255F"
+        }
+      ],
+      "expo-sharing",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "لاختيار صورة الطلب من معرض الصور.",
+          "cameraPermission": "لتصوير ورقة الطلب وإرفاقها.",
+          "microphonePermission": false
         }
       ]
     ],

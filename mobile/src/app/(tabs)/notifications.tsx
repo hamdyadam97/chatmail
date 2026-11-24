@@ -55,6 +55,7 @@ export default function NotificationsScreen() {
       void api(`/notifications/${n.id}/read/`, { method: 'POST' }).catch(() => undefined);
     }
     if (n.ref_type === 'correspondence' && n.ref_id) router.push(`/mail/${n.ref_id}`);
+    else if (n.ref_type === 'approval_request' && n.ref_id) router.push(`/approvals/${n.ref_id}`);
     else if (n.ref_type === 'login_approval') router.push('/login-approvals');
   };
 

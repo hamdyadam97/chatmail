@@ -5,6 +5,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { api, onSessionEnded, refreshSession, setAccessToken, tokens } from './api';
+import { clearDownloads } from './files';
 import { registerForPush, unregisterPush } from './push';
 import type { LoginResponse, User } from './types';
 
@@ -34,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOutLocal = useCallback(async () => {
     setAccessToken(null);
+    clearDownloads();
     await tokens.clearSession();
     setUser(null);
     setStatus('signedOut');
