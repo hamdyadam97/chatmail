@@ -3,9 +3,10 @@
 
 A browser is "known" for an account once it carries the long-lived httpOnly
 device cookie whose SHA-256 is on one of the account's TrustedDevice rows.
-Otherwise a correct password (and MFA) only opens a LoginApproval: a 6-digit
-code goes to the approvers — central ``accounts.manage_users`` holders — as
-an in-app notification and an e-mail; the user types it to finish the login,
+Otherwise a correct password (and MFA) only opens a LoginApproval, and the
+user chooses where its 6-digit code goes (user decision 2026-11-24): to
+themselves — their other signed-in browsers and personal e-mail — or to the
+approvers, central ``accounts.manage_users`` holders (in-app + e-mail); the user types it to finish the login,
 and the browser becomes known. Codes live 30 minutes, allow 5 attempts, and
 are sealed at rest. ``manage.py login_codes`` shows pending codes to root on
 the server (the way in when no approver can be reached).
@@ -18,7 +19,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import AuthenticationFailed, ValidationError
 
 from apps import vault
 from apps.audit.services import log, request_context
@@ -103,38 +104,98 @@ def code_of(approval: LoginApproval) -> str:
     return vault.open_(approval.code_enc, purpose="login-code", owner=approval.id).decode()
 
 
-def start(user, request) -> LoginApproval:
-    from apps.notifications.email import send_email
-    from apps.notifications.services import notify
+def self_destinations(user) -> dict:
+    """Where a code sent "to myself" can reach: the account's other signed-in
+    browsers (the code shows there under «طلبات الدخول») and its personal e-mail."""
+    from .models import UserSession
 
+    sessions = UserSession.objects.filter(
+        user=user, revoked_at__isnull=True, expires_at__gt=timezone.now()
+    ).exists()
+    return {"sessions": sessions, "email": bool(user.optional_email)}
+
+
+def start(user, request) -> LoginApproval:
+    """Open the approval; the code goes out once the user picks where
+    (send(): to themselves or to the administrators)."""
     from .api.services import parse_device_info
 
     code = f"{secrets.randbelow(10**6):06d}"
     label, _ = parse_device_info(request.META.get("HTTP_USER_AGENT", "") if request is not None else "")
     ctx = request_context(request)
-    with transaction.atomic():
-        approval = LoginApproval(
-            user=user,
-            device_label=label[:255],
-            ip=ctx.get("ip"),
-            expires_at=timezone.now() + timedelta(seconds=LOGIN_APPROVAL_TTL_SECONDS),
-        )
-        approval.code_enc = vault.seal(code.encode(), purpose="login-code", owner=approval.id)
-        approval.save(force_insert=True)
-        people = approvers()
-        notify([u.id for u in people], "login_approval", ref_type="login_approval", ref_id=approval.id)
-        name = user.full_name or user.username
-        send_email(
-            [u.optional_email for u in people],
-            f"كود دخول {name}",
-            f"{name} ({user.username}) يحاول الدخول من جهاز جديد: {label}.\n\n"
-            f"كود الدخول: {code}\n\n"
-            "أعطه الكود فقط إن تأكدت أنه هو (اتصال أو حضوريًا). الكود صالح 30 دقيقة.\n"
-            "إن لم يكن هو فارفض الطلب من صفحة «طلبات الدخول» وغيّر كلمة مروره.",
-        )
+    approval = LoginApproval(
+        user=user,
+        device_label=label[:255],
+        ip=ctx.get("ip"),
+        expires_at=timezone.now() + timedelta(seconds=LOGIN_APPROVAL_TTL_SECONDS),
+    )
+    approval.code_enc = vault.seal(code.encode(), purpose="login-code", owner=approval.id)
+    approval.save(force_insert=True)
     log(actor=None, action="login_approval_requested", target_type="user", target_id=user.id,
-        metadata={"approval_id": str(approval.id), "approvers": len(people)}, **ctx)
+        metadata={"approval_id": str(approval.id)}, **ctx)
     return approval
+
+
+def pending_by_token(token: str) -> LoginApproval:
+    try:
+        payload = decode_login_approval_token(token)
+    except TokenError:
+        raise AuthenticationFailed("انتهت صلاحية طلب الدخول — سجّل الدخول من جديد.")
+    approval = LoginApproval.objects.select_related("user").filter(id=payload["aid"], user_id=payload["sub"]).first()
+    if approval is None or approval.status != "pending" or approval.expires_at <= timezone.now():
+        raise AuthenticationFailed("انتهت صلاحية طلب الدخول أو رُفض — سجّل الدخول من جديد.")
+    return approval
+
+
+def send(approval: LoginApproval, to: str, request) -> None:
+    """Deliver the code: "self" = the account's signed-in browsers (notification;
+    the code shows on «طلبات الدخول») + its personal e-mail; "admin" = central
+    accounts.manage_users holders (notification + e-mail). Each once per request."""
+    from apps.notifications.email import send_email
+    from apps.notifications.services import notify
+
+    if to not in ("self", "admin"):
+        raise ValidationError({"to": "self | admin"})
+    if to in approval.channels:
+        return
+    user = approval.user
+    code = code_of(approval)
+    name = user.full_name or user.username
+    with transaction.atomic():
+        if to == "self":
+            where = self_destinations(user)
+            if not (where["sessions"] or where["email"]):
+                raise ValidationError({"to": "لا يوجد جهاز آخر مسجّل الدخول ولا بريد شخصي لحسابك — أرسل الكود للمسؤول."})
+            reached = 0
+            if where["sessions"]:
+                notify([user.id], "login_approval", ref_type="login_approval", ref_id=approval.id)
+                reached += 1
+            if where["email"]:
+                send_email(
+                    [user.optional_email],
+                    "كود الدخول لحسابك",
+                    f"هناك محاولة دخول لحسابك ({user.username}) من جهاز جديد: {approval.device_label}.\n\n"
+                    f"كود الدخول: {code}\n\n"
+                    "إن كنت أنت فاكتبه في صفحة الدخول (صالح 30 دقيقة).\n"
+                    "إن لم تكن أنت فلا تعطه لأحد، وغيّر كلمة مرورك فورًا.",
+                )
+                reached += 1
+        else:
+            people = approvers()
+            reached = len(people)
+            notify([u.id for u in people], "login_approval", ref_type="login_approval", ref_id=approval.id)
+            send_email(
+                [u.optional_email for u in people],
+                f"كود دخول {name}",
+                f"{name} ({user.username}) يحاول الدخول من جهاز جديد: {approval.device_label}.\n\n"
+                f"كود الدخول: {code}\n\n"
+                "أعطه الكود فقط إن تأكدت أنه هو (اتصال أو حضوريًا). الكود صالح 30 دقيقة.\n"
+                "إن لم يكن هو فارفض الطلب من صفحة «طلبات الدخول» وغيّر كلمة مروره.",
+            )
+        approval.sent_to = ",".join(sorted(approval.channels | {to}))
+        approval.save(update_fields=["sent_to"])
+    log(actor=None, action="login_approval_code_sent", target_type="user", target_id=user.id,
+        metadata={"approval_id": str(approval.id), "to": to, "reached": reached}, **request_context(request))
 
 
 def verify(token: str, code: str, request) -> LoginApproval:
@@ -172,9 +233,21 @@ def verify(token: str, code: str, request) -> LoginApproval:
 
 
 def pending():
+    """Every live request (manage.py login_codes)."""
     now = timezone.now()
     LoginApproval.objects.filter(status="pending", expires_at__lte=now).update(status="expired")
     return LoginApproval.objects.filter(status="pending").select_related("user").order_by("-created_at")
+
+
+def visible_to(viewer, *, is_approver: bool):
+    """Requests whose code `viewer` may see: their own sent "to myself", and —
+    for approvers — those sent to the administrators."""
+    from django.db.models import Q
+
+    q = Q(user=viewer, sent_to__contains="self")
+    if is_approver:
+        q |= Q(sent_to__contains="admin")
+    return pending().filter(q)
 
 
 def reject(approval: LoginApproval, by, request) -> None:

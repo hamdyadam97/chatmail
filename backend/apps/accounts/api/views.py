@@ -7,6 +7,7 @@ Contract (frontend depends on this):
                           (login and mfa/verify answer {approval_required:true,
                           approval_token} instead when the browser is new and
                           LOGIN_NEW_DEVICE_APPROVAL is on — see login_approval)
+  POST login/code/send/  -> {approval_token, to: self|admin} -> sends the code
   POST login/code/       -> {approval_token, code} -> like login, + device cookie
   GET  login-approvals/  -> pending new-browser logins with their codes (approvers)
   POST login-approvals/{id}/reject/
@@ -95,9 +96,13 @@ def _complete_login(user, request) -> Response:
     device = login_approval.known_device(user, request)
     if device is None and login_approval.enabled():
         approval = login_approval.start(user, request)
-        return Response(
-            {"approval_required": True, "mfa_required": False, "approval_token": issue_login_approval_token(approval)}
-        )
+        return Response({
+            "approval_required": True,
+            "mfa_required": False,
+            "approval_token": issue_login_approval_token(approval),
+            # The user picks where the code goes (login/code/send/).
+            "send_options": login_approval.self_destinations(user),
+        })
     raw_device = None
     if device is None:
         device, raw_device = _new_browser_device(user, request)
@@ -263,22 +268,37 @@ class LoginCodeView(APIView):
         return _issue_session(approval.user, request, device, raw_device)
 
 
-def _require_approver(request) -> None:
+class LoginCodeSendView(APIView):
+    """The user on the new browser picks where the code goes: "self" (their
+    signed-in browsers + personal e-mail) or "admin"."""
+
+    throttle_classes = [MFAVerifyIPThrottle]
+
+    def post(self, request):
+        approval = login_approval.pending_by_token(str(request.data.get("approval_token") or ""))
+        to = str(request.data.get("to") or "")
+        login_approval.send(approval, to, request)
+        return Response({"sent_to": sorted(approval.channels)})
+
+
+def _is_approver(request) -> bool:
     from apps.authorization.services import has_permission
 
-    if not has_permission(request.user, login_approval.APPROVER_PERMISSION, unit=None):
-        raise PermissionDenied("طلبات الدخول متاحة لمسؤولي الحسابات المركزيين فقط.")
+    return has_permission(request.user, login_approval.APPROVER_PERMISSION, unit=None)
 
 
 class LoginApprovalListView(APIView):
+    """Codes the caller may see: requests for their own account sent "to
+    myself", and — for approvers — those sent to the administrators."""
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        _require_approver(request)
-        rows = login_approval.pending()
+        rows = login_approval.visible_to(request.user, is_approver=_is_approver(request))
         return Response([
             {
                 "id": str(a.id),
+                "mine": a.user_id == request.user.id,
                 "user": {"id": str(a.user_id), "full_name": a.user.full_name, "username": a.user.username},
                 "device_label": a.device_label,
                 "ip": a.ip,
@@ -295,10 +315,11 @@ class LoginApprovalRejectView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, approval_id):
-        _require_approver(request)
-        approval = LoginApproval.objects.filter(id=approval_id).first()
+        approval = login_approval.visible_to(request.user, is_approver=_is_approver(request)).filter(
+            id=approval_id
+        ).first()
         if approval is None:
-            raise ValidationError({"detail": "طلب غير موجود."})
+            raise PermissionDenied("طلب غير موجود أو ليس لك.")
         login_approval.reject(approval, request.user, request)
         return Response(status=status.HTTP_204_NO_CONTENT)
 

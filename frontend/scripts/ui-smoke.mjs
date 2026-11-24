@@ -219,15 +219,22 @@ async function newDevice(browser, username, password, options = {}) {
   await page.fill('#username', username);
   await page.fill('#password', password);
   await page.click('button[type="submit"]');
-  // متصفح جديد: شاشة كود المسؤول (يُقرأ هنا من أمر الخادم؛ القسم 1أ يجرّب صفحة المسؤول).
+  // متصفح جديد: يختار أين يُرسل الكود (هنا: للمسؤول)، ثم الكود (يُقرأ هنا من أمر الخادم؛
+  // القسم 1أ يجرّب صفحة المسؤول وإرساله لنفسي).
   const codeInput = page.locator('input[aria-label="كود الدخول"]');
+  const chooser = page.locator('[data-testid="send-code-admin"]');
   const left = page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000, waitUntil: 'commit' }).then(() => 'in');
-  const asked = codeInput.waitFor({ timeout: 15000 }).then(() => 'code');
+  const asked = chooser.waitFor({ timeout: 15000 }).then(() => 'code');
   let neededCode = false;
-  if ((await Promise.race([left, asked]).catch(() => 'none')) === 'code' && !keepCodeScreen) {
-    neededCode = true;
-    await codeInput.fill(await consoleCode(username));
-    await page.getByRole('button', { name: 'تحقق' }).click();
+  if ((await Promise.race([left, asked]).catch(() => 'none')) === 'code') {
+    if (keepCodeScreen === 'choose') return { context, page, username, neededCode: true };
+    await chooser.click();
+    await codeInput.waitFor({ timeout: 15000 });
+    if (!keepCodeScreen) {
+      neededCode = true;
+      await codeInput.fill(await consoleCode(username));
+      await page.getByRole('button', { name: 'تحقق' }).click();
+    }
   }
   if (keepCodeScreen) return { context, page, username, neededCode: true };
   try {
@@ -322,6 +329,26 @@ async function main() {
       .then(() => true).catch(() => false);
     check('سارة دخلت بالكود الذي أعطاه المسؤول', saraIn);
     await waiting.context.close();
+
+    // «أرسله لي»: أحمد مسجّل الدخول في متصفح، فيصل الكود إليه هناك لا للمسؤول.
+    const ahmedNew = await newDevice(browser, 'ahmed', 'Ahmed@12345', { keepCodeScreen: 'choose' });
+    await ahmedNew.page.locator('[data-testid="send-code-self"]').click({ timeout: 10000 }).catch(() => undefined);
+    await ahmedNew.page.locator('input[aria-label="كود الدخول"]').waitFor({ timeout: 15000 }).catch(() => undefined);
+    await ahmed.page.goto(`${UI}/login-approvals`);
+    const myRow = ahmed.page.locator('[data-testid="login-approval"]', { hasText: 'محاولة دخول لحسابك' });
+    await myRow.waitFor({ timeout: 15000 }).catch(() => undefined);
+    const myCode = ((await myRow.locator('span.font-mono').innerText().catch(() => '')) || '').trim();
+    await admin.page.goto(`${UI}/login-approvals`);
+    await admin.page.locator('h2').first().waitFor({ timeout: 10000 }).catch(() => undefined);
+    await admin.page.waitForTimeout(800);
+    const adminSeesIt = await admin.page.locator('[data-testid="login-approval"]:has-text("ahmed")').count();
+    await ahmedNew.page.fill('input[aria-label="كود الدخول"]', myCode);
+    await ahmedNew.page.getByRole('button', { name: 'تحقق' }).click().catch(() => undefined);
+    const ahmedIn = await ahmedNew.page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000, waitUntil: 'commit' })
+      .then(() => true).catch(() => false);
+    check('«أرسله لي»: الكود يظهر في متصفح أحمد المسجّل لا عند المسؤول، ويدخل به',
+      /^\d{6}$/.test(myCode) && adminSeesIt === 0 && ahmedIn, `code=${myCode} admin=${adminSeesIt} in=${ahmedIn}`);
+    await ahmedNew.context.close();
 
     section('1ب) فلتر الموظفين بالفرع');
     await admin.page.goto(`${UI}/employees`);

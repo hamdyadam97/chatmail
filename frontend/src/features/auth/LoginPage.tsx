@@ -1,14 +1,27 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, Eye, EyeOff, KeyRound, Lock, MonitorSmartphone, ShieldCheck, User } from 'lucide-react';
-import { toUserMessage } from '../../shared/api';
+import { AlertCircle, Eye, EyeOff, KeyRound, Lock, MonitorSmartphone, ShieldCheck, User, UserCog } from 'lucide-react';
+import { authApi, toUserMessage, type LoginCodeSendOptions } from '../../shared/api';
 import { Button } from '../../shared/ui';
 import { WhatsAppSupport } from '../../shared/ui/WhatsAppSupport';
 import { cn } from '../../shared/lib/cn';
 import { GROUP_INSTITUTES, InstituteLogo, OWNER } from '../../shared/brand';
 import { useAuth } from './AuthContext';
 
-type Step = 'password' | 'otp' | 'code';
+type Step = 'password' | 'otp' | 'choose' | 'code';
+type Channel = 'self' | 'admin';
+
+function codeHint(sentTo: Channel[], options: LoginCodeSendOptions): string {
+  const parts: string[] = [];
+  if (sentTo.includes('self')) {
+    const where = [options.sessions && 'جهازك الآخر المسجّل الدخول (صفحة «طلبات الدخول» أو الإشعارات)', options.email && 'بريدك الشخصي']
+      .filter(Boolean)
+      .join(' وإلى ');
+    parts.push(`أُرسل الكود إلى ${where}`);
+  }
+  if (sentTo.includes('admin')) parts.push('أُرسل الكود لمسؤول النظام — اطلبه منه');
+  return `${parts.join('، و')}. اكتبه هنا (صالح 30 دقيقة)، وبعدها يُعرف هذا الجهاز ولن يُطلب الكود مرة أخرى.`;
+}
 
 const POINTS = [
   { icon: Lock, title: 'محفوظة مشفّرة', text: 'المراسلات والمرفقات تُحفظ مشفّرة، ولا يطلع عليها إلا أطرافها.' },
@@ -74,6 +87,32 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [mfaToken, setMfaToken] = useState('');
   const [approvalToken, setApprovalToken] = useState('');
+  const [sendOptions, setSendOptions] = useState<LoginCodeSendOptions>({ sessions: false, email: false });
+  const [sentTo, setSentTo] = useState<Channel[]>([]);
+  const canSendSelf = sendOptions.sessions || sendOptions.email;
+
+  const startApproval = (token: string, options: LoginCodeSendOptions) => {
+    setApprovalToken(token);
+    setSendOptions(options);
+    setSentTo([]);
+    setOtp('');
+    setStep('choose');
+  };
+
+  const sendCode = async (to: Channel) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const r = await authApi.sendLoginCode(approvalToken, to);
+      setSentTo(r.sent_to.filter((c): c is Channel => c === 'self' || c === 'admin'));
+      setOtp('');
+      setStep('code');
+    } catch (err) {
+      setError(toUserMessage(err, 'تعذر إرسال الكود، حاول مجددًا'));
+    } finally {
+      setLoading(false);
+    }
+  };
   const [otp, setOtp] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -92,9 +131,7 @@ export default function LoginPage() {
       if (result.ok) {
         navigate('/', { replace: true });
       } else if ('approvalToken' in result) {
-        setApprovalToken(result.approvalToken);
-        setOtp('');
-        setStep('code');
+        startApproval(result.approvalToken, result.sendOptions);
       } else {
         setMfaToken(result.mfaToken);
         setOtp('');
@@ -121,9 +158,7 @@ export default function LoginPage() {
       if (result.ok) {
         navigate('/', { replace: true });
       } else if ('approvalToken' in result) {
-        setApprovalToken(result.approvalToken);
-        setOtp('');
-        setStep('code');
+        startApproval(result.approvalToken, result.sendOptions);
       }
     } catch (err) {
       setError(toUserMessage(err, step === 'code' ? 'الكود غير صحيح' : 'تعذر التحقق من رمز MFA، حاول مجددًا'));
@@ -236,6 +271,57 @@ export default function LoginPage() {
               </p>
               <InstitutesStrip className="mt-10 lg:hidden" />
             </>
+          ) : step === 'choose' ? (
+            <>
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
+                <KeyRound className="h-6 w-6" />
+              </span>
+              <h2 className="mt-4 text-2xl font-bold text-gray-900">دخول من جهاز جديد</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                هذا أول دخول لحسابك من هذا المتصفح، فيلزم كود من 6 أرقام. أين نرسل الكود؟
+              </p>
+              <div className="mt-8 space-y-3">
+                <button
+                  type="button"
+                  disabled={!canSendSelf || loading}
+                  onClick={() => void sendCode('self')}
+                  className="flex w-full items-start gap-3 rounded-xl border border-gray-300 p-4 text-start transition hover:border-primary-500 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-gray-300 disabled:hover:bg-transparent"
+                  data-testid="send-code-self"
+                >
+                  <MonitorSmartphone className="mt-0.5 h-5 w-5 shrink-0 text-primary-700" />
+                  <span>
+                    <span className="block font-semibold text-gray-900">أرسله لي</span>
+                    <span className="block text-xs leading-5 text-gray-500">
+                      {canSendSelf
+                        ? [sendOptions.sessions && 'إلى جهازي الآخر المسجّل الدخول', sendOptions.email && 'إلى بريدي الشخصي'].filter(Boolean).join(' و')
+                        : 'غير متاح: لا يوجد جهاز آخر مسجّل الدخول بحسابك ولا بريد شخصي.'}
+                    </span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void sendCode('admin')}
+                  className="flex w-full items-start gap-3 rounded-xl border border-gray-300 p-4 text-start transition hover:border-primary-500 hover:bg-primary-50 disabled:opacity-50"
+                  data-testid="send-code-admin"
+                >
+                  <UserCog className="mt-0.5 h-5 w-5 shrink-0 text-primary-700" />
+                  <span>
+                    <span className="block font-semibold text-gray-900">أرسله لمسؤول النظام</span>
+                    <span className="block text-xs leading-5 text-gray-500">يصله الكود فتطلبه منه (اتصال أو واتساب).</span>
+                  </span>
+                </button>
+                {error && (
+                  <div role="alert" className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-sm text-red-700 ring-1 ring-red-100">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    {error}
+                  </div>
+                )}
+                <Button type="button" variant="ghost" className="w-full" onClick={() => setStep('password')}>
+                  رجوع
+                </Button>
+              </div>
+            </>
           ) : (
             <>
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
@@ -244,7 +330,7 @@ export default function LoginPage() {
               <h2 className="mt-4 text-2xl font-bold text-gray-900">{step === 'code' ? 'دخول من جهاز جديد' : 'التحقق الثنائي'}</h2>
               <p className="mt-1 text-sm text-gray-500">
                 {step === 'code'
-                  ? 'هذا أول دخول لحسابك من هذا المتصفح. أُرسل كود من 6 أرقام لمسؤول النظام — اطلبه منه واكتبه هنا (صالح 30 دقيقة). بعدها يُعرف هذا الجهاز ولن يُطلب الكود مرة أخرى.'
+                  ? codeHint(sentTo, sendOptions)
                   : 'أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة على هاتفك.'}
               </p>
 
@@ -272,6 +358,16 @@ export default function LoginPage() {
                 <Button type="submit" loading={loading} disabled={otp.length !== 6} className="h-12 w-full rounded-xl text-base">
                   تحقق
                 </Button>
+                {step === 'code' && !sentTo.includes('admin') && (
+                  <button type="button" disabled={loading} onClick={() => void sendCode('admin')} className="w-full text-center text-sm text-primary-700 hover:underline">
+                    لم يصلني؟ أرسله لمسؤول النظام
+                  </button>
+                )}
+                {step === 'code' && !sentTo.includes('self') && canSendSelf && (
+                  <button type="button" disabled={loading} onClick={() => void sendCode('self')} className="w-full text-center text-sm text-primary-700 hover:underline">
+                    أرسله لي أيضًا
+                  </button>
+                )}
                 <Button type="button" variant="ghost" className="w-full" onClick={() => setStep('password')}>
                   رجوع
                 </Button>

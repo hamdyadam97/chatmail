@@ -12,7 +12,8 @@ export interface RailItem {
 }
 
 /** مسارات قسم الإدارة — لا تُفتح لغير مدير النظام والمدير التنفيذي. */
-export const ADMIN_PATHS = ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/request-types', '/reports', '/audit-logs', '/login-approvals'];
+export const ADMIN_PATHS = ['/admin', '/employees', '/institutes', '/branches', '/departments', '/roles', '/request-types', '/reports', '/audit-logs'];
+// «/login-approvals» ليس منها: الموظف يرى فيها كود دخوله إن أرسله لنفسه.
 /** الأرشيف ضمن القسم في الشريط، لكن رابطه يبقى لضابط الأرشيف (الخادم لا يعرضه إلا للضباط). */
 const ADMIN_MATCH = [...ADMIN_PATHS, '/archive'];
 

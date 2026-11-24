@@ -9,4 +9,4 @@ export {
   rawFetch,
 } from './client';
 export { authApi, isApprovalChallenge, isMfaChallenge } from './auth';
-export type { LoginApprovalChallenge, LoginResponse, LoginSuccess, MfaChallenge, MfaVerifyResponse, User } from './auth';
+export type { LoginApprovalChallenge, LoginCodeSendOptions, LoginResponse, LoginSuccess, MfaChallenge, MfaVerifyResponse, User } from './auth';

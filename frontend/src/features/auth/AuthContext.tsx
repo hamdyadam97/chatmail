@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { authApi, isApprovalChallenge, isMfaChallenge, setAccessToken, type User } from '../../shared/api';
+import { authApi, isApprovalChallenge, isMfaChallenge, setAccessToken, type LoginCodeSendOptions, type User } from '../../shared/api';
 import { disablePush } from '../notifications/push';
 
 export type AuthStatus = 'booting' | 'authenticated' | 'guest';
@@ -8,7 +8,7 @@ export type LoginResult =
   | { ok: true }
   | { ok: false; mfaToken: string }
   /** متصفح جديد: الكود عند مسؤول النظام. */
-  | { ok: false; approvalToken: string };
+  | { ok: false; approvalToken: string; sendOptions: LoginCodeSendOptions };
 
 interface AuthContextValue {
   status: AuthStatus;
@@ -52,7 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string): Promise<LoginResult> => {
     const result = await authApi.login(username, password);
     if (isMfaChallenge(result)) return { ok: false, mfaToken: result.mfa_token };
-    if (isApprovalChallenge(result)) return { ok: false, approvalToken: result.approval_token };
+    if (isApprovalChallenge(result)) return { ok: false, approvalToken: result.approval_token, sendOptions: result.send_options ?? { sessions: false, email: false } };
     setAccessToken(result.access);
     setUser(result.user);
     setStatus('authenticated');
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const verifyMfa = useCallback(async (mfaToken: string, otp: string): Promise<LoginResult> => {
     const result = await authApi.verifyMfa(mfaToken, otp);
-    if (isApprovalChallenge(result)) return { ok: false, approvalToken: result.approval_token };
+    if (isApprovalChallenge(result)) return { ok: false, approvalToken: result.approval_token, sendOptions: result.send_options ?? { sessions: false, email: false } };
     setAccessToken(result.access);
     setUser(result.user);
     setStatus('authenticated');

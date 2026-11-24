@@ -5,6 +5,8 @@ import { apiFetch, toUserMessage } from '../../shared/api';
 
 interface PendingLogin {
   id: string;
+  /** محاولة دخول لحسابي أرسلتُ كودها لنفسي. */
+  mine: boolean;
   user: { id: string; full_name: string; username: string };
   device_label: string;
   ip: string | null;
@@ -16,7 +18,7 @@ interface PendingLogin {
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit' });
 
-/** طلبات الدخول من أجهزة جديدة: الكود يُعطى للموظف بعد التأكد من هويته. */
+/** طلبات الدخول من أجهزة جديدة: كودي (إن أرسلته لنفسي)، وللمسؤول أكواد من أرسلوها له. */
 export function LoginApprovalsPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
@@ -34,7 +36,7 @@ export function LoginApprovalsPage() {
       <div>
         <h2 className="text-lg font-semibold text-gray-900">طلبات الدخول من أجهزة جديدة</h2>
         <p className="mt-1 text-sm text-gray-500">
-          تأكد أن الشخص هو صاحب الحساب فعلًا (اتصال أو حضوريًا) قبل أن تعطيه الكود. إن لم يكن هو، ارفض الطلب وغيّر كلمة مروره.
+          محاولة دخول لحسابك: إن كنت أنت فاكتب الكود في الجهاز الجديد، وإلا فاضغط «ليس أنا» وغيّر كلمة مرورك. ولطلبات غيرك (للمسؤول): تأكد أن الشخص هو صاحب الحساب فعلًا قبل أن تعطيه الكود.
         </p>
       </div>
       {isLoading ? (
@@ -51,7 +53,13 @@ export function LoginApprovalsPage() {
             <div key={r.id} className="flex flex-wrap items-center gap-4 p-4" data-testid="login-approval">
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-gray-900">
-                  {r.user.full_name} <span className="text-xs text-gray-500">({r.user.username})</span>
+                  {r.mine ? (
+                    <span className="text-primary-800">محاولة دخول لحسابك من جهاز جديد</span>
+                  ) : (
+                    <>
+                      {r.user.full_name} <span className="text-xs text-gray-500">({r.user.username})</span>
+                    </>
+                  )}
                 </p>
                 <p className="text-xs text-gray-500">
                   {r.device_label}
@@ -63,7 +71,7 @@ export function LoginApprovalsPage() {
                 {r.code}
               </span>
               <Button variant="outline" size="sm" loading={reject.isPending && reject.variables === r.id} onClick={() => reject.mutate(r.id)}>
-                رفض
+                {r.mine ? 'ليس أنا' : 'رفض'}
               </Button>
             </div>
           ))}

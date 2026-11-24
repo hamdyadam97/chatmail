@@ -1,6 +1,8 @@
-"""New-browser login needs an administrator's code (user decision): known
-browsers log in straight away, codes go to central account admins in-app and
-by e-mail, are single-use, expire, lock after 5 tries, and can be rejected."""
+"""New-browser login needs a one-time code (user decision): known browsers log
+in straight away; the user picks where the code goes — to central account
+admins (in-app + e-mail) or to themselves (their signed-in browsers +
+personal e-mail); codes are single-use, expire, lock after 5 tries, and can
+be rejected."""
 import pytest
 from django.core.management import call_command
 from rest_framework.test import APIClient
@@ -61,11 +63,19 @@ def _approve_admin_browser(client):
 
 def test_new_browser_needs_the_admin_code_then_is_known(people, mails, django_capture_on_commit_callbacks):
     browser = APIClient()
-    with django_capture_on_commit_callbacks(execute=True):
-        r = login(browser, "la_emp")
+    r = login(browser, "la_emp")
     body = r.json()
     assert r.status_code == 200 and body["approval_required"] and "access" not in body
+    assert body["send_options"] == {"sessions": False, "email": False}
     assert not UserSession.objects.filter(user=people["emp"]).exists()
+    # nothing goes out until the user picks where
+    assert not Notification.objects.filter(kind="login_approval").exists() and not mails
+    # no other browser and no personal e-mail: "to myself" is refused
+    send = f"{AUTH}login/code/send/"
+    assert browser.post(send, {"approval_token": body["approval_token"], "to": "self"}, format="json").status_code == 400
+    with django_capture_on_commit_callbacks(execute=True):
+        sent = browser.post(send, {"approval_token": body["approval_token"], "to": "admin"}, format="json")
+    assert sent.json() == {"sent_to": ["admin"]}
     code = _code_for("la_emp")
     # admin told in-app (no code in the notification) and by e-mail (with the code)
     n = Notification.objects.get(user=people["admin"], kind="login_approval")
@@ -104,6 +114,9 @@ def _code_for_any(resp):
 def test_admins_list_and_reject_others_cannot(people):
     h_admin = _approve_admin_browser(APIClient())
     r = login(APIClient(), "la_emp").json()
+    # not sent yet: not on the admins' page
+    assert APIClient().get(f"{AUTH}login-approvals/", **h_admin).json() == []
+    APIClient().post(f"{AUTH}login/code/send/", {"approval_token": r["approval_token"], "to": "admin"}, format="json")
     rows = APIClient().get(f"{AUTH}login-approvals/", **h_admin).json()
     assert [x["user"]["username"] for x in rows] == ["la_emp"] and len(rows[0]["code"]) == 6
     # the employee (once signed in on an approved browser) cannot see codes
@@ -112,7 +125,9 @@ def test_admins_list_and_reject_others_cannot(people):
     emp_browser.post(f"{AUTH}login/code/", {"approval_token": first["approval_token"], "code": _code_for_any(first)},
                      format="json")
     h_emp = auth_headers(login(emp_browser, "la_emp").json()["access"])
-    assert APIClient().get(f"{AUTH}login-approvals/", **h_emp).status_code == 403
+    # an employee sees no one's codes (and none of their own sent to the admins)
+    assert APIClient().get(f"{AUTH}login-approvals/", **h_emp).json() == []
+    assert APIClient().post(f"{AUTH}login-approvals/{rows[0]['id']}/reject/", **h_emp).status_code == 403
     assert APIClient().post(f"{AUTH}login-approvals/{rows[0]['id']}/reject/", **h_admin).status_code == 204
     assert APIClient().post(f"{AUTH}login/code/", {"approval_token": r["approval_token"], "code": rows[0]["code"]},
                             format="json").status_code == 401
@@ -168,3 +183,39 @@ def test_browser_known_through_the_old_shared_cookie_keeps_working(people):
     assert "access" in r.json() and r.cookies[own].value == raw
     browser.cookies.pop(login_approval.DEVICE_COOKIE)
     assert "access" in login(browser, "la_emp").json()
+
+
+def test_code_sent_to_myself_shows_on_my_signed_in_browser(people, mails, django_capture_on_commit_callbacks):
+    emp = people["emp"]
+    emp.optional_email = "me@home.test"
+    emp.save()
+    # the employee is signed in on a first browser (approved earlier)
+    first = APIClient()
+    r = login(first, "la_emp").json()
+    first.post(f"{AUTH}login/code/", {"approval_token": r["approval_token"], "code": _code_for_any(r)}, format="json")
+    h_first = auth_headers(login(first, "la_emp").json()["access"])
+    h_admin = _approve_admin_browser(APIClient())
+
+    other = APIClient()
+    body = login(other, "la_emp").json()
+    assert body["send_options"] == {"sessions": True, "email": True}
+    with django_capture_on_commit_callbacks(execute=True):
+        sent = other.post(f"{AUTH}login/code/send/", {"approval_token": body["approval_token"], "to": "self"},
+                          format="json")
+    assert sent.json() == {"sent_to": ["self"]}
+    code = _code_for_any(body)
+    # to the employee: a notification and their personal e-mail — not to the admins
+    assert Notification.objects.filter(user=emp, kind="login_approval").exists()
+    assert not Notification.objects.filter(user=people["admin"], kind="login_approval",
+                                           ref_id=LoginApproval.objects.get(user=emp, status="pending").id).exists()
+    assert [m["to"] for m in mails] == [[{"email": "me@home.test"}]] and code in mails[0]["textContent"]
+    rows = APIClient().get(f"{AUTH}login-approvals/", **h_first).json()
+    assert [(x["mine"], x["code"]) for x in rows] == [(True, code)]
+    assert APIClient().get(f"{AUTH}login-approvals/", **h_admin).json() == []
+    # changing their mind: also to the admin
+    other.post(f"{AUTH}login/code/send/", {"approval_token": body["approval_token"], "to": "admin"}, format="json")
+    assert [x["code"] for x in APIClient().get(f"{AUTH}login-approvals/", **h_admin).json()] == [code]
+    # "not me" from the signed-in browser rejects it
+    assert APIClient().post(f"{AUTH}login-approvals/{rows[0]['id']}/reject/", **h_first).status_code == 204
+    assert other.post(f"{AUTH}login/code/", {"approval_token": body["approval_token"], "code": code},
+                      format="json").status_code == 401

@@ -25,11 +25,20 @@ export interface MfaChallenge {
 }
 
 /** Password (and MFA) accepted from a browser this account never used:
- *  the session opens only with the code sent to the administrators. */
+ *  the session opens only with a one-time code, sent where the user picks
+ *  (their own signed-in browsers / personal e-mail, or the administrators). */
+export interface LoginCodeSendOptions {
+  /** Another browser of this account is signed in (the code shows there). */
+  sessions: boolean;
+  /** The account has a personal e-mail. */
+  email: boolean;
+}
+
 export interface LoginApprovalChallenge {
   approval_required: true;
   mfa_required: false;
   approval_token: string;
+  send_options?: LoginCodeSendOptions;
 }
 
 export type LoginResponse = LoginSuccess | MfaChallenge | LoginApprovalChallenge;
@@ -62,7 +71,15 @@ export const authApi = {
       body: { mfa_token, otp },
     }),
 
-  /** New browser: the code the administrators gave. */
+  /** New browser: send the code to myself or to the administrators. */
+  sendLoginCode: (approval_token: string, to: 'self' | 'admin') =>
+    apiFetch<{ sent_to: string[] }>('/auth/login/code/send/', {
+      method: 'POST',
+      auth: false,
+      body: { approval_token, to },
+    }),
+
+  /** New browser: the code (from my other device, my e-mail, or the administrators). */
   loginCode: (approval_token: string, code: string) =>
     apiFetch<MfaVerifyResponse>('/auth/login/code/', {
       method: 'POST',
