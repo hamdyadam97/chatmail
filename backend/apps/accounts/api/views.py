@@ -270,7 +270,7 @@ class LoginCodeView(APIView):
 
 class LoginCodeSendView(APIView):
     """The user on the new browser picks where the code goes: "self" (their
-    signed-in browsers + personal e-mail) or "admin"."""
+    other signed-in browsers) or "admin"."""
 
     throttle_classes = [MFAVerifyIPThrottle]
 

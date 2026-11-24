@@ -52,7 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string): Promise<LoginResult> => {
     const result = await authApi.login(username, password);
     if (isMfaChallenge(result)) return { ok: false, mfaToken: result.mfa_token };
-    if (isApprovalChallenge(result)) return { ok: false, approvalToken: result.approval_token, sendOptions: result.send_options ?? { sessions: false, email: false } };
+    if (isApprovalChallenge(result)) return { ok: false, approvalToken: result.approval_token, sendOptions: result.send_options ?? { sessions: false } };
     setAccessToken(result.access);
     setUser(result.user);
     setStatus('authenticated');
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const verifyMfa = useCallback(async (mfaToken: string, otp: string): Promise<LoginResult> => {
     const result = await authApi.verifyMfa(mfaToken, otp);
-    if (isApprovalChallenge(result)) return { ok: false, approvalToken: result.approval_token, sendOptions: result.send_options ?? { sessions: false, email: false } };
+    if (isApprovalChallenge(result)) return { ok: false, approvalToken: result.approval_token, sendOptions: result.send_options ?? { sessions: false } };
     setAccessToken(result.access);
     setUser(result.user);
     setStatus('authenticated');

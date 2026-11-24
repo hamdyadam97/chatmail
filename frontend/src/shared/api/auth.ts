@@ -26,12 +26,10 @@ export interface MfaChallenge {
 
 /** Password (and MFA) accepted from a browser this account never used:
  *  the session opens only with a one-time code, sent where the user picks
- *  (their own signed-in browsers / personal e-mail, or the administrators). */
+ *  (their own other signed-in browser, or the administrators). */
 export interface LoginCodeSendOptions {
   /** Another browser of this account is signed in (the code shows there). */
   sessions: boolean;
-  /** The account has a personal e-mail. */
-  email: boolean;
 }
 
 export interface LoginApprovalChallenge {

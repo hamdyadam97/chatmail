@@ -5,7 +5,7 @@ A browser is "known" for an account once it carries the long-lived httpOnly
 device cookie whose SHA-256 is on one of the account's TrustedDevice rows.
 Otherwise a correct password (and MFA) only opens a LoginApproval, and the
 user chooses where its 6-digit code goes (user decision 2026-11-24): to
-themselves — their other signed-in browsers and personal e-mail — or to the
+themselves — their other signed-in browsers (never e-mail) — or to the
 approvers, central ``accounts.manage_users`` holders (in-app + e-mail); the user types it to finish the login,
 and the browser becomes known. Codes live 30 minutes, allow 5 attempts, and
 are sealed at rest. ``manage.py login_codes`` shows pending codes to root on
@@ -106,13 +106,14 @@ def code_of(approval: LoginApproval) -> str:
 
 def self_destinations(user) -> dict:
     """Where a code sent "to myself" can reach: the account's other signed-in
-    browsers (the code shows there under «طلبات الدخول») and its personal e-mail."""
+    browsers only (the code shows there under «طلبات الدخول»). Never the
+    personal e-mail (user decision 2026-11-24)."""
     from .models import UserSession
 
     sessions = UserSession.objects.filter(
         user=user, revoked_at__isnull=True, expires_at__gt=timezone.now()
     ).exists()
-    return {"sessions": sessions, "email": bool(user.optional_email)}
+    return {"sessions": sessions}
 
 
 def start(user, request) -> LoginApproval:
@@ -149,7 +150,7 @@ def pending_by_token(token: str) -> LoginApproval:
 
 def send(approval: LoginApproval, to: str, request) -> None:
     """Deliver the code: "self" = the account's signed-in browsers (notification;
-    the code shows on «طلبات الدخول») + its personal e-mail; "admin" = central
+    the code shows on «طلبات الدخول»); "admin" = central
     accounts.manage_users holders (notification + e-mail). Each once per request."""
     from apps.notifications.email import send_email
     from apps.notifications.services import notify
@@ -163,23 +164,10 @@ def send(approval: LoginApproval, to: str, request) -> None:
     name = user.full_name or user.username
     with transaction.atomic():
         if to == "self":
-            where = self_destinations(user)
-            if not (where["sessions"] or where["email"]):
-                raise ValidationError({"to": "لا يوجد جهاز آخر مسجّل الدخول ولا بريد شخصي لحسابك — أرسل الكود للمسؤول."})
-            reached = 0
-            if where["sessions"]:
-                notify([user.id], "login_approval", ref_type="login_approval", ref_id=approval.id)
-                reached += 1
-            if where["email"]:
-                send_email(
-                    [user.optional_email],
-                    "كود الدخول لحسابك",
-                    f"هناك محاولة دخول لحسابك ({user.username}) من جهاز جديد: {approval.device_label}.\n\n"
-                    f"كود الدخول: {code}\n\n"
-                    "إن كنت أنت فاكتبه في صفحة الدخول (صالح 30 دقيقة).\n"
-                    "إن لم تكن أنت فلا تعطه لأحد، وغيّر كلمة مرورك فورًا.",
-                )
-                reached += 1
+            if not self_destinations(user)["sessions"]:
+                raise ValidationError({"to": "لا يوجد جهاز آخر مسجّل الدخول بحسابك — أرسل الكود للمسؤول."})
+            notify([user.id], "login_approval", ref_type="login_approval", ref_id=approval.id)
+            reached = 1
         else:
             people = approvers()
             reached = len(people)

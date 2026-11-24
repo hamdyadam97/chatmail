@@ -207,7 +207,7 @@ class LoginApproval(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
     # Where the user asked the code to go (user decision 2026-11-24): "self"
-    # (their own signed-in browsers + personal e-mail) and/or "admin".
+    # (their own signed-in browsers) and/or "admin".
     # Comma-separated; empty = not sent yet.
     sent_to = models.CharField(max_length=32, blank=True, default="")
 

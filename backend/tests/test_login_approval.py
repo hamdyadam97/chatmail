@@ -1,7 +1,7 @@
 """New-browser login needs a one-time code (user decision): known browsers log
 in straight away; the user picks where the code goes — to central account
-admins (in-app + e-mail) or to themselves (their signed-in browsers +
-personal e-mail); codes are single-use, expire, lock after 5 tries, and can
+admins (in-app + e-mail) or to themselves (their other signed-in browsers,
+never e-mail); codes are single-use, expire, lock after 5 tries, and can
 be rejected."""
 import pytest
 from django.core.management import call_command
@@ -66,11 +66,11 @@ def test_new_browser_needs_the_admin_code_then_is_known(people, mails, django_ca
     r = login(browser, "la_emp")
     body = r.json()
     assert r.status_code == 200 and body["approval_required"] and "access" not in body
-    assert body["send_options"] == {"sessions": False, "email": False}
+    assert body["send_options"] == {"sessions": False}
     assert not UserSession.objects.filter(user=people["emp"]).exists()
     # nothing goes out until the user picks where
     assert not Notification.objects.filter(kind="login_approval").exists() and not mails
-    # no other browser and no personal e-mail: "to myself" is refused
+    # no other signed-in browser: "to myself" is refused
     send = f"{AUTH}login/code/send/"
     assert browser.post(send, {"approval_token": body["approval_token"], "to": "self"}, format="json").status_code == 400
     with django_capture_on_commit_callbacks(execute=True):
@@ -198,17 +198,17 @@ def test_code_sent_to_myself_shows_on_my_signed_in_browser(people, mails, django
 
     other = APIClient()
     body = login(other, "la_emp").json()
-    assert body["send_options"] == {"sessions": True, "email": True}
+    assert body["send_options"] == {"sessions": True}
     with django_capture_on_commit_callbacks(execute=True):
         sent = other.post(f"{AUTH}login/code/send/", {"approval_token": body["approval_token"], "to": "self"},
                           format="json")
     assert sent.json() == {"sent_to": ["self"]}
     code = _code_for_any(body)
-    # to the employee: a notification and their personal e-mail — not to the admins
+    # to the employee's signed-in browser — never their personal e-mail, nor the admins
     assert Notification.objects.filter(user=emp, kind="login_approval").exists()
     assert not Notification.objects.filter(user=people["admin"], kind="login_approval",
                                            ref_id=LoginApproval.objects.get(user=emp, status="pending").id).exists()
-    assert [m["to"] for m in mails] == [[{"email": "me@home.test"}]] and code in mails[0]["textContent"]
+    assert not mails
     rows = APIClient().get(f"{AUTH}login-approvals/", **h_first).json()
     assert [(x["mine"], x["code"]) for x in rows] == [(True, code)]
     assert APIClient().get(f"{AUTH}login-approvals/", **h_admin).json() == []

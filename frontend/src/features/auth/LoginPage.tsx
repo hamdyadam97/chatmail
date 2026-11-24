@@ -11,14 +11,9 @@ import { useAuth } from './AuthContext';
 type Step = 'password' | 'otp' | 'choose' | 'code';
 type Channel = 'self' | 'admin';
 
-function codeHint(sentTo: Channel[], options: LoginCodeSendOptions): string {
+function codeHint(sentTo: Channel[]): string {
   const parts: string[] = [];
-  if (sentTo.includes('self')) {
-    const where = [options.sessions && 'جهازك الآخر المسجّل الدخول (صفحة «طلبات الدخول» أو الإشعارات)', options.email && 'بريدك الشخصي']
-      .filter(Boolean)
-      .join(' وإلى ');
-    parts.push(`أُرسل الكود إلى ${where}`);
-  }
+  if (sentTo.includes('self')) parts.push('أُرسل الكود إلى جهازك الآخر المسجّل الدخول (صفحة «طلبات الدخول» أو الإشعارات)');
   if (sentTo.includes('admin')) parts.push('أُرسل الكود لمسؤول النظام — اطلبه منه');
   return `${parts.join('، و')}. اكتبه هنا (صالح 30 دقيقة)، وبعدها يُعرف هذا الجهاز ولن يُطلب الكود مرة أخرى.`;
 }
@@ -87,9 +82,9 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [mfaToken, setMfaToken] = useState('');
   const [approvalToken, setApprovalToken] = useState('');
-  const [sendOptions, setSendOptions] = useState<LoginCodeSendOptions>({ sessions: false, email: false });
+  const [sendOptions, setSendOptions] = useState<LoginCodeSendOptions>({ sessions: false });
   const [sentTo, setSentTo] = useState<Channel[]>([]);
-  const canSendSelf = sendOptions.sessions || sendOptions.email;
+  const canSendSelf = sendOptions.sessions;
 
   const startApproval = (token: string, options: LoginCodeSendOptions) => {
     setApprovalToken(token);
@@ -293,8 +288,8 @@ export default function LoginPage() {
                     <span className="block font-semibold text-gray-900">أرسله لي</span>
                     <span className="block text-xs leading-5 text-gray-500">
                       {canSendSelf
-                        ? [sendOptions.sessions && 'إلى جهازي الآخر المسجّل الدخول', sendOptions.email && 'إلى بريدي الشخصي'].filter(Boolean).join(' و')
-                        : 'غير متاح: لا يوجد جهاز آخر مسجّل الدخول بحسابك ولا بريد شخصي.'}
+                        ? 'إلى جهازي الآخر المسجّل الدخول بحسابي'
+                        : 'غير متاح: لا يوجد جهاز آخر مسجّل الدخول بحسابك.'}
                     </span>
                   </span>
                 </button>
@@ -330,7 +325,7 @@ export default function LoginPage() {
               <h2 className="mt-4 text-2xl font-bold text-gray-900">{step === 'code' ? 'دخول من جهاز جديد' : 'التحقق الثنائي'}</h2>
               <p className="mt-1 text-sm text-gray-500">
                 {step === 'code'
-                  ? codeHint(sentTo, sendOptions)
+                  ? codeHint(sentTo)
                   : 'أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة على هاتفك.'}
               </p>
 
