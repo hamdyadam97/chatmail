@@ -1,4 +1,5 @@
-/** توقيعي: يُعرض المحفوظ، ويُرسم من جديد بالإصبع. */
+/** توقيعي: يُعرض المحفوظ، ويُرسم من جديد بالإصبع أو يُصوَّر من ورقة (الخادم يزيل الورقة والظل). */
+import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
 
@@ -19,12 +20,45 @@ export default function SignatureScreen() {
 
   useEffect(load, [load]);
 
+  const [uploading, setUploading] = useState(false);
+  const fromPhoto = async (camera: boolean) => {
+    if (camera) {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) return Alert.alert('الكاميرا غير مسموحة', 'اسمح للتطبيق باستخدام الكاميرا من إعدادات الجهاز.');
+    }
+    // القص (allowsEditing) على التوقيع وحده يصغّر الصورة ويُبعد الطاولة والأصابع.
+    const opts: ImagePicker.ImagePickerOptions = { mediaTypes: 'images', quality: 0.5, base64: true, allowsEditing: true };
+    const r = camera ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
+    const b64 = !r.canceled ? r.assets[0]?.base64 : null;
+    if (!b64) return;
+    if (b64.length > 3_800_000) return Alert.alert('الصورة كبيرة', 'قصّ الصورة على التوقيع فقط ثم حاول مرة أخرى.');
+    setUploading(true);
+    try {
+      await api('/approvals/signature/', { method: 'PUT', body: { image: b64 } });
+      setDrawing(false);
+      load();
+    } catch (err) {
+      Alert.alert('تعذر حفظ التوقيع', errorText(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+  const photoButtons = (
+    <View style={{ gap: 8 }}>
+      <Button title="تصوير توقيعي من ورقة" icon="camera-outline" variant="secondary" loading={uploading} onPress={() => void fromPhoto(true)} />
+      <Button title="اختيار صورة التوقيع" icon="image-outline" variant="plain" disabled={uploading} onPress={() => void fromPhoto(false)} />
+      <T style={{ color: colors.textSoft, fontSize: font.small, lineHeight: 20 }}>
+        وقّع بقلم غامق على ورقة بيضاء، وقصّ الصورة على التوقيع — تُزال الورقة والظل تلقائيًا.
+      </T>
+    </View>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Header title="توقيعي" back />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }} scrollEnabled={!drawing}>
         <T style={{ color: colors.textSoft, fontSize: font.small, lineHeight: 22 }}>
-          يُختم توقيعك على ملف الطلب عند اعتماده (مع اسمك والوقت ورمز تحقق). ارسمه مرة واحدة ويُحفظ لحسابك.
+          يُختم توقيعك على ملف الطلب عند اعتماده (مع اسمك والوقت ورمز تحقق). ارسمه أو صوّره مرة واحدة ويُحفظ لحسابك.
         </T>
         {image === undefined ? (
           <Loading />
@@ -34,6 +68,7 @@ export default function SignatureScreen() {
               <Image source={{ uri: `data:image/png;base64,${image}` }} style={{ width: '100%', height: 150 }} resizeMode="contain" />
             </View>
             <Button title="إعادة رسم التوقيع" icon="create-outline" variant="secondary" onPress={() => setDrawing(true)} />
+            {photoButtons}
             <Button
               title="حذف التوقيع"
               variant="plain"
@@ -53,12 +88,15 @@ export default function SignatureScreen() {
             />
           </>
         ) : (
-          <SignaturePad
-            onSaved={() => {
-              setDrawing(false);
-              load();
-            }}
-          />
+          <>
+            <SignaturePad
+              onSaved={() => {
+                setDrawing(false);
+                load();
+              }}
+            />
+            {photoButtons}
+          </>
         )}
       </ScrollView>
     </View>

@@ -39,6 +39,7 @@ export interface ApprovalRequest {
   page_count: number | null;
   events: { kind: string; actor: UserRef; step_order: number; note: string; created_at: string }[];
   can_resubmit: boolean;
+  can_withdraw?: boolean;
   deliver_to?: UserRef[];
   deliver_cc?: UserRef[];
   delivered_correspondence?: { id: string; reference_number: string | null } | null;
@@ -81,6 +82,7 @@ export const EVENT_LABELS: Record<string, string> = {
   skipped: 'تخطّى هذه الخطوة وقرر مباشرة',
   carried: 'اعتمد هذه الخطوة أيضًا (باعتماده السابق)',
   reminded: 'ذكّر بالتوقيع',
+  withdrawn: 'سحب اعتماده — بدأ الطلب من جديد',
 };
 
 /** عنوان الطلب للعرض (بلا اسم النوع المكرر). */
@@ -96,6 +98,7 @@ export const approvalsApi = {
     api<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body }),
   defer: (id: string, note: string) => api<ApprovalRequest>(`/approvals/${id}/defer/`, { method: 'POST', body: { note } }),
   remind: (id: string) => api<ApprovalRequest & { reminded: number }>(`/approvals/${id}/remind/`, { method: 'POST' }),
+  withdraw: (id: string) => api<ApprovalRequest>(`/approvals/${id}/withdraw/`, { method: 'POST', body: {} }),
   cancel: (id: string) => api<ApprovalRequest>(`/approvals/${id}/cancel/`, { method: 'POST' }),
   signature: () => api<{ has_signature: boolean }>('/approvals/signature/'),
   types: () => api<RequestType[]>('/approvals/request-types/'),

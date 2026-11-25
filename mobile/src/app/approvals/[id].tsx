@@ -114,6 +114,37 @@ export default function ApprovalScreen() {
         )}
         {early && !!req.reminded_at && <T style={styles.meta}>آخر تذكير {fullDate(req.reminded_at)} — مرة كل ساعة</T>}
 
+        {req.can_withdraw && (
+          <Button
+            title="سحب اعتمادي"
+            icon="arrow-undo-outline"
+            variant="secondary"
+            onPress={() =>
+              Alert.alert(
+                'سحب اعتمادك؟',
+                req.signable
+                  ? 'يُزال توقيعك ويعود الطلب لأوله على الملف الأصلي لتعتمده من جديد (مثلًا بعد تغيير توقيعك).'
+                  : 'يعود الطلب لأوله لتعتمده من جديد.',
+                [
+                  { text: 'تراجع', style: 'cancel' },
+                  {
+                    text: 'سحب',
+                    style: 'destructive',
+                    onPress: () =>
+                      approvalsApi
+                        .withdraw(req.id)
+                        .then((r) => {
+                          setReq(r);
+                          success();
+                        })
+                        .catch((err) => Alert.alert('تعذر سحب الاعتماد', errorText(err))),
+                  },
+                ],
+              )
+            }
+          />
+        )}
+
         {(req.deliver_to?.length ?? 0) > 0 && (
           <Pressable
             disabled={!req.delivered_correspondence}
