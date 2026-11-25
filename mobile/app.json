@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "المراسلات",
-    "slug": "correspondence",
+    "slug": "hamdy-adam",
+    "owner": "hamdysarkha",
     "scheme": "m3had",
     "version": "2.0.0",
     "orientation": "portrait",
