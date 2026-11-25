@@ -132,6 +132,7 @@ const EVENT_STYLES: Record<EventKind, string> = {
   skipped: 'bg-gray-400',
   carried: 'bg-emerald-300',
   reminded: 'bg-amber-400',
+  withdrawn: 'bg-gray-400',
 };
 
 /** سجل الطلب: من قرر ماذا ومتى، مع الملاحظات. */

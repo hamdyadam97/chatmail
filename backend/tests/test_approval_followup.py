@@ -175,3 +175,37 @@ def test_a_new_document_needs_a_filed_request(api_client, board):
         "file": SimpleUploadedFile("x.pdf", _pages(1), content_type="application/pdf")}, format="multipart", **b["h_s"])
     assert resp.status_code == 400
 
+
+
+def test_the_only_signer_can_withdraw_and_sign_again(api_client, org):
+    """«سحب اعتمادي»: a bad signature is taken back while nobody else has
+    approved; the request restarts on the original document."""
+    h = org["h"]
+    rid = _file(api_client, org).json()["id"]
+    for who in ("sr_bm", "sr_exec"):
+        api_client.put(f"{API}signature/", {"image": base64.b64encode(_png()).decode()}, format="json", **h[who])
+    signed = _ok(api_client.post(f"{API}{rid}/decide/", {"decision": "approved", "password": DEFAULT_PASSWORD, "page": 1},
+                                 format="json", **h["sr_bm"]))
+    source_id = signed["source_file"]["id"]
+    old_code = signed["steps"][0]["approvers"][0]["decision"]["verify_code"]
+    assert signed["can_withdraw"] is True
+    # nobody else may withdraw it
+    assert api_client.get(f"{API}{rid}/", **h["sr_emp"]).json()["can_withdraw"] is False
+    assert api_client.post(f"{API}{rid}/withdraw/", {}, format="json", **h["sr_exec"]).status_code == 409
+
+    r = _ok(api_client.post(f"{API}{rid}/withdraw/", {"note": "التوقيع غير واضح"}, format="json", **h["sr_bm"]), 200)
+    assert r["status"] == "pending" and r["round"] == 2 and r["current_step_order"] == 1
+    assert r["signed_file"] is None and r["signature_count"] == 0 and r["signature_boxes"] == []
+    assert r["source_file"]["id"] == source_id  # the original, unsigned document
+    assert all(a["decision"] is None for s in r["steps"] for a in s["approvers"])
+    assert r["events"][-1]["kind"] == "withdrawn" and r["can_withdraw"] is False
+    assert api_client.get(f"{API}verify/?code={old_code}", **h["sr_out"]).json()["superseded"] is True
+    assert AuditLog.objects.filter(action="approval_withdrawn", target_id=str(rid)).exists()
+
+    again = _ok(api_client.post(f"{API}{rid}/decide/", {"decision": "approved", "password": DEFAULT_PASSWORD, "page": 1},
+                                format="json", **h["sr_bm"]))
+    assert again["signature_count"] == 1 and again["current_step_order"] == 2
+    # once the next approver has signed too, it can no longer be withdrawn
+    _ok(api_client.post(f"{API}{rid}/decide/", {"decision": "approved", "password": DEFAULT_PASSWORD, "page": 1},
+                        format="json", **h["sr_exec"]))
+    assert api_client.post(f"{API}{rid}/withdraw/", {}, format="json", **h["sr_bm"]).status_code == 409

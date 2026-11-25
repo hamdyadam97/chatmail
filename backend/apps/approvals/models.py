@@ -231,6 +231,8 @@ class ApprovalEvent(models.Model):
         ("carried", "اعتماد سابق يُحتسب"),
         # The executive reminded the earlier approvers to sign.
         ("reminded", "تذكير بالتوقيع"),
+        # The only approver so far took their approval (and signature) back: the round restarts.
+        ("withdrawn", "سحب الاعتماد"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

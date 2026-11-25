@@ -410,6 +410,15 @@ function ApprovalDetail({ id }: { id: string }) {
     },
   });
   const complete = useMutation({ mutationFn: () => approvalsApi.complete(id), onSuccess: refresh });
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const withdraw = useMutation({
+    mutationFn: () => approvalsApi.withdraw(id),
+    onSuccess: () => {
+      setConfirmWithdraw(false);
+      void refresh();
+    },
+    onError: (err) => setActionError(toUserMessage(err, 'تعذر سحب الاعتماد')),
+  });
   const [remindNote, setRemindNote] = useState<string | null>(null);
   const remind = useMutation({
     mutationFn: () => approvalsApi.remind(id),
@@ -527,6 +536,29 @@ function ApprovalDetail({ id }: { id: string }) {
           </div>
         )}
         {request.can_resubmit && <ResubmitPanel request={request} onDone={() => void refresh()} />}
+        {request.can_withdraw && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm" data-testid="withdraw-box">
+            <span className="text-gray-700">
+              {confirmWithdraw
+                ? `سحب اعتمادك${request.signable ? ' وتوقيعك' : ''}؟ يعود الطلب لأوله${request.signable ? ' على الملف الأصلي' : ''} لتعتمده من جديد.`
+                : `اعتمدت هذا الطلب ولم يعتمده أحد بعدك — يمكنك سحب اعتمادك${request.signable ? ' (مثلًا لتغيير توقيعك ثم التوقيع من جديد)' : ''}.`}
+            </span>
+            {confirmWithdraw ? (
+              <>
+                <Button size="sm" variant="danger" loading={withdraw.isPending} onClick={() => withdraw.mutate()} data-testid="withdraw-confirm">
+                  نعم، اسحب اعتمادي
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmWithdraw(false)}>
+                  إلغاء
+                </Button>
+              </>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setConfirmWithdraw(true)} data-testid="withdraw-approval">
+                سحب اعتمادي
+              </Button>
+            )}
+          </div>
+        )}
         {removingUser && (
           <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/60 p-3 text-sm" data-testid="remove-approver-box">
             <p className="text-gray-800">

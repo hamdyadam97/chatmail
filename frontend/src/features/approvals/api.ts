@@ -38,7 +38,7 @@ export type VerifyResult =
       superseded: boolean;
     };
 
-export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file' | 'skipped' | 'carried' | 'reminded';
+export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file' | 'skipped' | 'carried' | 'reminded' | 'withdrawn';
 
 /** سجل الطلب: القرارات والتأجيل وإعادة الإرسال، مع الملاحظة إن وُجدت. */
 export interface RequestEvent {
@@ -93,6 +93,8 @@ export interface ApprovalRequest {
   events: RequestEvent[];
   /** مقدّم الطلب وطلبه معاد للمراجعة: «تعديل وإعادة إرسال». */
   can_resubmit: boolean;
+  /** «سحب اعتمادي»: approved, and nobody else has approved since. */
+  can_withdraw?: boolean;
   /** «يُرسل بعد الاعتماد إلى»: يصلهم الخطاب المعتمد من آخر معتمد، ومقدّمه نسخة. */
   deliver_to?: UserRef[];
   deliver_cc?: UserRef[];
@@ -172,6 +174,7 @@ export const approvalsApi = {
     signable: true;
     steps: Array<{ type: 'all' | 'any'; approver_selectors: Array<{ role: string; scope: SelectorScope } | { user: string }> }>;
   }) => apiFetch<WorkflowTemplate>('/approvals/workflows/', { method: 'POST', body }),
+  withdraw: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/withdraw/`, { method: 'POST', body: {} }),
   remind: (id: string) => apiFetch<ApprovalRequest & { reminded: number }>(`/approvals/${id}/remind/`, { method: 'POST' }),
   retireType: (id: string) => apiFetch<WorkflowTemplate>(`/approvals/workflows/${id}/`, { method: 'PATCH', body: { is_active: false } }),
   /** تعديل الاسم والخطوات: الطلبات المقدّمة تبقى بخطواتها، والجديدة تأخذ المعدَّلة. */
@@ -251,4 +254,5 @@ export const EVENT_LABELS: Record<EventKind, string> = {
   skipped: 'تخطّى هذه الخطوة وقرر مباشرة',
   carried: 'اعتمد هذه الخطوة أيضًا (باعتماده السابق، بلا توقيع ثانٍ)',
   reminded: 'ذكّر بالتوقيع',
+  withdrawn: 'سحب اعتماده — بدأ الطلب من جديد',
 };

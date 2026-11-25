@@ -900,6 +900,44 @@ def remind(user, req) -> list[str]:
     return waiting
 
 
+def can_withdraw(user, req) -> bool:
+    """«سحب اعتمادي»: while the request is still pending, an approver may take
+    their approval back if nobody else has approved in this round yet (their
+    signature is the only one on the document). Rejected/returned/final
+    requests are past that point."""
+    if req.status != "pending":
+        return False
+    approved = list(req.decisions.filter(round=req.round, decision="approved").values_list("approver_id", flat=True))
+    return bool(approved) and all(a == user.id for a in approved)
+
+
+def withdraw_approval(user, req, *, note: str = "") -> ApprovalRequest:
+    """The round restarts from step 1 on the original document (signatures
+    removed); the withdrawn decisions and their verification codes stay
+    recorded under the old round (verify/ reports them superseded)."""
+    note = clean_note(note)
+    with transaction.atomic():
+        req = ApprovalRequest.objects.select_for_update().get(pk=req.pk)
+        if not can_withdraw(user, req):
+            raise Conflict("لا يمكن سحب الاعتماد: الطلب ليس قيد الاعتماد أو اعتمده غيرك بعدك.")
+        step_order = req.current_step_order
+        _record(req, "withdrawn", user, step_order, note=note)
+        ApprovalStepApprover.objects.filter(step__request=req).update(deferred_at=None)
+        req.round += 1
+        req.signed_file = None
+        req.signature_count = 0
+        req.page_signatures = {}
+        req.signature_boxes = []
+        req.steps.update(status="waiting")
+        req.steps.filter(step_order=1).update(status="active")
+        req.current_step_order = 1
+        req.save()
+        _notify_step(req, 1)
+    log(actor=user, action="approval_withdrawn", target_type="approval_request", target_id=req.id,
+        metadata={"round": req.round, "note": bool(note)})
+    return req
+
+
 def last_reminder(req):
     last = req.events.filter(kind="reminded").order_by("-created_at").first()
     return last.created_at if last else None

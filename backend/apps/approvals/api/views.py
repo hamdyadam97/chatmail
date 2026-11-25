@@ -129,6 +129,7 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         "round": req.round,
         "events": [_event_dict(e) for e in req.events.select_related("actor", "on_behalf_of").order_by("created_at")],
         "can_resubmit": req.status == "returned" and req.requested_by_id == viewer.id,
+        "can_withdraw": services.can_withdraw(viewer, req),
         # «يُرسل بعد الاعتماد إلى» (names: directory data), and the letter once sent.
         "deliver_to": _people(req.deliver_to),
         "deliver_cc": _people(req.deliver_cc),
@@ -306,6 +307,18 @@ class RemindView(APIView):
         sent = services.remind(request.user, req)
         req.refresh_from_db()
         return Response({**request_dict(req, request.user), "reminded": len(sent)})
+
+
+class WithdrawView(APIView):
+    """POST {note?}: «سحب اعتمادي» — the only approver so far takes it back; the request restarts."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [DecisionThrottle]
+
+    def post(self, request, request_id):
+        req = services.get_viewable(request.user, request_id)
+        req = services.withdraw_approval(request.user, req, note=str(request.data.get("note") or ""))
+        return Response(request_dict(req, request.user))
 
 
 class CancelView(APIView):
