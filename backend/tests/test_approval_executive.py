@@ -180,3 +180,25 @@ def test_executive_reminds_the_earlier_approvers_once_an_hour(api_client, user_f
     assert n.title_generic.startswith("المدير التنفيذي يطلب توقيعك")
     assert api_client.post(url, {}, format="json", **h["sr_exec"]).status_code == 409  # within the hour
     assert AuditLog.objects.filter(action="approval_reminder_sent").count() == 1
+
+
+def test_signature_drawn_on_the_phone_as_strokes(api_client, org):
+    """The mobile app sends pen strokes; the server draws and saves the PNG."""
+    import io as _io
+
+    from PIL import Image
+
+    h = org["h"]["sr_bm"]
+    url = f"{API}signature/"
+    stroke = [[20 + i * 4, 60 + (i % 7) * 5] for i in range(60)]
+    r = api_client.put(url, {"strokes": [stroke, [[40, 100], [200, 30]]], "width": 340, "height": 160}, format="json", **h)
+    assert r.status_code == 200, r.content
+    assert r.json()["has_signature"]
+    png = Image.open(_io.BytesIO(base64.b64decode(r.json()["image"])))
+    assert png.format == "PNG" and png.mode == "RGBA" and 150 < png.width <= 340
+    # junk is refused
+    for bad in ({"strokes": [], "width": 340, "height": 160},
+                {"strokes": [[["a", 1]]], "width": 340, "height": 160},
+                {"strokes": [stroke], "width": 99999, "height": 160},
+                {"strokes": "x", "width": 340, "height": 160}):
+        assert api_client.put(url, bad, format="json", **h).status_code == 400

@@ -589,6 +589,11 @@ class SignatureView(APIView):
         return Response({"has_signature": png is not None, "image": base64.b64encode(png).decode() if png else None})
 
     def put(self, request):
+        if "strokes" in request.data:
+            # The mobile app: pen strokes drawn on the phone, rendered here.
+            png = signing.render_strokes(request.data.get("strokes"), request.data.get("width"), request.data.get("height"))
+            services.save_signature(request.user, png)
+            return self.get(request)
         raw = str(request.data.get("image") or "")
         if raw.startswith("data:"):
             raw = raw.split(",", 1)[-1]

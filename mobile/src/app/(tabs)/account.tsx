@@ -68,6 +68,7 @@ export default function AccountScreen() {
           {!!profile?.external_address &&<Item icon="globe-outline" title="بريدي الخارجي" value={profile.external_address} />}
           {!!profile?.phone && <Item icon="call-outline" title="الجوال" value={profile.phone} />}
           <Item icon="key-outline" title="طلبات الدخول" hint="أكواد الدخول المرسلة لي" onPress={() => router.push('/login-approvals')} />
+          <Item icon="create-outline" title="توقيعي" hint="يُختم على الطلبات التي تعتمدها" onPress={() => router.push('/signature')} />
           <Item icon="lock-closed-outline" title="تغيير كلمة المرور" onPress={() => router.push('/password')} />
           <Item
             icon="notifications-outline"

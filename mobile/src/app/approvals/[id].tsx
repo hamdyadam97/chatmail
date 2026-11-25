@@ -21,6 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { StatusChip } from '@/components/approvals';
+import { SignaturePad } from '@/components/SignaturePad';
 import { Avatar, Button, Empty, ErrorBox, Field, Header, Loading, T, success, tap } from '@/components/ui';
 import { errorText } from '@/lib/api';
 import { approvalsApi, EVENT_LABELS, requestTitle, STEP_LABELS, type ApprovalRequest, type Decision, type FileMeta } from '@/lib/approvals';
@@ -321,7 +322,10 @@ function DecisionSheet({
           {early && <T style={styles.meta}>دون انتظار المدير المباشر — تُتخطى خطوته.</T>}
 
           {signing && hasSignature === false && (
-            <ErrorBox message="لم تحفظ توقيعك بعد. ارسمه مرة واحدة من الموقع (حسابي ← التوقيع) ثم ارجع هنا." />
+            <>
+              <T style={styles.label}>ارسم توقيعك مرة واحدة — يُحفظ لحسابك ويُختم على الطلبات التي تعتمدها</T>
+              <SignaturePad onSaved={() => setHasSignature(true)} />
+            </>
           )}
           {signing && hasSignature !== false && (
             <>

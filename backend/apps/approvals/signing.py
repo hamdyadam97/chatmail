@@ -97,6 +97,62 @@ def clean_signature(data: bytes) -> bytes:
     return out.getvalue()
 
 
+MAX_STROKES = 200
+MAX_POINTS = 6000
+MAX_CANVAS = 2000
+
+
+def render_strokes(strokes, width, height) -> bytes:
+    """The mobile app sends the pen strokes it captured ([[[x, y], …], …] in
+    canvas points); the server draws them (2× then downscaled for smooth
+    edges) and the result goes through clean_signature like an uploaded PNG."""
+    from PIL import Image, ImageDraw
+
+    try:
+        width, height = float(width), float(height)
+    except (TypeError, ValueError):
+        raise ValidationError({"strokes": "أبعاد غير صالحة."})
+    if not (50 <= width <= MAX_CANVAS and 30 <= height <= MAX_CANVAS):
+        raise ValidationError({"strokes": "أبعاد غير صالحة."})
+    if not isinstance(strokes, list) or not strokes or len(strokes) > MAX_STROKES:
+        raise ValidationError({"strokes": "التوقيع فارغ أو طويل جدًا."})
+    total = 0
+    clean: list[list[tuple[float, float]]] = []
+    for stroke in strokes:
+        if not isinstance(stroke, list) or not stroke:
+            raise ValidationError({"strokes": "خط غير صالح."})
+        pts = []
+        for p in stroke:
+            if not (isinstance(p, (list, tuple)) and len(p) == 2):
+                raise ValidationError({"strokes": "نقطة غير صالحة."})
+            try:
+                x, y = float(p[0]), float(p[1])
+            except (TypeError, ValueError):
+                raise ValidationError({"strokes": "نقطة غير صالحة."})
+            pts.append((min(max(x, 0.0), width), min(max(y, 0.0), height)))
+        total += len(pts)
+        clean.append(pts)
+    if total > MAX_POINTS:
+        raise ValidationError({"strokes": "التوقيع طويل جدًا."})
+
+    scale = 2
+    img = Image.new("RGBA", (int(width * scale), int(height * scale)), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    ink = (20, 24, 60, 255)
+    pen = max(4, int(min(width, height) / 45)) * scale
+    r = pen / 2
+    for pts in clean:
+        scaled = [(x * scale, y * scale) for x, y in pts]
+        if len(scaled) > 1:
+            draw.line(scaled, fill=ink, width=pen, joint="curve")
+        for x, y in scaled:  # round caps and joins
+            draw.ellipse((x - r, y - r, x + r, y + r), fill=ink)
+    img = img.resize((int(width), int(height)), Image.LANCZOS)
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return clean_signature(out.getvalue())
+
+
 # --- stamping --------------------------------------------------------------------------------
 
 def page_count(pdf: bytes) -> int:

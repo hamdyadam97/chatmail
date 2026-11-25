@@ -56,6 +56,7 @@ function RootStack() {
         <Stack.Screen name="compose" options={{ presentation: 'modal' }} />
         <Stack.Screen name="login-approvals" />
         <Stack.Screen name="password" />
+        <Stack.Screen name="signature" />
       </Stack.Protected>
     </Stack>
   );

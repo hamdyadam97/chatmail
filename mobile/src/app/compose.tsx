@@ -20,7 +20,15 @@ import { Avatar, T, success, tap } from '@/components/ui';
 import { api, errorText } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { colors, font, radius, row, textRight } from '@/lib/theme';
-import type { DirectoryUser } from '@/lib/types';
+import type { AttachmentMeta, DirectoryUser, MailDetail } from '@/lib/types';
+import { pickFile, uploadAttachment } from '@/lib/upload';
+
+/** مرفق في المحرر: بلا meta = يُرفع الآن. */
+interface Attached {
+  key: string;
+  name: string;
+  meta?: AttachmentMeta;
+}
 
 function clientRef(): string {
   const hex = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');
@@ -30,7 +38,7 @@ function clientRef(): string {
 const unit = (u: DirectoryUser) => u.primary_membership?.branch || u.primary_membership?.institute || '';
 
 export default function ComposeScreen() {
-  const { replyTo, subject: replySubject } = useLocalSearchParams<{ replyTo?: string; subject?: string }>();
+  const { replyTo, subject: replySubject, draftId } = useLocalSearchParams<{ replyTo?: string; subject?: string; draftId?: string }>();
   const isReply = !!replyTo;
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -43,6 +51,8 @@ export default function ComposeScreen() {
   const [subject, setSubject] = useState(isReply ? `رد: ${(replySubject ?? '').replace(/^(رد:\s*)+/, '')}` : '');
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
+  const [files, setFiles] = useState<Attached[]>([]);
+  const uploading = files.some((f) => !f.meta);
 
   useEffect(() => {
     if (isReply) return;
@@ -50,6 +60,63 @@ export default function ComposeScreen() {
       .then((d) => setUsers(Array.isArray(d) ? d : d.results ?? []))
       .catch(() => undefined);
   }, [isReply]);
+
+  // فتح مسودة محفوظة: المستلمون والموضوع والنص ومرفقاتها.
+  useEffect(() => {
+    if (!draftId) return;
+    api<MailDetail>(`/correspondences/${draftId}/`)
+      .then((d) => {
+        const people = (kind: 'to' | 'cc') =>
+          d.participants.filter((p) => p.kind === kind).map((p) => ({ id: p.user.id, full_name: p.user.full_name, username: p.user.username }));
+        setTo(people('to'));
+        const ccList = people('cc');
+        setCc(ccList);
+        setShowCc(ccList.length > 0);
+        setSubject(d.content?.subject ?? d.subject ?? '');
+        setBody(d.content?.body ?? '');
+        setFiles((d.content?.attachments ?? []).map((meta) => ({ key: meta.id, name: meta.name, meta })));
+      })
+      .catch((err) => Alert.alert('تعذر فتح المسودة', errorText(err)));
+  }, [draftId]);
+
+  const attach = () =>
+    pickFile((f) => {
+      const key = `${Date.now()}-${Math.random()}`;
+      setFiles((prev) => [...prev, { key, name: f.name }]);
+      uploadAttachment(f)
+        .then((meta) => setFiles((prev) => prev.map((x) => (x.key === key ? { ...x, meta } : x))))
+        .catch((err) => {
+          setFiles((prev) => prev.filter((x) => x.key !== key));
+          Alert.alert('تعذر إرفاق الملف', errorText(err));
+        });
+    });
+
+  const attachmentIds = files.filter((f) => f.meta).map((f) => f.meta!.id);
+
+  const draftBody = () => ({
+    to_user_ids: to.map((u) => String(u.id)),
+    cc_user_ids: cc.map((u) => String(u.id)),
+    priority: 'normal',
+    classification: 'normal',
+    due_date: null,
+    subject: subject.trim(),
+    body,
+    attachment_ids: attachmentIds,
+  });
+
+  const saveDraft = async () => {
+    setSending(true);
+    try {
+      if (draftId) await api(`/correspondences/${draftId}/`, { method: 'PATCH', body: draftBody() });
+      else await api('/correspondences/', { method: 'POST', body: { ...draftBody(), client_ref: clientRef(), send: false } });
+      success();
+      router.back();
+    } catch (err) {
+      Alert.alert('تعذر حفظ المسودة', errorText(err));
+    } finally {
+      setSending(false);
+    }
+  };
 
   const chosen = useMemo(() => new Set([...to, ...cc].map((u) => String(u.id)).concat(String(user?.id))), [to, cc, user]);
   const matches = useMemo(() => {
@@ -67,7 +134,7 @@ export default function ComposeScreen() {
     setQuery('');
   };
 
-  const canSend = !sending && body.trim().length > 0 && (isReply || (to.length > 0 && subject.trim().length > 0));
+  const canSend = !sending && !uploading && body.trim().length > 0 && (isReply || (to.length > 0 && subject.trim().length > 0));
 
   const send = async () => {
     setSending(true);
@@ -75,24 +142,13 @@ export default function ComposeScreen() {
       if (isReply) {
         await api(`/correspondences/${replyTo}/reply/`, {
           method: 'POST',
-          body: { client_ref: clientRef(), priority: 'normal', due_date: null, subject: subject.trim(), body, attachment_ids: [] },
+          body: { client_ref: clientRef(), priority: 'normal', due_date: null, subject: subject.trim(), body, attachment_ids: attachmentIds },
         });
+      } else if (draftId) {
+        await api(`/correspondences/${draftId}/`, { method: 'PATCH', body: draftBody() });
+        await api(`/correspondences/${draftId}/send/`, { method: 'POST' });
       } else {
-        await api('/correspondences/', {
-          method: 'POST',
-          body: {
-            to_user_ids: to.map((u) => String(u.id)),
-            cc_user_ids: cc.map((u) => String(u.id)),
-            priority: 'normal',
-            classification: 'normal',
-            due_date: null,
-            subject: subject.trim(),
-            body,
-            attachment_ids: [],
-            client_ref: clientRef(),
-            send: true,
-          },
-        });
+        await api('/correspondences/', { method: 'POST', body: { ...draftBody(), client_ref: clientRef(), send: true } });
       }
       success();
       router.back();
@@ -104,10 +160,17 @@ export default function ComposeScreen() {
   };
 
   const cancel = () => {
-    if (!body.trim() && !to.length) return router.back();
-    Alert.alert('تجاهل الرسالة؟', 'لن تُحفظ.', [
-      { text: 'متابعة الكتابة', style: 'cancel' },
+    if (!body.trim() && !to.length && !files.length) return router.back();
+    if (isReply) {
+      return Alert.alert('تجاهل الرد؟', 'لن يُحفظ.', [
+        { text: 'متابعة الكتابة', style: 'cancel' },
+        { text: 'تجاهل', style: 'destructive', onPress: () => router.back() },
+      ]);
+    }
+    Alert.alert('حفظ كمسودة؟', 'تجدها في «المسودات» وتكملها من أي جهاز.', [
+      { text: 'حفظ كمسودة', onPress: () => void saveDraft() },
       { text: 'تجاهل', style: 'destructive', onPress: () => router.back() },
+      { text: 'متابعة الكتابة', style: 'cancel' },
     ]);
   };
 
@@ -178,7 +241,27 @@ export default function ComposeScreen() {
         <View style={[styles.line, { flexDirection: row }]}>
           <Text style={styles.label}>الموضوع</Text>
           <TextInput value={subject} onChangeText={setSubject} style={[styles.input, textRight]} placeholder="" maxLength={300} />
+          <Pressable hitSlop={10} onPress={attach} accessibilityLabel="إرفاق">
+            <Ionicons name="attach" size={24} color={colors.navy} />
+          </Pressable>
         </View>
+        {files.length > 0 && (
+          <View style={[styles.files, { flexDirection: row }]}>
+            {files.map((f) => (
+              <View key={f.key} style={[styles.file, { flexDirection: row }]}>
+                {f.meta ? <Ionicons name="document-attach-outline" size={16} color={colors.navy} /> : <ActivityIndicator size="small" color={colors.navy} />}
+                <Text style={styles.fileName} numberOfLines={1}>
+                  {f.name}
+                </Text>
+                {f.meta && (
+                  <Pressable hitSlop={8} onPress={() => setFiles((prev) => prev.filter((x) => x.key !== f.key))}>
+                    <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                  </Pressable>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
         <TextInput
           value={body}
           onChangeText={setBody}
@@ -264,5 +347,8 @@ const styles = StyleSheet.create({
   pillText: { color: colors.navy, fontSize: font.small, fontWeight: '600' },
   suggestions: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: '#FAFAFD' },
   suggestion: { alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  files: { flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  file: { alignItems: 'center', gap: 6, backgroundColor: colors.navySoft, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 6, maxWidth: '100%' },
+  fileName: { fontSize: font.small, color: colors.navy, maxWidth: 200 },
   body: { minHeight: 300, fontSize: 17, lineHeight: 26, color: colors.text, padding: 16 },
 });

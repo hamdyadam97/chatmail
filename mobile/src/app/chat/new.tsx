@@ -1,10 +1,13 @@
-/** محادثة جديدة: اختيار زميل من الدليل (بحث بالاسم أو الفرع) يفتح المحادثة المباشرة معه. */
+/**
+ * محادثة جديدة: زميل واحد = محادثة مباشرة فورًا؛ أو «مجموعة جديدة»: اختيار
+ * عدة زملاء واسم للمجموعة. البحث بالاسم أو الفرع.
+ */
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
-import Ionicons from '@expo/vector-icons/Ionicons';
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { Avatar, Header, Loading, T } from '@/components/ui';
+import { Avatar, Button, Header, Loading, T, tap } from '@/components/ui';
 import { api, errorText } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { chatApi } from '@/lib/chat';
@@ -18,6 +21,10 @@ export default function NewChatScreen() {
   const [users, setUsers] = useState<DirectoryUser[] | null>(null);
   const [query, setQuery] = useState('');
   const [opening, setOpening] = useState<string | null>(null);
+  const [group, setGroup] = useState(false);
+  const [picked, setPicked] = useState<DirectoryUser[]>([]);
+  const [title, setTitle] = useState('');
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     api<DirectoryUser[] | { results: DirectoryUser[] }>('/users/')
@@ -32,7 +39,7 @@ export default function NewChatScreen() {
       .slice(0, 100);
   }, [users, query]);
 
-  const open = async (u: DirectoryUser) => {
+  const openDm = async (u: DirectoryUser) => {
     setOpening(String(u.id));
     try {
       const c = await chatApi.create('dm', [String(u.id)]);
@@ -44,9 +51,55 @@ export default function NewChatScreen() {
     }
   };
 
+  const toggle = (u: DirectoryUser) => {
+    tap();
+    setPicked((p) => (p.some((x) => x.id === u.id) ? p.filter((x) => x.id !== u.id) : [...p, u]));
+  };
+
+  const createGroup = async () => {
+    setCreating(true);
+    try {
+      const c = await chatApi.create('group', picked.map((u) => String(u.id)), title.trim());
+      router.replace({ pathname: '/chat/[id]', params: { id: c.id, name: title.trim() || 'مجموعة' } });
+    } catch (err) {
+      Alert.alert('تعذر إنشاء المجموعة', errorText(err));
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Header title="محادثة جديدة" back />
+      <Header title={group ? 'مجموعة جديدة' : 'محادثة جديدة'} back />
+      {group && (
+        <View style={{ paddingHorizontal: 16, gap: 8, marginBottom: 8 }}>
+          <TextInput
+            value={title}
+            onChangeText={setTitle}
+            placeholder="اسم المجموعة"
+            placeholderTextColor={colors.textMuted}
+            maxLength={200}
+            style={[styles.title, textRight]}
+          />
+          {picked.length > 0 && (
+            <View style={{ flexDirection: row, flexWrap: 'wrap', gap: 6 }}>
+              {picked.map((u) => (
+                <Pressable key={String(u.id)} onPress={() => toggle(u)} style={[styles.pill, { flexDirection: row }]}>
+                  <Text style={styles.pillText}>{u.full_name || u.username}</Text>
+                  <Ionicons name="close" size={14} color={colors.navy} />
+                </Pressable>
+              ))}
+            </View>
+          )}
+          <Button
+            title={`إنشاء المجموعة${picked.length ? ` (${picked.length + 1} أعضاء)` : ''}`}
+            icon="people"
+            loading={creating}
+            disabled={picked.length < 2 || !title.trim()}
+            onPress={createGroup}
+          />
+        </View>
+      )}
       <View style={[styles.search, { flexDirection: row }]}>
         <Ionicons name="search" size={18} color={colors.textMuted} />
         <TextInput
@@ -54,10 +107,17 @@ export default function NewChatScreen() {
           onChangeText={setQuery}
           placeholder="ابحث بالاسم أو الفرع"
           placeholderTextColor={colors.textMuted}
-          autoFocus
           style={[{ flex: 1, fontSize: font.body, color: colors.text }, textRight]}
         />
       </View>
+      {!group && (
+        <Pressable onPress={() => setGroup(true)} style={({ pressed }) => [styles.row, { flexDirection: row }, pressed && { backgroundColor: colors.navySoft }]}>
+          <View style={styles.groupIcon}>
+            <Ionicons name="people" size={22} color="#fff" />
+          </View>
+          <T style={{ flex: 1, fontWeight: '700', color: colors.navy }}>مجموعة جديدة</T>
+        </Pressable>
+      )}
       {users === null ? (
         <Loading />
       ) : (
@@ -66,20 +126,24 @@ export default function NewChatScreen() {
           keyExtractor={(u) => String(u.id)}
           keyboardShouldPersistTaps="handled"
           ItemSeparatorComponent={() => <View style={styles.sep} />}
-          renderItem={({ item: u }) => (
-            <Pressable
-              disabled={!!opening}
-              onPress={() => void open(u)}
-              style={({ pressed }) => [styles.row, { flexDirection: row }, pressed && { backgroundColor: colors.navySoft }]}
-            >
-              <Avatar name={u.full_name} size={42} />
-              <View style={{ flex: 1 }}>
-                <T style={{ fontWeight: '600' }}>{u.full_name || u.username}</T>
-                {!!unit(u) && <T style={{ fontSize: font.tiny, color: colors.textMuted }}>{unit(u)}</T>}
-              </View>
-              {opening === String(u.id) && <ActivityIndicator color={colors.navy} />}
-            </Pressable>
-          )}
+          renderItem={({ item: u }) => {
+            const on = picked.some((x) => x.id === u.id);
+            return (
+              <Pressable
+                disabled={!!opening}
+                onPress={() => (group ? toggle(u) : void openDm(u))}
+                style={({ pressed }) => [styles.row, { flexDirection: row }, pressed && { backgroundColor: colors.navySoft }]}
+              >
+                <Avatar name={u.full_name} size={42} />
+                <View style={{ flex: 1 }}>
+                  <T style={{ fontWeight: '600' }}>{u.full_name || u.username}</T>
+                  {!!unit(u) && <T style={{ fontSize: font.tiny, color: colors.textMuted }}>{unit(u)}</T>}
+                </View>
+                {group && <Ionicons name={on ? 'checkmark-circle' : 'ellipse-outline'} size={24} color={on ? colors.navy : colors.border} />}
+                {opening === String(u.id) && <ActivityIndicator color={colors.navy} />}
+              </Pressable>
+            );
+          }}
         />
       )}
     </View>
@@ -90,4 +154,8 @@ const styles = StyleSheet.create({
   search: { alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 10, backgroundColor: '#E8E8EF', borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
   row: { alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff' },
   sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
+  groupIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
+  title: { backgroundColor: '#fff', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, height: 48, fontSize: font.body, color: colors.text },
+  pill: { alignItems: 'center', gap: 4, backgroundColor: colors.navySoft, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
+  pillText: { color: colors.navy, fontSize: font.small, fontWeight: '600' },
 });

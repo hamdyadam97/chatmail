@@ -16,6 +16,7 @@ const FOLDERS: { key: Folder; label: string }[] = [
   { key: 'sent', label: 'الصادر' },
   { key: 'important', label: 'المهمة' },
   { key: 'archived', label: 'المؤرشفة' },
+  { key: 'drafts', label: 'المسودات' },
 ];
 
 export default function MailScreen() {
@@ -79,6 +80,19 @@ export default function MailScreen() {
 
   const actions = (m: MailSummary) => {
     tap();
+    if (folder === 'drafts') {
+      return Alert.alert(m.subject || 'مسودة', undefined, [
+        {
+          text: 'حذف المسودة',
+          style: 'destructive',
+          onPress: () =>
+            api(`/correspondences/${m.id}/`, { method: 'DELETE' })
+              .then(() => load(1))
+              .catch((err) => Alert.alert('تعذر الحذف', errorText(err))),
+        },
+        { text: 'إلغاء', style: 'cancel' },
+      ]);
+    }
     const flag = async (body: Record<string, boolean>) => {
       try {
         await api(`/correspondences/${m.id}/flags/`, { method: 'POST', body });
@@ -142,7 +156,7 @@ export default function MailScreen() {
           data={items}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
-            <MailRow mail={item} meId={user?.id} folder={folder} onPress={() => router.push(`/mail/${item.id}`)} onLongPress={() => actions(item)} />
+            <MailRow mail={item} meId={user?.id} folder={folder} onPress={() => (folder === 'drafts' ? router.push({ pathname: '/compose', params: { draftId: item.id } }) : router.push(`/mail/${item.id}`))} onLongPress={() => actions(item)} />
           )}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           onEndReached={more}
