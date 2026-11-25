@@ -10,6 +10,8 @@ import { Button, ErrorBox, Field, Header, Loading, T, success, tap, type IconNam
 import { errorText } from '@/lib/api';
 import { approvalsApi, fileRequest, type RequestType } from '@/lib/approvals';
 import { colors, font, radius, row, textRight } from '@/lib/theme';
+import type { DirectoryUser } from '@/lib/types';
+import { PeoplePicker } from '@/components/PeoplePicker';
 
 interface Picked {
   uri: string;
@@ -24,6 +26,7 @@ export default function NewRequestScreen() {
   const [title, setTitle] = useState('');
   const [note, setNote] = useState('');
   const [file, setFile] = useState<Picked | null>(null);
+  const [deliverTo, setDeliverTo] = useState<DirectoryUser[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,7 +69,7 @@ export default function NewRequestScreen() {
     setBusy(true);
     setError(null);
     try {
-      const req = await fileRequest({ workflowId: typeId, title: title.trim(), note: note.trim(), file });
+      const req = await fileRequest({ workflowId: typeId, title: title.trim(), note: note.trim(), file, deliverTo: deliverTo.map((u) => String(u.id)) });
       success();
       router.replace(`/approvals/${req.id}`);
     } catch (err) {
@@ -136,6 +139,12 @@ export default function NewRequestScreen() {
             <Source icon="document-outline" label="ملف PDF" onPress={pdf} />
           </View>
         )}
+
+        <T style={styles.label}>يُرسل بعد الاعتماد إلى (اختياري)</T>
+        <T style={{ fontSize: font.tiny + 1, color: colors.textMuted, lineHeight: 19 }}>
+          لخطاب موجّه لأشخاص: بعد اعتماده يصلهم الملف الموقّع باسم آخر معتمد، وأنت نسخة. لا يُرسل إن رُفض.
+        </T>
+        <PeoplePicker value={deliverTo} onChange={setDeliverTo} />
 
         <T style={styles.label}>ملاحظة (اختياري)</T>
         <TextInput value={note} onChangeText={setNote} multiline maxLength={1000} style={[styles.note, textRight]} textAlignVertical="top" />

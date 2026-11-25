@@ -202,3 +202,77 @@ def test_signature_drawn_on_the_phone_as_strokes(api_client, org):
                 {"strokes": [stroke], "width": 99999, "height": 160},
                 {"strokes": "x", "width": 340, "height": 160}):
         assert api_client.put(url, bad, format="json", **h).status_code == 400
+
+
+def _file_to(api_client, org, deliver_to, deliver_cc=()):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from .test_signed_requests import _scan
+
+    return api_client.post(f"{API}file-request/", {
+        "workflow_id": org["wf"]["id"], "title": "خطاب إلى الشؤون المالية", "note": "نص الخطاب",
+        "file": SimpleUploadedFile("letter.jpg", _scan(), content_type="image/jpeg"),
+        "deliver_to": [str(u.id) for u in deliver_to], "deliver_cc": [str(u.id) for u in deliver_cc],
+    }, format="multipart", **org["h"]["sr_emp"])
+
+
+def test_approved_letter_goes_to_its_recipients_from_the_executive(api_client, user_factory, branch_a, org):
+    """«يُرسل بعد الاعتماد إلى»: the secretary files the letter, the executive
+    signs it, and the signed letter reaches the addressees from the executive,
+    the secretary in CC (user decision 2026-11-25)."""
+    from apps.correspondence.models import CorrespondenceParticipant
+
+    h = org["h"]
+    finance = make_employee(user_factory, "sr_fin", branch_a)
+    hr = make_employee(user_factory, "sr_hr", branch_a)
+    r = _file_to(api_client, org, [finance], [hr])
+    assert r.status_code == 201, r.content
+    req = r.json()
+    assert [p["username"] for p in req["deliver_to"]] == ["sr_fin"] and [p["username"] for p in req["deliver_cc"]] == ["sr_hr"]
+    # nothing reaches them before the approval
+    h_fin = auth(api_client, "sr_fin")
+    assert api_client.get("/api/v1/correspondences/?folder=inbox", **h_fin).json()["count"] == 0
+
+    _sign_up(api_client, h["sr_exec"])
+    done = _decide(api_client, h["sr_exec"], req["id"], password=DEFAULT_PASSWORD, page=1).json()  # directly
+    assert done["status"] == "approved" and done["delivered_correspondence"]
+    cid = done["delivered_correspondence"]["id"]
+    inbox = api_client.get("/api/v1/correspondences/?folder=inbox", **h_fin).json()["results"]
+    assert [m["id"] for m in inbox] == [cid]
+    assert inbox[0]["sender"]["username"] == "sr_exec" and inbox[0]["subject"] == "خطاب إلى الشؤون المالية"
+    kinds = dict(CorrespondenceParticipant.objects.filter(correspondence_id=cid).values_list("user__username", "kind"))
+    assert kinds == {"sr_exec": "from", "sr_fin": "to", "sr_hr": "cc", "sr_emp": "cc"}
+    # the attachment is the signed PDF, readable by the addressee
+    detail = api_client.get(f"/api/v1/correspondences/{cid}/", **h_fin).json()
+    att = detail["content"]["attachments"][0]
+    assert att["id"] == done["signed_file"]["id"]
+    assert api_client.get(f"/api/v1/attachments/{att['id']}/", **h_fin).status_code == 200
+    n = Notification.objects.get(user=org["emp"], kind="approval_delivered")
+    assert str(n.ref_id) == cid
+
+
+def test_rejected_letter_is_not_sent_and_bad_recipients_are_refused(api_client, user_factory, branch_a, org):
+    h = org["h"]
+    finance = make_employee(user_factory, "sr_fin2", branch_a)
+    assert _file_to(api_client, org, [], [finance]).status_code == 400  # CC without To
+    req = _file_to(api_client, org, [finance]).json()
+    _decide(api_client, h["sr_exec"], req["id"], "rejected")
+    from apps.approvals.models import ApprovalRequest
+
+    assert ApprovalRequest.objects.get(id=req["id"]).delivered_correspondence is None
+    assert api_client.get("/api/v1/correspondences/?folder=inbox", **auth(api_client, "sr_fin2")).json()["count"] == 0
+
+
+def test_letter_goes_from_the_requester_when_the_approver_cannot_send(api_client, user_factory, branch_a, org):
+    """An executive without an organizational unit cannot send mail: the letter
+    then goes from the secretary instead (still after the approval)."""
+    from apps.org.models import EmployeeMembership
+
+    h = org["h"]
+    finance = make_employee(user_factory, "sr_fin3", branch_a)
+    req = _file_to(api_client, org, [finance]).json()
+    EmployeeMembership.objects.filter(user=org["ex"]).delete()
+    _sign_up(api_client, h["sr_exec"])
+    done = _decide(api_client, h["sr_exec"], req["id"], password=DEFAULT_PASSWORD, page=1).json()
+    inbox = api_client.get("/api/v1/correspondences/?folder=inbox", **auth(api_client, "sr_fin3")).json()["results"]
+    assert done["delivered_correspondence"] and inbox[0]["sender"]["username"] == "sr_emp"

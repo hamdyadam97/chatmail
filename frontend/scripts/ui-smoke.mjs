@@ -1230,9 +1230,16 @@ async function main() {
     await ahmed.page.selectOption('#req-type', { label: 'طلب عهدة' }).catch(() => undefined);
     await ahmed.page.fill('#req-title', 'لابتوب').catch(() => undefined);
     await ahmed.page.setInputFiles('#req-file', reqPdf).catch(() => undefined);
+    // «يُرسل بعد الاعتماد إلى»: سارة.
+    await ahmed.page.fill('#deliver-to', 'سارة').catch(() => undefined);
+    await ahmed.page.locator('[role="listbox"] [role="option"]:has-text("سارة القحطاني")').first().click({ timeout: 10000 }).catch(() => undefined);
     await ahmed.page.getByRole('button', { name: 'تقديم الطلب' }).click({ timeout: 10000 }).catch(() => undefined);
     const execFiled = await ahmed.page.waitForURL(/\/approvals\/[0-9a-f-]{36}$/, { timeout: 20000 }).then(() => true).catch(() => false);
     const execReqId = ahmed.page.url().split('/').pop();
+    const deliverShown = await ahmed.page.locator('[data-testid="deliver-info"]:has-text("بعد الاعتماد يُرسل إلى"):has-text("سارة القحطاني")')
+      .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    if (!deliverShown) console.log(`    لقطة: ${await shot(ahmed, 'deliver-info')}`);
+    check('طلب جديد: «يُرسل بعد الاعتماد إلى» يُحفظ ويظهر في صفحة الطلب', deliverShown);
     await archivist.page.goto(`${UI}/approvals`);
     const execChip = await archivist.page.locator(`a[href$="${execReqId}"] [data-testid="awaiting-manager-chip"]`)
       .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);

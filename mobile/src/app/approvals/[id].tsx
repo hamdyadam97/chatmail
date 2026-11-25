@@ -3,7 +3,7 @@
  * المدير التنفيذي قبل وصول دوره: «اعتماد مباشر» أو «رفض» فقط.
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -113,6 +113,21 @@ export default function ApprovalScreen() {
           />
         )}
         {early && !!req.reminded_at && <T style={styles.meta}>آخر تذكير {fullDate(req.reminded_at)} — مرة كل ساعة</T>}
+
+        {(req.deliver_to?.length ?? 0) > 0 && (
+          <Pressable
+            disabled={!req.delivered_correspondence}
+            onPress={() => req.delivered_correspondence && router.push(`/mail/${req.delivered_correspondence.id}`)}
+            style={[styles.notice, { flexDirection: row, backgroundColor: '#E8F4FB' }]}
+          >
+            <Ionicons name={req.delivered_correspondence ? 'paper-plane' : 'paper-plane-outline'} size={20} color="#0B5E86" />
+            <T style={{ flex: 1, fontSize: font.small, lineHeight: 22, color: '#0B4A6B' }}>
+              {req.delivered_correspondence ? 'أُرسل الخطاب المعتمد إلى: ' : 'بعد الاعتماد يُرسل إلى: '}
+              {req.deliver_to!.map((u) => u.full_name).join('، ')}
+              {req.deliver_cc?.length ? ` — نسخة: ${req.deliver_cc.map((u) => u.full_name).join('، ')}` : ''}
+            </T>
+          </Pressable>
+        )}
 
         {(req.source_file || req.signed_file) && (
           <View style={styles.card}>

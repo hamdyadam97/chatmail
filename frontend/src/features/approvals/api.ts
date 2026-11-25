@@ -93,6 +93,10 @@ export interface ApprovalRequest {
   events: RequestEvent[];
   /** مقدّم الطلب وطلبه معاد للمراجعة: «تعديل وإعادة إرسال». */
   can_resubmit: boolean;
+  /** «يُرسل بعد الاعتماد إلى»: يصلهم الخطاب المعتمد من آخر معتمد، ومقدّمه نسخة. */
+  deliver_to?: UserRef[];
+  deliver_cc?: UserRef[];
+  delivered_correspondence?: { id: string; reference_number: string | null } | null;
 }
 
 export interface FileRef {
@@ -177,11 +181,13 @@ export const approvalsApi = {
   ) => apiFetch<WorkflowTemplate>(`/approvals/workflows/${id}/`, { method: 'PATCH', body }),
   /** الأنواع التي يستطيع المستخدم تقديمها من «طلب جديد». */
   requestTypes: () => apiFetch<WorkflowTemplate[]>('/approvals/request-types/'),
-  fileRequest: (body: { workflow_id: string; title: string; note: string; file: File }) => {
+  fileRequest: (body: { workflow_id: string; title: string; note: string; file: File; deliver_to?: string[]; deliver_cc?: string[] }) => {
     const form = new FormData();
     form.append('workflow_id', body.workflow_id);
     form.append('title', body.title);
     form.append('note', body.note);
+    for (const id of body.deliver_to ?? []) form.append('deliver_to', id);
+    for (const id of body.deliver_cc ?? []) form.append('deliver_cc', id);
     form.append('file', body.file, body.file.name);
     return rawFetch('/approvals/file-request/', { method: 'POST', headers: { Accept: 'application/json' }, body: form }).then(
       async (res) => {

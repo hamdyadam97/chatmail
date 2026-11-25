@@ -688,7 +688,38 @@ def request_types(user) -> list[ApprovalWorkflow]:
     ]
 
 
-def file_request(*, requester, workflow_id, title: str, note: str, data: bytes, filename: str) -> ApprovalRequest:
+MAX_DELIVER = 20
+
+
+def clean_delivery(requester, to_ids, cc_ids) -> tuple[list[str], list[str]]:
+    """«يُرسل بعد الاعتماد إلى»: active employees, no duplicates, not the requester."""
+    import uuid as _uuid
+
+    def ids(values):
+        out = []
+        for v in values or []:
+            try:
+                u = str(_uuid.UUID(str(v)))
+            except ValueError:
+                raise ValidationError({"deliver_to": "مستلم غير صالح."})
+            if u not in out and u != str(requester.id):
+                out.append(u)
+        return out
+
+    to, cc = ids(to_ids), ids(cc_ids)
+    cc = [u for u in cc if u not in to]
+    if len(to) + len(cc) > MAX_DELIVER:
+        raise ValidationError({"deliver_to": f"حتى {MAX_DELIVER} مستلمًا."})
+    if cc and not to:
+        raise ValidationError({"deliver_to": "حدد المستلم (إلى) أولًا."})
+    active = {str(u) for u in User.objects.filter(id__in=to + cc, is_active=True).values_list("id", flat=True)}
+    if active != set(to + cc):
+        raise ValidationError({"deliver_to": "مستلم غير موجود أو مؤرشف."})
+    return to, cc
+
+
+def file_request(*, requester, workflow_id, title: str, note: str, data: bytes, filename: str,
+                 deliver_to=None, deliver_cc=None) -> ApprovalRequest:
     """«طلب جديد»: the document goes as a correspondence to every approver of
     the request type (so they can read it), then the approval runs on it."""
     import uuid as _uuid
@@ -715,6 +746,7 @@ def file_request(*, requester, workflow_id, title: str, note: str, data: bytes, 
         approvers.extend(i for i in ids if i not in approvers)
     if str(requester.id) in approvers:
         raise ValidationError({"workflow_id": "أنت من معتمدي هذا الطلب — لا يعتمد أحد طلبه بنفسه."})
+    deliver_to, deliver_cc = clean_delivery(requester, deliver_to, deliver_cc)
 
     pdf = signing.to_pdf(data)
     base_name = (filename or "طلب").rsplit(".", 1)[0][:150]
@@ -729,7 +761,8 @@ def file_request(*, requester, workflow_id, title: str, note: str, data: bytes, 
         req = create_request(requester=requester, correspondence=corr, workflow_id=workflow.id)
         req.source_file = stored
         req.page_count = signing.page_count(pdf)
-        req.save(update_fields=["source_file", "page_count"])
+        req.deliver_to, req.deliver_cc = deliver_to, deliver_cc
+        req.save(update_fields=["source_file", "page_count", "deliver_to", "deliver_cc"])
     return req
 
 
@@ -766,6 +799,52 @@ def _advance(req, step, decision) -> None:
     req.decided_at = now
     req.save(update_fields=["status", "decided_at"])
     notify([req.requested_by_id], "approval_approved", ref_type="approval_request", ref_id=req.id, actor=decision.approver)
+    deliver(req, decision)
+
+
+def deliver(req, decision) -> None:
+    """«يُرسل بعد الاعتماد»: the approved (signed) letter goes as a new
+    correspondence to the people it is addressed to — from the final approver
+    (e.g. the executive), the requester (e.g. the secretary) in CC. If the
+    approver cannot send (no unit / no permission), it goes from the requester.
+    Failure never undoes the approval: the requester is told to send it by hand."""
+    import uuid as _uuid
+
+    from apps.correspondence.services import create_correspondence
+
+    if not req.deliver_to or req.delivered_correspondence_id:
+        return
+    content = correspondence_content(req.correspondence) or {}
+    subject = content.get("subject") or ""
+    prefix = f"{req.workflow.name}: " if req.workflow_id else ""
+    if prefix and subject.startswith(prefix):
+        subject = subject[len(prefix):]
+    files = [str(req.signed_file_id)] if req.signed_file_id else [str(i) for i in content.get("attachments", [])]
+    approver = User.objects.get(id=decision.slot_user_id)
+    for sender in (approver, req.requested_by):
+        cc = [u for u in req.deliver_cc + [str(req.requested_by_id)] if u != str(sender.id) and u not in req.deliver_to]
+        to = [u for u in req.deliver_to if u != str(sender.id)]
+        if not to:
+            continue
+        try:
+            with transaction.atomic():
+                result = create_correspondence(
+                    requester=sender, to_ids=to, cc_ids=list(dict.fromkeys(cc)), bcc_ids=[], priority="normal",
+                    classification="normal", due_date=None, membership_id=None, client_ref=_uuid.uuid4(),
+                    subject=subject or "خطاب معتمد", body=content.get("body") or "", attachment_ids=files, send=True,
+                )
+        except (ValidationError, PermissionDenied):
+            continue
+        req.delivered_correspondence = result.correspondence
+        req.save(update_fields=["delivered_correspondence"])
+        notify([req.requested_by_id], "approval_delivered", ref_type="correspondence", ref_id=result.correspondence.id,
+               actor=sender)
+        log(actor=sender, action="approval_delivered", target_type="approval_request", target_id=req.id,
+            metadata={"correspondence_id": str(result.correspondence.id), "to": len(to), "cc": len(cc),
+                      "from_requester": sender.id == req.requested_by_id})
+        return
+    notify([req.requested_by_id], "approval_delivery_failed", ref_type="approval_request", ref_id=req.id)
+    log(actor=None, action="approval_delivery_failed", target_type="approval_request", target_id=req.id)
 
 
 def _carry_over(req, step) -> bool:

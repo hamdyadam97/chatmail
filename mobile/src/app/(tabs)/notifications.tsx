@@ -18,6 +18,8 @@ const ICONS: Record<string, IconName> = {
   approval_awaiting_manager: 'hourglass',
   approval_overridden: 'flash',
   approval_reminder: 'alarm-outline',
+  approval_delivered: 'paper-plane',
+  approval_delivery_failed: 'warning',
   announcement: 'megaphone',
   announcement_reminder: 'megaphone',
   correspondence_due_soon: 'time',

@@ -110,6 +110,13 @@ class ApprovalRequest(models.Model):
     # Resubmitting a returned request with a new document starts a new round:
     # everyone signs the new file; the earlier round's decisions stay recorded.
     round = models.PositiveSmallIntegerField(default=1)
+    # «يُرسل بعد الاعتماد إلى»: on final approval the (signed) letter goes to
+    # these people from the final approver, the requester in CC.
+    deliver_to = models.JSONField(default=list, blank=True)
+    deliver_cc = models.JSONField(default=list, blank=True)
+    delivered_correspondence = models.ForeignKey(
+        "correspondence.Correspondence", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
 
     class Meta:
         db_table = "approval_requests"

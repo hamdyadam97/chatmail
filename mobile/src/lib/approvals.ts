@@ -39,6 +39,9 @@ export interface ApprovalRequest {
   page_count: number | null;
   events: { kind: string; actor: UserRef; step_order: number; note: string; created_at: string }[];
   can_resubmit: boolean;
+  deliver_to?: UserRef[];
+  deliver_cc?: UserRef[];
+  delivered_correspondence?: { id: string; reference_number: string | null } | null;
 }
 
 export interface RequestType {
@@ -104,12 +107,14 @@ export async function fileRequest(input: {
   title: string;
   note: string;
   file: { uri: string; name: string; mime: string };
+  deliverTo?: string[];
 }): Promise<ApprovalRequest> {
   const send = async () => {
     const form = new FormData();
     form.append('workflow_id', input.workflowId);
     form.append('title', input.title);
     form.append('note', input.note);
+    for (const id of input.deliverTo ?? []) form.append('deliver_to', id);
     // React Native: {uri, name, type} يرفع الملف من مساره المحلي.
     form.append('file', { uri: input.file.uri, name: input.file.name, type: input.file.mime } as unknown as Blob);
     return fetch(`${API_BASE}/approvals/file-request/`, { method: 'POST', headers: await authHeaders(), body: form });

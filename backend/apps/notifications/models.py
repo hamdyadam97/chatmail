@@ -25,6 +25,8 @@ class Notification(models.Model):
         ("approval_awaiting_manager", "طلب بانتظار المدير المباشر"),
         ("approval_overridden", "حسم المدير التنفيذي طلبًا"),
         ("approval_reminder", "تذكير بتوقيع طلب"),
+        ("approval_delivered", "أُرسل الخطاب المعتمد"),
+        ("approval_delivery_failed", "تعذر إرسال الخطاب المعتمد"),
         ("device_alert", "تنبيه أجهزة"),
         ("announcement", "تعميم"),
         ("announcement_reminder", "تذكير بتعميم"),

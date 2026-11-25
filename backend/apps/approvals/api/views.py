@@ -63,6 +63,15 @@ def _event_dict(e) -> dict:
     }
 
 
+def _people(ids) -> list[dict]:
+    if not ids:
+        return []
+    from apps.accounts.models import User
+
+    by_id = {str(u.id): u for u in User.objects.filter(id__in=ids)}
+    return [_user_ref(by_id[i]) for i in ids if i in by_id]
+
+
 def request_dict(req: ApprovalRequest, viewer) -> dict:
     steps = []
     for step in req.steps.prefetch_related("approvers__user", "decisions__approver").order_by("step_order"):
@@ -120,6 +129,14 @@ def request_dict(req: ApprovalRequest, viewer) -> dict:
         "round": req.round,
         "events": [_event_dict(e) for e in req.events.select_related("actor", "on_behalf_of").order_by("created_at")],
         "can_resubmit": req.status == "returned" and req.requested_by_id == viewer.id,
+        # «يُرسل بعد الاعتماد إلى» (names: directory data), and the letter once sent.
+        "deliver_to": _people(req.deliver_to),
+        "deliver_cc": _people(req.deliver_cc),
+        "delivered_correspondence": (
+            {"id": str(req.delivered_correspondence_id),
+             "reference_number": req.delivered_correspondence.reference_number}
+            if req.delivered_correspondence_id else None
+        ),
     }
 
 
@@ -568,6 +585,11 @@ class FileRequestView(APIView):
             raise ValidationError({"file": "أرفق ملف الطلب."})
         if upload.size > services.MAX_REQUEST_FILE_BYTES:
             raise ValidationError({"file": "الملف أكبر من 15 م.ب."})
+        def id_list(key):
+            # multipart: repeated fields or one comma-separated value
+            values = request.data.getlist(key) if hasattr(request.data, "getlist") else request.data.get(key) or []
+            return [v.strip() for item in values for v in str(item).split(",") if v.strip()]
+
         req = services.file_request(
             requester=request.user,
             workflow_id=request.data.get("workflow_id"),
@@ -575,6 +597,8 @@ class FileRequestView(APIView):
             note=request.data.get("note") or "",
             data=upload.read(),
             filename=upload.name or "",
+            deliver_to=id_list("deliver_to"),
+            deliver_cc=id_list("deliver_cc"),
         )
         return Response(request_dict(req, request.user), status=status.HTTP_201_CREATED)
 

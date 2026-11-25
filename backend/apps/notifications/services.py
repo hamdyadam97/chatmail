@@ -26,6 +26,8 @@ TITLES = {
     # To an earlier approver whose step the executive skipped.
     "approval_overridden": "حسم المدير التنفيذي طلبًا كان بانتظار قرارك",
     "approval_reminder": "المدير التنفيذي يطلب توقيعك على طلب بانتظار قرارك",
+    "approval_delivered": "اعتُمد الخطاب وأُرسل إلى المستلمين",
+    "approval_delivery_failed": "اعتُمد الخطاب لكن تعذر إرساله تلقائيًا — أرسله يدويًا",
     "device_alert": "تغيّرت أجهزة حسابك — راجع قائمة أجهزتك",
     "announcement": "صدر تعميم جديد موجّه إليك",
     "announcement_reminder": "تذكير: تعميم بانتظار تأكيد اطلاعك",

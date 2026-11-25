@@ -223,9 +223,11 @@ function NewRequest({ onDone, onCancel }: { onDone: (id: string) => void; onCanc
   const [title, setTitle] = useState('');
   const [note, setNote] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [deliverTo, setDeliverTo] = useState<string[]>([]);
+  const [deliverCc, setDeliverCc] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const submit = useMutation({
-    mutationFn: () => approvalsApi.fileRequest({ workflow_id: typeId, title, note, file: file! }),
+    mutationFn: () => approvalsApi.fileRequest({ workflow_id: typeId, title, note, file: file!, deliver_to: deliverTo, deliver_cc: deliverCc }),
     onSuccess: (r) => onDone(r.id),
     onError: (err) => setError(toUserMessage(err, 'تعذر تقديم الطلب')),
   });
@@ -265,6 +267,17 @@ function NewRequest({ onDone, onCancel }: { onDone: (id: string) => void; onCanc
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           className="block w-full text-sm text-gray-700 file:me-3 file:rounded-md file:border-0 file:bg-primary-50 file:px-3 file:py-1.5 file:text-primary-700"
         />
+      </div>
+      <div className="space-y-2 rounded-lg border border-dashed border-gray-300 p-3" data-testid="deliver-after">
+        <p className="text-sm font-medium text-gray-800">يُرسل بعد الاعتماد إلى (اختياري)</p>
+        <p className="text-xs text-gray-500">
+          لخطاب موجّه لأشخاص: بعد اعتماده يصلهم الملف الموقّع مباشرة باسم آخر معتمد (مثل المدير التنفيذي)، وأنت نسخة.
+          لا يرونه قبل الاعتماد، ولا يُرسل إن رُفض.
+        </p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <RecipientPicker id="deliver-to" label="إلى" value={deliverTo} onChange={setDeliverTo} />
+          <RecipientPicker id="deliver-cc" label="نسخة" value={deliverCc} onChange={setDeliverCc} />
+        </div>
       </div>
       <div>
         <Label htmlFor="req-note">ملاحظة (اختياري)</Label>
@@ -495,6 +508,24 @@ function ApprovalDetail({ id }: { id: string }) {
           onRemove={isRequester ? (uid, name) => setRemovingUser({ id: uid, name }) : undefined}
           removing={removeApprover.isPending ? removeApprover.variables : null}
         />
+        {(request.deliver_to?.length ?? 0) > 0 && (
+          <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3 text-sm" data-testid="deliver-info">
+            {request.delivered_correspondence ? (
+              <p className="text-sky-900">
+                أُرسل الخطاب المعتمد إلى {request.deliver_to!.map((u) => u.full_name).join('، ')}
+                {request.deliver_cc?.length ? ` (نسخة: ${request.deliver_cc.map((u) => u.full_name).join('، ')})` : ''} —{' '}
+                <Link to={`/correspondence/${request.delivered_correspondence.id}`} className="font-mono text-primary-700 hover:underline" dir="ltr">
+                  {request.delivered_correspondence.reference_number}
+                </Link>
+              </p>
+            ) : (
+              <p className="text-sky-900">
+                بعد الاعتماد يُرسل إلى: {request.deliver_to!.map((u) => u.full_name).join('، ')}
+                {request.deliver_cc?.length ? ` — نسخة: ${request.deliver_cc.map((u) => u.full_name).join('، ')}` : ''}
+              </p>
+            )}
+          </div>
+        )}
         {request.can_resubmit && <ResubmitPanel request={request} onDone={() => void refresh()} />}
         {removingUser && (
           <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/60 p-3 text-sm" data-testid="remove-approver-box">
