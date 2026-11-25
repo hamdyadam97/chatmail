@@ -28,7 +28,9 @@ CI=1 npx expo prebuild --platform android --no-install
 echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 chmod +x android/gradlew
 cd android
-grep -q "^reactNativeArchitectures=armeabi-v7a,arm64-v8a" gradle.properties || sed -i "s/^reactNativeArchitectures=.*/reactNativeArchitectures=armeabi-v7a,arm64-v8a/" gradle.properties
+# Real phones only (ARM): about half the size. A fresh prebuild may not have the line at all.
+sed -i "/^reactNativeArchitectures=/d" gradle.properties
+printf '\nreactNativeArchitectures=armeabi-v7a,arm64-v8a\n' >> gradle.properties  # the file may lack a final newline
 ./gradlew assembleRelease --no-daemon -q 2>&1 | grep -vE "^w: |warning:|deprecat" | tail -25
 ls -la app/build/outputs/apk/release/
 
