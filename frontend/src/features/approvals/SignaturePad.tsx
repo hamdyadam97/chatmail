@@ -31,6 +31,29 @@ async function shrinkImage(file: File): Promise<string> {
   return c.toDataURL('image/jpeg', 0.9);
 }
 
+function UploadSignature({ onSave, label }: { onSave: (dataUrl: string) => void; label: string }) {
+  return (
+    <label
+      data-testid="signature-upload"
+      className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+    >
+      <Upload className="h-4 w-4" />
+      {label}
+      <input
+        type="file"
+        accept="image/png,image/jpeg"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (!file) return;
+          void shrinkImage(file).then(onSave, () => onSave(''));
+        }}
+      />
+    </label>
+  );
+}
+
 /** لوحة رسم التوقيع بالماوس أو بالإصبع؛ تعيد PNG (data URL) أو null إن كانت فارغة. */
 function DrawPad({ onSave, onCancel, saving }: { onSave: (dataUrl: string) => void; onCancel?: () => void; saving: boolean }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
@@ -100,21 +123,7 @@ function DrawPad({ onSave, onCancel, saving }: { onSave: (dataUrl: string) => vo
           <Eraser className="h-4 w-4" />
           مسح
         </Button>
-        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
-          <Upload className="h-4 w-4" />
-          أو ارفع صورة توقيعك (ولو مصوّرة على ورقة)
-          <input
-            type="file"
-            accept="image/png,image/jpeg"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (!file) return;
-              void shrinkImage(file).then(onSave, () => onSave(''));
-            }}
-          />
-        </label>
+        <UploadSignature onSave={onSave} label="أو ارفع صورة توقيعك (ولو مصوّرة على ورقة)" />
         {onCancel && (
           <Button size="sm" variant="ghost" onClick={onCancel}>
             إلغاء
@@ -155,6 +164,7 @@ export function SignatureManager({ compact = false }: { compact?: boolean }) {
           <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
             تغيير التوقيع
           </Button>
+          <UploadSignature onSave={(d) => save.mutate(d)} label="رفع صورة توقيع" />
         </div>
       ) : (
         <>
