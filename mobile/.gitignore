@@ -45,3 +45,5 @@ yarn-error.*
 
 # Firebase config (copied in at build time from the signing folder)
 google-services.json
+# Firebase service-account keys are secrets: never in the repo
+*firebase-adminsdk*.json
