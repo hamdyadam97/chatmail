@@ -318,8 +318,8 @@ def test_signature_photo_on_paper_loses_its_background():
     out = Image.open(io.BytesIO(clean_signature(buf.getvalue())))
     assert out.mode == "RGBA"
     alpha = out.getchannel("A")
-    # trimmed to the stroke (scaled ×0.6 by the 1200×600 thumbnail): ~480×170, not the whole photo
-    assert out.width < 560 and out.height < 220
+    # trimmed to the strokes (~810×230 of the 1600×1000 photo), not the whole photo
+    assert out.width < 900 and out.height < 300
     # corners are paper → transparent; the middle of the stroke is ink → opaque
     assert max(alpha.getpixel((0, 0)), alpha.getpixel((out.width - 1, out.height - 1))) < 30
     assert alpha.getextrema()[1] == 255
@@ -337,3 +337,26 @@ def test_signature_blank_photo_rejected():
     Image.new("RGB", (800, 400), (230, 230, 225)).save(buf, "JPEG")
     with pytest.raises(Exception):
         clean_signature(buf.getvalue())
+
+
+def test_signature_photo_ignores_table_edge_and_shadow_lines():
+    """A real phone photo: the paper ends on a dark textured table at the
+    bottom and a hard shadow edge crosses it — only the signature is kept."""
+    from PIL import Image, ImageDraw
+
+    from apps.approvals.signing import clean_signature
+
+    img = Image.new("RGB", (900, 1600), (225, 225, 220))
+    d = ImageDraw.Draw(img)
+    d.polygon([(0, 0), (500, 0), (300, 900), (0, 900)], fill=(170, 170, 165))  # a hard shadow
+    d.rectangle([0, 1300, 900, 1600], fill=(110, 80, 60))  # the table
+    for y in range(1310, 1600, 14):  # wood grain: thin dark lines touching the border
+        d.line([(0, y), (900, y + 30)], fill=(50, 35, 25), width=4)
+    d.line([(350, 760), (420, 640), (560, 720)], fill=(30, 30, 40), width=8)  # the signature
+    d.line([(400, 600), (410, 820)], fill=(30, 30, 40), width=8)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=88)
+
+    out = Image.open(io.BytesIO(clean_signature(buf.getvalue())))
+    # just the signature (~220×230), not the table or the shadow's edge
+    assert out.width < 300 and out.height < 300

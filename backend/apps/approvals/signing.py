@@ -72,33 +72,87 @@ def to_pdf(data: bytes) -> bytes:
 
 # --- the saved signature ---------------------------------------------------------------------
 
-INK_LO, INK_HI = 18, 70  # how much darker than the paper a pixel must be to count as ink
+INK_LO, INK_HI = 25, 80  # how much darker than the paper around it a pixel must be to count as ink
+WORK_SIDE = 1600  # photos are analysed at this size, then the trimmed ink is shrunk to 1200×600
 
 
 def _strip_paper(img):
-    """A photo/scan of a signature on paper (no transparency): estimate the
-    paper's brightness locally (shadows and uneven light from a phone camera),
-    keep only what is clearly darker than it as ink, and make the rest
-    transparent so the stamp shows the ink alone, not a grey rectangle."""
-    from PIL import Image, ImageChops, ImageFilter
+    """A photo/scan of a signature on paper (no transparency) becomes the
+    ink alone on a transparent background.
+
+    The paper's brightness around each pixel is a morphological closing
+    (max then min filter wider than a pen stroke): thin dark lines vanish
+    from it, while shadows, the paper's edge and the table under it are
+    broad and stay. What is clearly darker than that closing is ink."""
+    from PIL import ImageChops, ImageFilter
 
     gray = img.convert("L")
-    w, h = gray.size
-    small = gray.resize((max(1, w // 8), max(1, h // 8)), Image.BILINEAR)
-    small = small.filter(ImageFilter.MaxFilter(5))  # wipe the strokes out: paper only
-    paper = small.resize((w, h), Image.BILINEAR).filter(ImageFilter.GaussianBlur(max(2, min(w, h) // 60)))
+    k = max(5, (max(gray.size) // 90) | 1)  # odd, ~3× a pen stroke at WORK_SIDE
+    paper = gray.filter(ImageFilter.MaxFilter(k)).filter(ImageFilter.MinFilter(k))
     darkness = ImageChops.subtract(paper, gray)
     span = INK_HI - INK_LO
     alpha = darkness.point(lambda d: 0 if d <= INK_LO else 255 if d >= INK_HI else (d - INK_LO) * 255 // span)
+    alpha = alpha.point(lambda a: a if a > 40 else 0)
+    alpha = ImageChops.multiply(alpha, _signature_region(alpha))
     ink = img.convert("RGB").point(lambda v: int(v * 0.55))  # cameras wash the ink out
     ink.putalpha(alpha)
     return ink
 
 
+def _signature_region(alpha):
+    """A mask (0/255, alpha's size) of the one cluster of marks that is the
+    signature: marks are grouped (dilated) on a small copy, groups touching
+    the photo's border (table, paper edge, fingers) are dropped unless
+    nothing else is left, and the largest remaining group wins."""
+    from collections import deque
+
+    from PIL import Image, ImageFilter
+
+    w, h = alpha.size
+    scale = max(1, max(w, h) // 300)
+    sw, sh = max(1, w // scale), max(1, h // scale)
+    small = alpha.resize((sw, sh), Image.BOX).point(lambda a: 255 if a > 20 else 0)
+    small = small.filter(ImageFilter.MaxFilter(7))  # join the strokes of one signature
+    px = small.load()
+    label = [[0] * sw for _ in range(sh)]
+    groups = []  # (size, touches_border, id)
+    gid = 0
+    for y in range(sh):
+        for x in range(sw):
+            if px[x, y] == 0 or label[y][x]:
+                continue
+            gid += 1
+            size, border = 0, False
+            queue = deque([(x, y)])
+            label[y][x] = gid
+            while queue:
+                cx, cy = queue.popleft()
+                size += 1
+                if cx in (0, sw - 1) or cy in (0, sh - 1):
+                    border = True
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if 0 <= nx < sw and 0 <= ny < sh and px[nx, ny] and not label[ny][nx]:
+                        label[ny][nx] = gid
+                        queue.append((nx, ny))
+            groups.append((size, border, gid))
+    if not groups:
+        return Image.new("L", (w, h), 0)
+    inner = [g for g in groups if not g[1]] or groups
+    keep = max(inner)[2]
+    region = Image.new("L", (sw, sh), 0)
+    rp = region.load()
+    for y in range(sh):
+        row = label[y]
+        for x in range(sw):
+            if row[x] == keep:
+                rp[x, y] = 255
+    return region.resize((w, h), Image.NEAREST).filter(ImageFilter.MaxFilter(5))
+
+
 def clean_signature(data: bytes) -> bytes:
     """A drawn/uploaded signature re-encoded as a plain PNG (no metadata),
     at most 1200×600, trimmed to the ink. An opaque picture (a photo of the
-    signature on paper) has its paper background removed."""
+    signature on paper) has its background removed."""
     from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
     if not data or len(data) > MAX_SIGNATURE_BYTES:
@@ -112,10 +166,10 @@ def clean_signature(data: bytes) -> bytes:
         raise ValidationError({"image": "صورة التوقيع غير صالحة (PNG أو JPG)."})
     img = ImageOps.exif_transpose(img)  # phone photos carry their rotation in EXIF
     img = img.convert("RGBA")
-    img.thumbnail((1200, 600))
+    img.thumbnail((WORK_SIDE, WORK_SIDE))
     if img.getchannel("A").getextrema()[0] == 255:
         img = _strip_paper(img)
-    # Trim to the ink; a median pass ignores dust specks far from the signature.
+    # Trim to the ink; a median pass ignores isolated specks.
     mask = img.getchannel("A").point(lambda a: 255 if a > 60 else 0).filter(ImageFilter.MedianFilter(3))
     bbox = mask.getbbox()
     if bbox is None:
@@ -123,6 +177,7 @@ def clean_signature(data: bytes) -> bytes:
     pad = 4
     bbox = (max(0, bbox[0] - pad), max(0, bbox[1] - pad), min(img.width, bbox[2] + pad), min(img.height, bbox[3] + pad))
     img = img.crop(bbox)
+    img.thumbnail((1200, 600))
     out = io.BytesIO()
     img.save(out, "PNG", optimize=True)
     return out.getvalue()
