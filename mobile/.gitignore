@@ -42,3 +42,6 @@ yarn-error.*
 
 # signing keys never go in the repo
 *.keystore
+
+# Firebase config (copied in at build time from the signing folder)
+google-services.json

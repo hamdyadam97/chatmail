@@ -17,8 +17,14 @@ rsync -a --delete \
   --exclude 'android/local.properties' \
   "$SRC/" "$APP/"
 cd "$APP"
+# Firebase config for push (FCM) lives next to the signing key, not in the public repo.
+GS=/mnt/c/Users/USER/android-build/signing/google-services.json
+[ -f "$GS" ] || { echo "missing $GS (Firebase → Android app cloud.m3hadsystem.mail)"; exit 1; }
+cp "$GS" "$APP/google-services.json"
 npm ci --no-audit --no-fund --loglevel=error
-[ -d android ] || CI=1 npx expo prebuild --platform android --no-install
+# Always regenerate android/ so app.json changes (version, Firebase) are applied.
+rm -rf android
+CI=1 npx expo prebuild --platform android --no-install
 echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 chmod +x android/gradlew
 cd android
