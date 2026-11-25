@@ -5,6 +5,32 @@ import { Button } from '../../shared/ui';
 import { toUserMessage } from '../../shared/api';
 import { approvalsApi } from './api';
 
+const readDataUrl = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => (typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('read')));
+    reader.onerror = () => reject(new Error('read'));
+    reader.readAsDataURL(blob);
+  });
+
+/** صورة توقيع مرفوعة: PNG صغير يُرسل كما هو (قد يكون شفافًا)، وصورة الموبايل الكبيرة
+ * تُصغَّر إلى 1600 بكسل JPEG قبل الإرسال — الخادم يزيل خلفية الورقة ويقص على الحبر. */
+async function shrinkImage(file: File): Promise<string> {
+  if (file.type === 'image/png' && file.size <= 1_500_000) return readDataUrl(file);
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bitmap.width * scale);
+  c.height = Math.round(bitmap.height * scale);
+  const ctx = c.getContext('2d');
+  if (!ctx) return readDataUrl(file);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(bitmap, 0, 0, c.width, c.height);
+  bitmap.close();
+  return c.toDataURL('image/jpeg', 0.9);
+}
+
 /** لوحة رسم التوقيع بالماوس أو بالإصبع؛ تعيد PNG (data URL) أو null إن كانت فارغة. */
 function DrawPad({ onSave, onCancel, saving }: { onSave: (dataUrl: string) => void; onCancel?: () => void; saving: boolean }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
@@ -76,18 +102,16 @@ function DrawPad({ onSave, onCancel, saving }: { onSave: (dataUrl: string) => vo
         </Button>
         <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
           <Upload className="h-4 w-4" />
-          أو ارفع صورة توقيعك
+          أو ارفع صورة توقيعك (ولو مصوّرة على ورقة)
           <input
             type="file"
             accept="image/png,image/jpeg"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (!file) return;
-              const reader = new FileReader();
-              reader.onload = () => typeof reader.result === 'string' && onSave(reader.result);
-              reader.readAsDataURL(file);
               e.target.value = '';
+              if (!file) return;
+              void shrinkImage(file).then(onSave, () => onSave(''));
             }}
           />
         </label>

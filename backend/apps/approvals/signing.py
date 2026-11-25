@@ -14,7 +14,7 @@ from pathlib import Path
 from rest_framework.exceptions import ValidationError
 
 MAX_PAGES = 50
-MAX_SIGNATURE_BYTES = 300 * 1024
+MAX_SIGNATURE_BYTES = 5 * 1024 * 1024  # the web page shrinks phone photos before sending
 FONT_PATH = Path(__file__).resolve().parent / "fonts" / "Amiri-Regular.ttf"
 
 # Signature boxes at the bottom of the last page, right to left, 3 per row.
@@ -72,13 +72,37 @@ def to_pdf(data: bytes) -> bytes:
 
 # --- the saved signature ---------------------------------------------------------------------
 
+INK_LO, INK_HI = 18, 70  # how much darker than the paper a pixel must be to count as ink
+
+
+def _strip_paper(img):
+    """A photo/scan of a signature on paper (no transparency): estimate the
+    paper's brightness locally (shadows and uneven light from a phone camera),
+    keep only what is clearly darker than it as ink, and make the rest
+    transparent so the stamp shows the ink alone, not a grey rectangle."""
+    from PIL import Image, ImageChops, ImageFilter
+
+    gray = img.convert("L")
+    w, h = gray.size
+    small = gray.resize((max(1, w // 8), max(1, h // 8)), Image.BILINEAR)
+    small = small.filter(ImageFilter.MaxFilter(5))  # wipe the strokes out: paper only
+    paper = small.resize((w, h), Image.BILINEAR).filter(ImageFilter.GaussianBlur(max(2, min(w, h) // 60)))
+    darkness = ImageChops.subtract(paper, gray)
+    span = INK_HI - INK_LO
+    alpha = darkness.point(lambda d: 0 if d <= INK_LO else 255 if d >= INK_HI else (d - INK_LO) * 255 // span)
+    ink = img.convert("RGB").point(lambda v: int(v * 0.55))  # cameras wash the ink out
+    ink.putalpha(alpha)
+    return ink
+
+
 def clean_signature(data: bytes) -> bytes:
     """A drawn/uploaded signature re-encoded as a plain PNG (no metadata),
-    at most 1200×600."""
-    from PIL import Image, UnidentifiedImageError
+    at most 1200×600, trimmed to the ink. An opaque picture (a photo of the
+    signature on paper) has its paper background removed."""
+    from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
     if not data or len(data) > MAX_SIGNATURE_BYTES:
-        raise ValidationError({"image": "صورة التوقيع فارغة أو أكبر من 300 ك.ب."})
+        raise ValidationError({"image": "صورة التوقيع فارغة أو أكبر من 5 م.ب."})
     try:
         img = Image.open(io.BytesIO(data))
         if img.format not in ("PNG", "JPEG"):
@@ -86,11 +110,18 @@ def clean_signature(data: bytes) -> bytes:
         img.load()
     except (UnidentifiedImageError, OSError):
         raise ValidationError({"image": "صورة التوقيع غير صالحة (PNG أو JPG)."})
+    img = ImageOps.exif_transpose(img)  # phone photos carry their rotation in EXIF
     img = img.convert("RGBA")
     img.thumbnail((1200, 600))
-    bbox = img.getbbox()  # trim empty margins so the stamp is the ink itself
+    if img.getchannel("A").getextrema()[0] == 255:
+        img = _strip_paper(img)
+    # Trim to the ink; a median pass ignores dust specks far from the signature.
+    mask = img.getchannel("A").point(lambda a: 255 if a > 60 else 0).filter(ImageFilter.MedianFilter(3))
+    bbox = mask.getbbox()
     if bbox is None:
-        raise ValidationError({"image": "التوقيع فارغ."})
+        raise ValidationError({"image": "التوقيع فارغ — لم يظهر حبر في الصورة."})
+    pad = 4
+    bbox = (max(0, bbox[0] - pad), max(0, bbox[1] - pad), min(img.width, bbox[2] + pad), min(img.height, bbox[3] + pad))
     img = img.crop(bbox)
     out = io.BytesIO()
     img.save(out, "PNG", optimize=True)

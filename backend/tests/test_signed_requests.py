@@ -295,3 +295,45 @@ def test_bad_files_and_signatures_are_refused(api_client, org):
     assert api_client.get(f"{API}signature/", **h["sr_emp"]).json()["has_signature"] is False
     assert api_client.delete(f"{API}signature/", **h["sr_bm"]).status_code == 204
     assert not UserSignature.objects.filter(user=org["bm"]).exists()
+
+
+def test_signature_photo_on_paper_loses_its_background():
+    """A phone photo of a signature (opaque JPEG, greyish paper with a shadow
+    gradient) is stored as the ink alone on a transparent background, trimmed."""
+    from PIL import Image, ImageDraw
+
+    from apps.approvals.signing import clean_signature
+
+    w, h = 1600, 1000
+    img = Image.new("RGB", (w, h))
+    px = img.load()
+    for x in range(w):  # uneven light: 150 on the left (shadow) to 235 on the right
+        shade = 150 + 85 * x // w
+        for y in range(h):
+            px[x, y] = (shade, shade, shade - 8)
+    ImageDraw.Draw(img).line([(400, 600), (700, 380), (1200, 520)], fill=(40, 45, 90), width=10)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+
+    out = Image.open(io.BytesIO(clean_signature(buf.getvalue())))
+    assert out.mode == "RGBA"
+    alpha = out.getchannel("A")
+    # trimmed to the stroke (scaled ×0.6 by the 1200×600 thumbnail): ~480×170, not the whole photo
+    assert out.width < 560 and out.height < 220
+    # corners are paper → transparent; the middle of the stroke is ink → opaque
+    assert max(alpha.getpixel((0, 0)), alpha.getpixel((out.width - 1, out.height - 1))) < 30
+    assert alpha.getextrema()[1] == 255
+    # the darkest shadowed paper did not turn into ink
+    opaque = sum(1 for a in alpha.getdata() if a > 200)
+    assert opaque < out.width * out.height * 0.4
+
+
+def test_signature_blank_photo_rejected():
+    from PIL import Image
+
+    from apps.approvals.signing import clean_signature
+
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 400), (230, 230, 225)).save(buf, "JPEG")
+    with pytest.raises(Exception):
+        clean_signature(buf.getvalue())
