@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { routeForUrl } from '@/lib/push';
 import { colors } from '@/lib/theme';
+import { watchForUpdates } from '@/lib/updates';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
@@ -68,6 +69,7 @@ function RootStack() {
 }
 
 export default function RootLayout() {
+  useEffect(() => watchForUpdates(), []);
   return (
     <SafeAreaProvider>
       <AuthProvider>

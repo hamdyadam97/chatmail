@@ -192,6 +192,18 @@ class SupportContactView(APIView):
         return Response({"whatsapp": settings.SUPPORT_WHATSAPP or None})
 
 
+class AppVersionView(APIView):
+    """The mobile app's latest full release (public: checked before login too)."""
+
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        latest, url = settings.APP_ANDROID_LATEST, settings.APP_ANDROID_URL
+        ok = bool(latest and url.startswith("https://"))
+        return Response({"android": {"version": latest, "url": url} if ok else None})
+
+
 class LoginView(APIView):
     throttle_classes = [LoginIPThrottle, LoginUsernameThrottle]
 

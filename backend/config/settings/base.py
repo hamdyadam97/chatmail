@@ -257,6 +257,11 @@ def _whatsapp_number(raw: str) -> str:
 # The support contact shown as a WhatsApp button (login page and app). From the
 # environment file only — the repository is public.
 SUPPORT_WHATSAPP = _whatsapp_number(os.environ.get("SUPPORT_WHATSAPP", ""))
+# The mobile app's latest installable (native) version and where to download
+# it — the app shows «إصدار جديد» when its own is older. Screen-only changes
+# reach phones by themselves (expo-updates) and need neither.
+APP_ANDROID_LATEST = os.environ.get("APP_ANDROID_LATEST", "").strip()
+APP_ANDROID_URL = os.environ.get("APP_ANDROID_URL", "").strip()
 
 # One shared temporary password for accounts created from the employees page
 # (the user must change it at first login). From the server's env file only —

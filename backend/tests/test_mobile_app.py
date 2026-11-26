@@ -103,3 +103,12 @@ def test_app_delivery_sends_fixed_titles_and_drops_dead_tokens(user_factory, mon
     live.refresh_from_db()
     assert live.last_success_at is not None
     assert not AppPushToken.objects.filter(pk=dead.pk).exists()
+
+
+def test_app_version_is_public_and_only_https(api_client, settings):
+    settings.APP_ANDROID_LATEST, settings.APP_ANDROID_URL = "", ""
+    assert api_client.get("/api/v1/auth/app-version/").json() == {"android": None}
+    settings.APP_ANDROID_LATEST, settings.APP_ANDROID_URL = "5.1.0", "http://plain.example/app.apk"
+    assert api_client.get("/api/v1/auth/app-version/").json() == {"android": None}  # never a plain-http download
+    settings.APP_ANDROID_URL = "https://mail.example/app.apk"
+    assert api_client.get("/api/v1/auth/app-version/").json() == {"android": {"version": "5.1.0", "url": "https://mail.example/app.apk"}}

@@ -4,7 +4,7 @@
     "slug": "hamdy-adam",
     "owner": "hamdysarkhas-team",
     "scheme": "m3had",
-    "version": "4.0.0",
+    "version": "5.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,7 +15,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "4"
+      "buildNumber": "5"
     },
     "android": {
       "package": "cloud.m3hadsystem.mail",
@@ -27,7 +27,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "googleServicesFile": "./google-services.json",
-      "versionCode": 4
+      "versionCode": 5
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -74,6 +74,17 @@
       "apiBase": "https://mail.m3had-system.cloud/api/v1",
       "eas": {
         "projectId": "9de612e9-a1e2-4ff8-bd03-d2216c793845"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/9de612e9-a1e2-4ff8-bd03-d2216c793845",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0,
+      "requestHeaders": {
+        "expo-channel-name": "production"
       }
     }
   }
