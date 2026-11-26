@@ -301,9 +301,8 @@ def stamp(pdf: bytes, *, signature_png: bytes, name: str, role: str, when: str, 
     overlay.set_margins(0, 0, 0)
     overlay.add_page()
     overlay.add_font("Amiri", fname=str(FONT_PATH))
-    overlay.set_draw_color(150, 150, 150)
-    overlay.set_line_width(0.6)
-    overlay.rect(x, y_top, BOX_W, BOX_H)
+    # No frame around the stamp (user decision 2026-11-26): signature, name and
+    # details only, straight on the page.
     overlay.image(io.BytesIO(signature_png), x=x + 8, y=y_top + 4, w=BOX_W - 16, h=40, keep_aspect_ratio=True)
     overlay.set_text_color(20, 20, 20)
     overlay.set_font("Amiri", size=10)
