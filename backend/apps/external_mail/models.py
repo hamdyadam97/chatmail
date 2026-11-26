@@ -44,6 +44,11 @@ class ExternalMessage(models.Model):
     recipients = models.JSONField(default=list)  # addresses (to + cc)
     message_id = models.CharField(max_length=998, blank=True, default="", db_index=True)
     in_reply_to = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="replies")
+    # Brevo may put its own Message-ID on what we send; replies then quote that one.
+    provider_message_id = models.CharField(max_length=998, blank=True, default="", db_index=True)
+    # The conversation this message belongs to (= its first message's id) —
+    # the list shows one row per conversation and the reader all its messages.
+    thread_id = models.UUIDField(null=True, blank=True, db_index=True)
     # inbound sender authentication: "pass" | "fail" | "none"
     auth_result = models.CharField(max_length=8, default="none")
     size = models.IntegerField(default=0)

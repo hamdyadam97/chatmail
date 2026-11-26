@@ -102,7 +102,27 @@ def notify(user_ids, kind: str, *, ref_type: str = "", ref_id=None, actor=None) 
         url=app_url(ref_type, ref_id),
         tag=f"{kind}:{ref_id}" if ref_id else kind,
     )
+    _email_forward([n.user_id for n in pushes], kind, ref_type, ref_id, actor)
     return rows
+
+
+def _email_forward(user_ids, kind: str, ref_type: str, ref_id, actor) -> None:
+    """Users with a notification e-mail set by an admin (e.g. the executive's
+    own Outlook) also get it there: the fixed title, who, and a link to open
+    it inside the system. One e-mail per person (addresses are not shared)."""
+    from apps.accounts.models import User
+
+    from . import email
+
+    if not user_ids or not email.configured():
+        return
+    targets = User.objects.filter(id__in=user_ids, is_active=True).exclude(notify_email="").values_list("notify_email", flat=True)
+    if not targets:
+        return
+    actor_name = (actor.full_name or actor.username) if actor is not None else ""
+    subject, text, html = email.notification_email(TITLES[kind], actor_name, app_url(ref_type, ref_id))
+    for address in targets:
+        email.send_email([address], subject, text, html)
 
 
 def _push(rows: list[Notification]) -> None:

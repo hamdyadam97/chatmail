@@ -141,7 +141,7 @@ function ExternalList({
           </div>
         ) : (
           items.map((item) => {
-            const unread = item.direction === 'in' && !item.read_at;
+            const unread = (item.thread_unread ?? 0) > 0 || (item.direction === 'in' && !item.read_at);
             const who = item.direction === 'in' ? item.from_name || item.from : `إلى: ${item.recipients.join('، ')}`;
             return (
               <button
@@ -157,7 +157,14 @@ function ExternalList({
                 <Avatar name={who} size="md" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className={cn('truncate text-sm', unread ? 'font-bold text-gray-900' : 'text-gray-800')}>{who}</span>
+                    <span className={cn('truncate text-sm', unread ? 'font-bold text-gray-900' : 'text-gray-800')}>
+                      {who}
+                      {(item.thread_count ?? 1) > 1 && (
+                        <span className="ms-1.5 rounded-full bg-gray-100 px-1.5 text-[11px] font-normal text-gray-600" data-testid="thread-count">
+                          {item.thread_count}
+                        </span>
+                      )}
+                    </span>
                     <span className="shrink-0 text-xs text-gray-500">{shortTime(item.created_at)}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -316,7 +323,41 @@ function AttachmentChip({ meta }: { meta: AttachmentMeta }) {
   );
 }
 
-function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
+/** رسالة أخرى من المحادثة تحت الرسالة المفتوحة: سطر مختصر يُفتح بالضغط (غير المقروءة مفتوحة). */
+function ThreadItem({ item, mailbox }: { item: ExternalSummary; mailbox: MailboxInfo }) {
+  const [open, setOpen] = useState(item.direction === 'in' && !item.read_at);
+  const mine = item.direction === 'out';
+  const who = mine ? 'أنا' : item.from_name || item.from;
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white" data-testid="thread-item">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-start hover:bg-gray-50"
+        aria-expanded={open}
+      >
+        <Avatar name={mine ? (mailbox.address ?? 'أنا') : who} size="sm" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className={cn('truncate text-sm', item.direction === 'in' && !item.read_at ? 'font-bold text-gray-900' : 'text-gray-800')}>
+              {who}
+            </span>
+            <span className="shrink-0 text-xs text-gray-500">{shortTime(item.created_at)}</span>
+          </div>
+          {!open && <p className="truncate text-xs text-gray-500">{item.preview || item.subject}</p>}
+        </div>
+        <ChevronDown className={cn('h-4 w-4 shrink-0 text-gray-400 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="border-t border-gray-100">
+          <ExternalReader id={item.id} mailbox={mailbox} embedded />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExternalReader({ id, mailbox, embedded = false }: { id: string; mailbox: MailboxInfo; embedded?: boolean }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showRecipients, setShowRecipients] = useState(false);
@@ -356,6 +397,8 @@ function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
     );
   }
   const c = data.stored.content;
+  // باقي المحادثة: الأحدث أولًا تحت الرسالة المفتوحة (مثل Outlook).
+  const threadOthers = embedded ? [] : data.stored.meta.thread.filter((t) => t.id !== id).reverse();
   const files = c.attachments.filter((a) => a.name !== 'original.eml' || a.mime !== 'message/rfc822');
   const original = c.attachments.find((a) => a.name === 'original.eml' && a.mime === 'message/rfc822');
   const incoming = c.direction === 'in';
@@ -376,18 +419,28 @@ function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
   );
 
   return (
-    <div className="min-h-full bg-white" data-testid="external-reader">
-      <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5 md:px-4">
-        {back}
+    <div className={embedded ? 'bg-white' : 'min-h-full bg-white'} data-testid={embedded ? 'external-reader-embedded' : 'external-reader'}>
+      <div
+        className={cn(
+          'flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5 md:px-4',
+          !embedded && 'sticky top-0 z-10',
+        )}
+      >
+        {!embedded && back}
         {canSend && incoming && action('رد', Reply, `/mail/external/compose?reply=${id}`)}
         {canSend && incoming && others.length > 0 && action('رد على الكل', ReplyAll, `/mail/external/compose?reply=${id}&all=1`)}
         {canSend && action('إعادة توجيه', Forward, `/mail/external/compose?forward=${id}`)}
       </div>
 
-      <article className="mx-auto max-w-4xl space-y-5 px-4 py-5 md:px-8">
-        <h2 className="break-words text-2xl font-semibold leading-snug text-gray-900" dir="auto">
-          {c.subject || '(بلا عنوان)'}
-        </h2>
+      <article className={cn('mx-auto max-w-4xl space-y-5', embedded ? 'px-3 py-4' : 'px-4 py-5 md:px-8')}>
+        {!embedded && (
+          <h2 className="break-words text-2xl font-semibold leading-snug text-gray-900" dir="auto">
+            {c.subject || '(بلا عنوان)'}
+            {threadOthers.length > 0 && (
+              <span className="ms-2 align-middle text-sm font-normal text-gray-500">({threadOthers.length + 1} رسائل في المحادثة)</span>
+            )}
+          </h2>
+        )}
 
         {incoming && !verified && (
           <p className="flex items-start gap-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -490,6 +543,14 @@ function ExternalReader({ id, mailbox }: { id: string; mailbox: MailboxInfo }) {
           </details>
         )}
       </article>
+      {threadOthers.length > 0 && (
+        <section className="mx-auto max-w-4xl space-y-2 px-4 pb-8 md:px-8" data-testid="thread-others">
+          <h3 className="text-xs font-semibold text-gray-500">باقي المحادثة</h3>
+          {threadOthers.map((t) => (
+            <ThreadItem key={t.id} item={t} mailbox={mailbox} />
+          ))}
+        </section>
+      )}
     </div>
   );
 }

@@ -329,3 +329,65 @@ def test_mailbox_settings_need_manage_users(ahmed, user_factory, api_client, bra
     assert api_client.patch(url, {"local_part": "bad name!"}, format="json").status_code == 400
     assert AuditLog.objects.filter(action="external_mailbox_updated", target_id=ahmed["user"].id).exists()
     del plain
+
+
+# --- conversations ----------------------------------------------------------------------------
+
+class BrevoResponse(FakeResponse):
+    def json(self):
+        return {"messageId": "<202611260900.111@smtp-relay.mailin.fr>"}
+
+
+def test_reply_quoting_brevos_message_id_joins_the_conversation(ahmed, monkeypatch, api_client):
+    monkeypatch.setattr("requests.post", lambda url, **kw: BrevoResponse())
+    login_and_get_access(api_client, "ahmed")
+    r = api_client.post(f"{API}send/", {"to": ["client@gmail.com"], "subject": "عرض السعر", "body": "b"}, format="json")
+    sent = ExternalMessage.objects.get(id=r.json()["id"])
+    assert sent.thread_id == sent.id and sent.provider_message_id == "<202611260900.111@smtp-relay.mailin.fr>"
+
+    # Gmail answers the id Brevo put on the message, not ours
+    reply = services.ingest(mail(subject="Re: عرض السعر", message_id="<r1@gmail.com>",
+                                 in_reply_to="<202611260900.111@smtp-relay.mailin.fr>"), recipient=f"ahmed@{DOMAIN}")
+    assert reply.in_reply_to_id == sent.id and reply.thread_id == sent.id
+
+    # my answer to the reply stays in it, quoting the whole chain
+    calls = []
+    monkeypatch.setattr("requests.post", lambda url, **kw: calls.append(kw["json"]) or BrevoResponse())
+    r2 = api_client.post(f"{API}send/", {"to": ["sales@example.com"], "subject": "Re: عرض السعر", "body": "b",
+                                         "reply_to_id": str(reply.id)}, format="json")
+    again = ExternalMessage.objects.get(id=r2.json()["id"])
+    assert again.thread_id == sent.id
+    assert calls[0]["headers"]["References"].split() == [sent.message_id, "<r1@gmail.com>"]
+
+    # the list shows one conversation row; the reader gets all three
+    rows = api_client.get(f"{API}messages/?threads=1").json()["results"]
+    assert len(rows) == 1 and rows[0]["id"] == str(again.id)
+    assert rows[0]["thread_count"] == 3 and rows[0]["thread_unread"] == 1
+    detail = api_client.get(f"{API}messages/{reply.id}/").json()
+    assert [t["id"] for t in detail["thread"]] == [str(sent.id), str(reply.id), str(again.id)]
+    # without threads=1 the flat list is unchanged
+    assert len(api_client.get(f"{API}messages/").json()["results"]) == 3
+
+
+def test_reply_found_by_references_or_by_subject(ahmed):
+    first = services.ingest(mail(subject="طلب عرض", message_id="<m1@example.com>"), recipient=f"ahmed@{DOMAIN}")
+    # In-Reply-To unknown, but References names the first message
+    raw = mail(subject="Re: طلب عرض", message_id="<m2@example.com>", in_reply_to="<lost@example.com>")
+    raw = raw.replace(b"In-Reply-To:", b"References: <m1@example.com> <lost@example.com>\nIn-Reply-To:")
+    second = services.ingest(raw, recipient=f"ahmed@{DOMAIN}")
+    assert second.in_reply_to_id == first.id and second.thread_id == first.id
+    # no ids at all: "رد: …" from the same address within 60 days
+    third = services.ingest(mail(subject="رد: طلب عرض", message_id="<m3@example.com>"), recipient=f"ahmed@{DOMAIN}")
+    assert third.thread_id == first.id
+    # the same subject WITHOUT a reply prefix is a new conversation
+    fresh = services.ingest(mail(subject="طلب عرض", message_id="<m4@example.com>"), recipient=f"ahmed@{DOMAIN}")
+    assert fresh.thread_id == fresh.id and fresh.in_reply_to_id is None
+
+
+def test_relink_command_groups_old_unlinked_replies(ahmed):
+    first = services.ingest(mail(subject="فاتورة", message_id="<f1@example.com>"), recipient=f"ahmed@{DOMAIN}")
+    old = services.ingest(mail(subject="Re: فاتورة", message_id="<f2@example.com>"), recipient=f"ahmed@{DOMAIN}")
+    ExternalMessage.objects.filter(id=old.id).update(in_reply_to=None, thread_id=None)  # as before this feature
+    call_command("relink_external_threads", stdout=io.StringIO())
+    old.refresh_from_db()
+    assert old.in_reply_to_id == first.id and old.thread_id == first.id

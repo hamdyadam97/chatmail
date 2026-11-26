@@ -40,6 +40,9 @@ class User(AbstractBaseUser):
     full_name = models.CharField(max_length=255, blank=True, default="", db_index=True)
     phone = models.CharField(max_length=32, blank=True, default="")
     optional_email = models.EmailField(null=True, blank=True, unique=True)
+    # Set by an account manager: every in-app notification is also e-mailed
+    # here (fixed title + who + a link — never content). Empty = off.
+    notify_email = models.EmailField(blank=True, default="")
     is_active = models.BooleanField(default=True)
     must_change_password = models.BooleanField(default=False)
     mfa_enabled = models.BooleanField(default=False)

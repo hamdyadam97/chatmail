@@ -64,6 +64,7 @@ def managed_user_dict(u: User) -> dict:
         "full_name": u.full_name,
         "phone": u.phone,
         "optional_email": u.optional_email,
+        "notify_email": u.notify_email,
         "is_active": u.is_active,
         "must_change_password": u.must_change_password,
         "mfa_enabled": u.mfa_enabled,

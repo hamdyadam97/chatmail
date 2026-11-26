@@ -140,6 +140,8 @@ class AdminUserUpdateSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=128, required=False, allow_blank=True, trim_whitespace=True)
     last_name = serializers.CharField(max_length=128, required=False, allow_blank=True, trim_whitespace=True)
     is_active = serializers.BooleanField(required=False)
+    # Where notifications are also e-mailed (blank = off).
+    notify_email = serializers.EmailField(required=False, allow_blank=True)
 
     def validate_first_name(self, value):
         if not value.strip():

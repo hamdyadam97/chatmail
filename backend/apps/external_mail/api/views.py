@@ -66,8 +66,32 @@ class MessageListView(APIView):
         if q:
             qs = services.search(qs, q)
         paginator = _Pagination()
-        page = paginator.paginate_queryset(qs, request, view=self)
-        return paginator.get_paginated_response([services.summary(m) for m in page])
+        if request.query_params.get("threads") != "1":
+            page = paginator.paginate_queryset(qs, request, view=self)
+            return paginator.get_paginated_response([services.summary(m) for m in page])
+        # One row per conversation: its latest message (in this box), with how
+        # many messages it has and how many incoming ones are unread.
+        latest, order = {}, []
+        for mid, tid in qs.values_list("id", "thread_id"):
+            key = tid or mid
+            if key not in latest:
+                latest[key] = mid
+                order.append(key)
+        counts, unread = {}, {}
+        all_msgs = ExternalMessage.objects.filter(owner=request.user, thread_id__in=[k for k in order])
+        for tid, direction, read_at in all_msgs.values_list("thread_id", "direction", "read_at"):
+            counts[tid] = counts.get(tid, 0) + 1
+            if direction == "in" and read_at is None:
+                unread[tid] = unread.get(tid, 0) + 1
+        page_keys = paginator.paginate_queryset(order, request, view=self)
+        by_id = ExternalMessage.objects.in_bulk([latest[k] for k in page_keys])
+        rows = []
+        for k in page_keys:
+            row = services.summary(by_id[latest[k]])
+            row["thread_count"] = counts.get(k, 1)
+            row["thread_unread"] = unread.get(k, 0)
+            rows.append(row)
+        return paginator.get_paginated_response(rows)
 
 
 class MessageDetailView(APIView):
@@ -81,6 +105,8 @@ class MessageDetailView(APIView):
         data = services.summary(message, content or {})
         data["content"] = services.with_html(message, content) if content else None
         data["images_allowed"] = services.images_allowed(request.user, message)
+        # The whole conversation (oldest first), metadata + preview only.
+        data["thread"] = [services.summary(m) for m in services.thread_messages(message)]
         return Response(data)
 
 

@@ -191,6 +191,8 @@ WEB_PUSH_VAPID_PRIVATE_KEY = os.environ.get("WEB_PUSH_VAPID_PRIVATE_KEY", "")
 WEB_PUSH_SUBJECT = os.environ.get("WEB_PUSH_SUBJECT", "mailto:it@example.org")
 # Mobile app push (Expo → FCM/APNs). Needs no key on our side; off = no calls out.
 APP_PUSH_ENABLED = os.environ.get("APP_PUSH_ENABLED", "1") == "1"
+# Links in notification e-mails (https://<host>). Empty = https://<first ALLOWED_HOSTS>.
+SITE_URL = os.environ.get("SITE_URL", "").rstrip("/")
 
 # --- Auth / crypto configuration -------------------------------------------
 AUTH_JWT_ALGORITHM = "HS256"

@@ -27,6 +27,11 @@ export interface ExternalSummary {
   size: number;
   attachment_count: number;
   in_reply_to_id: string | null;
+  /** المحادثة التي تنتمي إليها (= أول رسالة فيها). */
+  thread_id?: string;
+  /** في قائمة المحادثات فقط: عدد رسائلها وغير المقروء منها. */
+  thread_count?: number;
+  thread_unread?: number;
   created_at: string;
   read_at: string | null;
 }
@@ -86,7 +91,7 @@ export interface ExternalContent {
 
 export interface StoredExternal {
   content: ExternalContent;
-  meta: { from: string; created_at: string; direction: 'in' | 'out'; images_allowed: boolean };
+  meta: { from: string; created_at: string; direction: 'in' | 'out'; images_allowed: boolean; thread: ExternalSummary[] };
 }
 
 interface Page<T> {
@@ -99,9 +104,11 @@ interface Page<T> {
 export const externalApi = {
   me: () => apiFetch<MailboxInfo>('/external-mail/me/'),
   list: (page: number, box: 'all' | 'in' | 'out') =>
-    apiFetch<Page<ExternalSummary>>(`/external-mail/messages/?page=${page}${box === 'all' ? '' : `&box=${box}`}`),
+    apiFetch<Page<ExternalSummary>>(`/external-mail/messages/?threads=1&page=${page}${box === 'all' ? '' : `&box=${box}`}`),
   detail: (id: string) =>
-    apiFetch<ExternalSummary & { content: ExternalContent | null; images_allowed: boolean }>(`/external-mail/messages/${id}/`),
+    apiFetch<ExternalSummary & { content: ExternalContent | null; images_allowed: boolean; thread?: ExternalSummary[] }>(
+      `/external-mail/messages/${id}/`,
+    ),
   /** إظهار صور مرسل موثّق تلقائيًا (أو إيقافه). */
   imageSender: (address: string, allow: boolean) =>
     apiFetch<{ image_senders: string[] }>('/external-mail/image-senders/', { method: 'POST', body: { address, allow } }),
@@ -134,7 +141,13 @@ export async function openExternal(id: string): Promise<ExternalOpen> {
     state: 'ok',
     stored: {
       content: detail.content,
-      meta: { from: detail.from, created_at: detail.created_at, direction: detail.direction, images_allowed: detail.images_allowed },
+      meta: {
+        from: detail.from,
+        created_at: detail.created_at,
+        direction: detail.direction,
+        images_allowed: detail.images_allowed,
+        thread: detail.thread ?? [],
+      },
     },
   };
 }

@@ -285,6 +285,21 @@ class UserDetailView(APIView):
                     **request_context(request),
                 )
 
+        if "notify_email" in data:
+            address = data["notify_email"].strip().lower()
+            if address != target.notify_email:
+                target.notify_email = address
+                target.save(update_fields=["notify_email", "updated_at"])
+                log(
+                    actor=request.user,
+                    action="user_notify_email_set",
+                    target_type="user",
+                    target_id=target.id,
+                    org_scope=primary_org_scope(request.user),
+                    **request_context(request),
+                    metadata={"enabled": bool(address)},
+                )
+
         if "is_active" in data and data["is_active"] != target.is_active:
             if data["is_active"]:
                 target.is_active = True

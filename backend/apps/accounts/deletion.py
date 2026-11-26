@@ -124,7 +124,7 @@ def purge(user: User) -> dict:
         user.username = f"deleted.{user.id.hex[:12]}"
         user.first_name, user.last_name = PURGED_FIRST, PURGED_LAST
         user.full_name = f"{PURGED_FIRST} {PURGED_LAST}"
-        user.phone, user.optional_email = "", None
+        user.phone, user.optional_email, user.notify_email = "", None, ""
         user.set_unusable_password()
         user.is_active, user.must_change_password = False, False
         user.mfa_enabled, user.mfa_method, user.mfa_secret_ciphertext = False, "", None

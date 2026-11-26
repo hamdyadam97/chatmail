@@ -43,6 +43,7 @@ psql "$MIGRATE_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$APP/deploy/postgres/gran
 # Deletes only rows not sealed with CONTENT_ENCRYPTION_KEY - a no-op afterwards.
 echo "== remove content of the retired per-device encryption (no-op once done)"
 ( cd "$APP/backend" && runuser -u correspondence -- "$PY" manage.py purge_legacy_content --yes )
+( cd "$APP/backend" && runuser -u correspondence -- "$PY" manage.py relink_external_threads )
 
 echo "== frontend build (same-origin API)"
 ( cd "$APP/frontend" && npm ci --no-audit --no-fund \

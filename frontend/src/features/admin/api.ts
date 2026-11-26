@@ -56,6 +56,8 @@ export interface ManagedUser {
   full_name: string;
   phone: string;
   optional_email: string | null;
+  /** إيميل التنبيهات الخارجي (فارغ = لا إيميلات). */
+  notify_email?: string;
   is_active: boolean;
   must_change_password: boolean;
   mfa_enabled: boolean;
@@ -150,6 +152,8 @@ export const adminApi = {
   /** الاسم الذي يراه الجميع = الاسم الأول + اسم العائلة. */
   rename: (id: string, firstName: string, lastName: string) =>
     apiFetch<unknown>(`/users/${id}/`, { method: 'PATCH', body: { first_name: firstName, last_name: lastName } }),
+  setNotifyEmail: (id: string, address: string) =>
+    apiFetch<unknown>(`/users/${id}/`, { method: 'PATCH', body: { notify_email: address } }),
   setActive: (id: string, isActive: boolean, reason = '') =>
     apiFetch<unknown>(`/users/${id}/`, { method: 'PATCH', body: { is_active: isActive, deactivation_reason: reason } }),
   /** استيراد موظفين من Excel: معاينة (apply=false) ثم إنشاء بنفس الملف. */

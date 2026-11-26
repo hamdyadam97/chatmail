@@ -507,6 +507,14 @@ async function main() {
     await admin.page.fill('#edit-last', 'المعدّلة').catch(() => undefined);
     await admin.page.getByRole('button', { name: 'حفظ الاسم' }).click({ timeout: 10000 }).catch(() => undefined);
     const renamed = await admin.page.locator('text=حُفظ الاسم').waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    // إيميل التنبيهات الخارجي (مثل Outlook المدير): يُحفظ من تفاصيل الموظف.
+    await admin.page.fill('[data-testid="notify-email-input"]', 'Salma.Boss@Outside.example').catch(() => undefined);
+    await admin.page.click('[data-testid="notify-email-save"]', { timeout: 5000 }).catch(() => undefined);
+    const notifySaved = await admin.page.locator('text=كل إشعار جديد سيصله على هذا الإيميل').waitFor({ timeout: 15000 })
+      .then(() => true).catch(() => false);
+    const notifyStored = await runPython("from apps.accounts.models import User; "
+      + "assert User.objects.get(username='salma.imp').notify_email == 'salma.boss@outside.example'").then(() => true).catch(() => false);
+    check('الموظفون: إيميل التنبيهات الخارجي يُحفظ', notifySaved && notifyStored);
     await admin.page.locator('[role="dialog"] button[aria-label="إغلاق"]').first().click({ timeout: 5000 }).catch(() => undefined);
     await ahmed.page.goto(`${UI}/mail/inbox`);
     await ahmed.page.click('button:has-text("رسالة جديدة")');
@@ -763,6 +771,36 @@ async function main() {
         && call.json.headers['In-Reply-To'] === '<offer-1@supplier.example>' && call.headers['api-key'] === 'ui-smoke-key');
       await ahmed.page.locator('text=شكرًا، استلمنا العرض.').first().waitFor({ timeout: 20000 }).catch(() => undefined);
       check('ahmed: نسخة الرد المرسل محفوظة لديه', (await ahmed.page.locator('text=شكرًا، استلمنا العرض.').count()) > 0);
+
+      // المورد يرد على ردنا (بلا رقم رسالة نعرفه — «Re:» ونفس العنوان): يدخل المحادثة نفسها.
+      const replyBody = 'تم، نرسل الشحنة الأحد.';
+      const replyRaw = [
+        'From: Supplier Co <sales@supplier.example>',
+        `To: ahmed@${MAIL_DOMAIN}`,
+        `Subject: =?utf-8?B?${Buffer.from(`Re: ${extSubject}`).toString('base64')}?=`,
+        'Message-ID: <offer-2@supplier.example>',
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=utf-8',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(replyBody).toString('base64'),
+        '',
+      ].join('\r\n');
+      await deliverMail(replyRaw, `ahmed@${MAIL_DOMAIN}`);
+      await ahmed.page.goto(`${UI}/mail/external`);
+      const convRow = ahmed.page.locator(`button:has-text("${extSubject}")`);
+      await convRow.first().locator('[data-testid="thread-count"]').waitFor({ timeout: 30000 }).catch(() => undefined);
+      const rowCount = await convRow.count();
+      const badge = rowCount ? await convRow.first().locator('[data-testid="thread-count"]').innerText().catch(() => '') : '';
+      check('محادثة خارجية: صف واحد بعدّاد 3 (الأصل + ردي + رد المورد)', rowCount === 1 && badge === '3', `rows=${rowCount} badge=${badge}`);
+      if (rowCount) {
+        await convRow.first().click();
+        const others = ahmed.page.locator('[data-testid="thread-others"] [data-testid="thread-item"]');
+        await others.first().waitFor({ timeout: 20000 }).catch(() => undefined);
+        const readerText = await ahmed.page.locator('[data-testid="external-reader"]').first().innerText().catch(() => '');
+        check('محادثة خارجية: رد المورد مفتوح وتحته ردي والأصل', readerText.includes(replyBody) && (await others.count()) === 2);
+        if (process.env.SHOTS) console.log(`    لقطة المحادثة الخارجية: ${await shot(ahmed, 'external-thread')}`);
+      }
     }
 
     // رسالة منسّقة (HTML) كما تصل من أنظمة المهام: تُعرض بتنسيقها، بلا سكربت، والصور محجوبة حتى الطلب.

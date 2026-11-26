@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import socket
+import uuid
 import struct
 from datetime import timedelta
 from email import message_from_bytes, policy
@@ -31,6 +32,7 @@ from .models import ExternalAttachment, ExternalContact, ExternalMailbox, Extern
 logger = logging.getLogger(__name__)
 
 LOCAL_PART_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$")
+MSGID_RE = re.compile(r"<[^<>\s]{1,900}>")
 EMAIL_RE = re.compile(r"^[^@\s<>\"']{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 MAX_BODY_CHARS = 200_000
 MAX_RECIPIENTS = 20
@@ -360,6 +362,7 @@ def parse(raw: bytes) -> dict:
         "date": str(msg.get("Date", "")),
         "message_id": str(msg.get("Message-ID", "")).strip(),
         "in_reply_to": str(msg.get("In-Reply-To", "")).strip(),
+        "references": MSGID_RE.findall(str(msg.get("References", "")))[-30:],
         "body": body,
         "html": _html_part(msg),
         "html_converted": converted,
@@ -382,18 +385,19 @@ def ingest(raw: bytes, *, recipient: str, sender: str = "") -> ExternalMessage:
     # The original message, as a (sealed) attachment — full fidelity for records.
     scanned.append({"name": "original.eml", "mime": "message/rfc822", "data": raw, "scan": "n/a"})
 
-    parent = None
-    if p["in_reply_to"]:
-        parent = ExternalMessage.objects.filter(owner=user, message_id=p["in_reply_to"]).first()
+    parent = find_parent(user, [p["in_reply_to"], *reversed(p["references"])], p["subject"], p["from"]["address"])
 
+    new_id = uuid.uuid4()
     with transaction.atomic():
         message = ExternalMessage.objects.create(
+            id=new_id,
             owner=user,
             direction="in",
             mail_from=p["from"]["address"][:320] or (sender or "")[:320],
             recipients=[a["address"] for a in p["to"] + p["cc"]][:50],
             message_id=p["message_id"][:998],
             in_reply_to=parent,
+            thread_id=thread_of(parent) or new_id,
             auth_result=auth,
             size=len(raw),
             attachment_count=len(scanned) - 1,
@@ -514,7 +518,7 @@ def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_i
     if reply_to_id:
         parent = ExternalMessage.objects.filter(owner=user, id=reply_to_id).first()
         if parent is not None and parent.message_id:
-            headers = {"In-Reply-To": parent.message_id, "References": parent.message_id}
+            headers = {"In-Reply-To": parent.message_id, "References": " ".join(_chain_ids(parent))}
     message_id = make_msgid(domain=domain())
     # Display names typed by the sender (or remembered) — {address: name}.
     known = {c["address"]: c["name"] for c in contacts(user) if c["name"]}
@@ -551,11 +555,17 @@ def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_i
     if resp.status_code >= 300:
         logger.warning("brevo rejected the message (status=%s)", resp.status_code)
         raise SendFailed()
+    try:
+        provider_id = str((resp.json() or {}).get("messageId") or "").strip()[:998]
+    except (ValueError, AttributeError, TypeError):
+        provider_id = ""
 
+    new_id = uuid.uuid4()
     with transaction.atomic():
         message = ExternalMessage.objects.create(
-            owner=user, direction="out", mail_from=address, recipients=to_list + cc_list,
-            message_id=message_id, in_reply_to=parent, auth_result="pass",
+            id=new_id, owner=user, direction="out", mail_from=address, recipients=to_list + cc_list,
+            message_id=message_id, provider_message_id=provider_id if provider_id != message_id else "",
+            in_reply_to=parent, thread_id=thread_of(parent) or new_id, auth_result="pass",
             size=len(body.encode()) + sum(len(f["data"]) for f in files), attachment_count=len(files),
             read_at=timezone.now(),
         )
@@ -575,6 +585,97 @@ def send(user, *, to, cc=(), subject: str, body: str, attachments=(), reply_to_i
     return message
 
 
+# --- conversations ----------------------------------------------------------------------------
+
+REPLY_PREFIX_RE = re.compile(r"^\s*((re|fw|fwd|aw|sv|wg|rv|tr|رد|إعادة توجيه|اعادة توجيه|توجيه)\s*(\[\d+\])?\s*[:：]\s*)+", re.I)
+SUBJECT_MATCH_DAYS = 60
+
+
+def normalize_subject(subject: str) -> str:
+    return " ".join(REPLY_PREFIX_RE.sub("", subject or "").split()).casefold()
+
+
+def thread_of(parent):
+    if parent is None:
+        return None
+    return parent.thread_id or parent.id
+
+
+def _chain_ids(message, limit: int = 20) -> list[str]:
+    """Message-IDs from the conversation's start down to `message` (for References)."""
+    ids, seen, m = [], set(), message
+    while m is not None and m.id not in seen and len(ids) < limit:
+        seen.add(m.id)
+        if m.message_id:
+            ids.append(m.message_id)
+        m = m.in_reply_to
+    return list(reversed(ids))
+
+
+def find_parent(user, ids, subject: str, counterpart: str, *, before=None):
+    """The message an inbound reply answers: by Message-ID (ours or the one
+    Brevo put on it), newest reference first; failing that, a reply-looking
+    subject ("Re: …") matching a message exchanged with the same address in
+    the last 60 days."""
+    ids = [i for i in dict.fromkeys(ids) if i]
+    if ids:
+        found = {}
+        for m in ExternalMessage.objects.filter(owner=user).filter(Q(message_id__in=ids) | Q(provider_message_id__in=ids)):
+            for key in (m.message_id, m.provider_message_id):
+                if key:
+                    found.setdefault(key, m)
+        for i in ids:
+            if i in found:
+                return found[i]
+    if not REPLY_PREFIX_RE.match(subject or ""):
+        return None
+    wanted, who = normalize_subject(subject), (counterpart or "").strip().lower()
+    if not wanted or not who:
+        return None
+    since = timezone.now() - timedelta(days=SUBJECT_MATCH_DAYS)
+    candidates = ExternalMessage.objects.filter(owner=user, created_at__gte=since)
+    if before is not None:  # relinking an old message: only what came before it
+        candidates = candidates.filter(created_at__lte=before.created_at).exclude(id=before.id)
+    for m in candidates.order_by("-created_at")[:300]:
+        exchanged = (m.direction == "out" and who in [r.lower() for r in m.recipients]) or (
+            m.direction == "in" and m.mail_from.lower() == who)
+        if exchanged and normalize_subject((message_content(m) or {}).get("subject", "")) == wanted:
+            return m
+    return None
+
+
+def thread_messages(message) -> list[ExternalMessage]:
+    if message.thread_id is None:
+        return [message]
+    return list(ExternalMessage.objects.filter(owner_id=message.owner_id, thread_id=message.thread_id).order_by("created_at"))
+
+
+def relink_threads(user_ids=None) -> int:
+    """Old inbound replies that were not linked: link them by subject and
+    sender, then give every message its conversation id. Idempotent."""
+    qs = ExternalMessage.objects.all()
+    if user_ids is not None:
+        qs = qs.filter(owner_id__in=user_ids)
+    linked = 0
+    for m in qs.filter(direction="in", in_reply_to__isnull=True).select_related("owner").order_by("created_at"):
+        subject = (message_content(m) or {}).get("subject", "")
+        if not REPLY_PREFIX_RE.match(subject or ""):
+            continue
+        parent = find_parent(m.owner, [], subject, m.mail_from, before=m)
+        if parent is not None:
+            m.in_reply_to = parent
+            m.save(update_fields=["in_reply_to"])
+            linked += 1
+    # conversation ids follow the reply chains (parents first)
+    root_of = {}
+    for m in qs.order_by("created_at").only("id", "in_reply_to_id", "thread_id"):
+        root = root_of.get(m.in_reply_to_id) if m.in_reply_to_id else None
+        root_of[m.id] = root or m.id
+        if m.thread_id != root_of[m.id]:
+            ExternalMessage.objects.filter(id=m.id).update(thread_id=root_of[m.id])
+    return linked
+
+
 def summary(m: ExternalMessage, content: dict | None = None) -> dict:
     content = content if content is not None else message_content(m) or {}
     body = " ".join((content.get("body") or "").split())
@@ -590,6 +691,7 @@ def summary(m: ExternalMessage, content: dict | None = None) -> dict:
         "size": m.size,
         "attachment_count": m.attachment_count,
         "in_reply_to_id": str(m.in_reply_to_id) if m.in_reply_to_id else None,
+        "thread_id": str(m.thread_id or m.id),
         "created_at": m.created_at.isoformat(),
         "read_at": m.read_at.isoformat() if m.read_at else None,
     }

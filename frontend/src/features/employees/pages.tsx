@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { externalApi } from '../external/service';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Contact, Download, FileSpreadsheet, FileText, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe } from 'lucide-react';
+import { Contact, Download, FileSpreadsheet, FileText, KeyRound, LogOut, Plus, Search, ShieldOff, Trash2, UserCheck, UserX, Globe, Mail } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Label, Spinner } from '../../shared/ui';
 import { ApiError, toUserMessage } from '../../shared/api';
 import { cn } from '../../shared/lib/cn';
@@ -224,6 +224,62 @@ function ExternalMailboxSection({ userId }: { userId: string }) {
   );
 }
 
+/**
+ * إيميل التنبيهات: كل إشعار يصل الموظف في النظام يصله أيضًا على هذا الإيميل
+ * (مثل Outlook المدير): العنوان الثابت ومن فعلها ورابط «افتح في النظام» — بلا محتوى.
+ */
+function NotifyEmailSection({ user, onSaved }: { user: ManagedUser; onSaved: () => void }) {
+  const [value, setValue] = useState(user.notify_email ?? '');
+  const [message, setMessage] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
+  const changed = value.trim().toLowerCase() !== (user.notify_email ?? '');
+  const save = useMutation({
+    mutationFn: (address: string) => adminApi.setNotifyEmail(user.id, address),
+    onSuccess: (_r, address) => {
+      setMessage({ tone: 'ok', text: address ? 'حُفظ — كل إشعار جديد سيصله على هذا الإيميل أيضًا.' : 'أُوقف إرسال التنبيهات على الإيميل.' });
+      onSaved();
+    },
+    onError: (err) => setMessage({ tone: 'err', text: toUserMessage(err, 'تعذر الحفظ') }),
+  });
+  return (
+    <div className="space-y-2 border-t border-gray-100 pt-4" data-testid="notify-email-section">
+      <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+        <Mail className="h-4 w-4" />
+        إيميل التنبيهات الخارجي
+      </h4>
+      <p className="text-xs text-gray-500">
+        كل إشعار يصله في النظام (مراسلة، طلب اعتماد، تعميم…) يصله أيضًا على هذا الإيميل: سطر وزر «افتح في النظام» — بلا نص المراسلة. الرد والاعتماد من داخل النظام. فارغ = لا إيميلات.
+      </p>
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (changed) save.mutate(value.trim());
+        }}
+      >
+        <Input
+          id="notify-email"
+          dir="ltr"
+          type="email"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="name@company.com"
+          className="w-72 font-mono"
+          data-testid="notify-email-input"
+        />
+        <Button type="submit" size="sm" variant="outline" disabled={!changed} loading={save.isPending} data-testid="notify-email-save">
+          حفظ
+        </Button>
+        {user.notify_email && (
+          <Button type="button" size="sm" variant="ghost" onClick={() => { setValue(''); save.mutate(''); }}>
+            إيقاف
+          </Button>
+        )}
+      </form>
+      {message && <p className={cn('text-xs', message.tone === 'ok' ? 'text-emerald-700' : 'text-red-600')}>{message.text}</p>}
+    </div>
+  );
+}
+
 /** الاسم الأول + اسم العائلة = الاسم الذي يراه الجميع (مع الفرع). */
 function NameEditor({ user, onSaved, onError }: { user: ManagedUser; onSaved: () => void; onError: (e: unknown) => void }) {
   const [first, setFirst] = useState(user.first_name || '');
@@ -416,6 +472,8 @@ function EmployeeDetail({ user, onClose, onChanged }: { user: ManagedUser; onClo
             </div>
           )}
         </div>
+
+        <NotifyEmailSection key={user.id} user={user} onSaved={onChanged} />
 
         <ExternalMailboxSection userId={user.id} />
 
