@@ -15,4 +15,4 @@ TOKEN_FILE="${EXPO_TOKEN_FILE:-/c/Users/USER/android-build/signing/EXPO_TOKEN.tx
 EXPO_TOKEN="$(tr -d '\r\n ' < "$TOKEN_FILE")"
 export EXPO_TOKEN
 cd "$(dirname "$0")/.."
-npx --yes eas-cli@latest update --channel production --platform android --message "$MSG" --non-interactive
+npx --yes eas-cli@latest update --channel production --environment production --platform android --message "$MSG" --non-interactive
