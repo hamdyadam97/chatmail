@@ -165,6 +165,10 @@ class AssignmentListCreateView(APIView):
                 },
             )
             created.append(assignment)
+            if assignment.role.code == "executive" and institute is None and branch is None:
+                from apps.announcements.services import add_observer_to_all
+
+                add_observer_to_all(assignment.user)
         if not created:
             raise serializers.ValidationError({"role_code": "الموظف يحمل هذا الدور في هذا النطاق بالفعل."})
         body = AssignmentReadSerializer(created, many=True).data

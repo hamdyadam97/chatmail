@@ -37,7 +37,7 @@ export default function AnnouncementScreen() {
     );
   }
 
-  const needsAck = a.requires_ack && a.mine && !a.mine.acknowledged_at && a.status === 'published';
+  const needsAck = a.requires_ack && a.mine && !a.mine.observer && !a.mine.acknowledged_at && a.status === 'published';
 
   const ack = async () => {
     setBusy(true);

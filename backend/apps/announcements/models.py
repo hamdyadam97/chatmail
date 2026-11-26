@@ -118,6 +118,11 @@ class AnnouncementRecipient(models.Model):
     ack_content_hash = models.BinaryField(max_length=32, null=True, blank=True)
     reminder_count = models.IntegerField(default=0)
     last_reminded_at = models.DateTimeField(null=True, blank=True)
+    # The executive (central «executive» role) receives every announcement as an
+    # observer (user decision 2026-11-26): a real, notified recipient who reads
+    # the content, but outside the declared audience — not counted in
+    # compliance, never asked to acknowledge, never reminded.
+    observer = models.BooleanField(default=False)
 
     class Meta:
         db_table = "announcement_recipients"

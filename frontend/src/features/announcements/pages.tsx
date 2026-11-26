@@ -32,6 +32,7 @@ function StatusLine({ a }: { a: Announcement }) {
   if (a.status === 'withdrawn') return <span className="text-xs text-gray-500">مسحوب</span>;
   if (a.status === 'draft') return <span className="text-xs text-gray-500">لم يُنشر</span>;
   if (a.mine) {
+    if (a.mine.observer) return <span className="text-xs text-gray-500">للاطلاع</span>;
     if (a.mine.acknowledged_at) return <span className="text-xs text-emerald-700">أقررتَ بالاطلاع</span>;
     if (a.requires_ack) {
       const overdue = a.ack_due_at && new Date(a.ack_due_at) < new Date();
@@ -685,7 +686,7 @@ function Detail({ id }: { id: string }) {
 
         {a.content && <div className="whitespace-pre-wrap break-words text-sm leading-7 text-gray-800">{a.content.body || '—'}</div>}
 
-        {a.mine && a.requires_ack && a.status === 'published' && (
+        {a.mine && !a.mine.observer && a.requires_ack && a.status === 'published' && (
           <div className="rounded-lg border border-gray-200 p-4">
             {a.mine.acknowledged_at ? (
               <p className="flex items-center gap-2 text-sm text-emerald-700">

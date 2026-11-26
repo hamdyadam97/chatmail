@@ -42,7 +42,7 @@ def announcement_dict(a: Announcement, viewer, row=None) -> dict:
         "created_at": a.created_at.isoformat(),
         "published_at": a.published_at.isoformat() if a.published_at else None,
         "withdrawn_at": a.withdrawn_at.isoformat() if a.withdrawn_at else None,
-        "recipient_count": a.recipients.count(),
+        "recipient_count": a.recipients.filter(observer=False).count(),
         "is_publisher": a.publisher_id == viewer.id,
         "can_track": services.can_track(viewer, a),
         "content_hash": base64.b64encode(bytes(a.content_hash)).decode() if a.content_hash else None,
@@ -54,6 +54,8 @@ def announcement_dict(a: Announcement, viewer, row=None) -> dict:
             "delivered_at": row.delivered_at.isoformat() if row.delivered_at else None,
             "read_at": row.read_at.isoformat() if row.read_at else None,
             "acknowledged_at": row.acknowledged_at.isoformat() if row.acknowledged_at else None,
+            # The executive's copy: read only — no acknowledgement asked.
+            "observer": row.observer,
         }
     return data
 
@@ -93,7 +95,7 @@ class AnnouncementListCreateView(APIView):
                 .order_by("-announcement__published_at")
             )
             if request.query_params.get("pending_ack") == "1":
-                rows = rows.filter(acknowledged_at__isnull=True, announcement__requires_ack=True,
+                rows = rows.filter(acknowledged_at__isnull=True, observer=False, announcement__requires_ack=True,
                                    announcement__status="published")
             page = paginator.paginate_queryset(rows, request, view=self)
             items = [announcement_dict(r.announcement, request.user, r) for r in page]
@@ -203,10 +205,13 @@ class AudienceView(APIView):
 
     def get(self, request, announcement_id):
         a = services.get_viewable(request.user, announcement_id)
-        rows = a.recipients.select_related("user").order_by("user__full_name")
-        return Response(
-            {"publisher": _user_ref(a.publisher), "recipients": with_units([_user_ref(r.user) for r in rows])}
-        )
+        rows = list(a.recipients.select_related("user").order_by("user__full_name"))
+        return Response({
+            "publisher": _user_ref(a.publisher),
+            "recipients": with_units([_user_ref(r.user) for r in rows if not r.observer]),
+            # Also received it (the executive), outside the declared audience.
+            "observers": [_user_ref(r.user) for r in rows if r.observer],
+        })
 
 
 class ReadView(APIView):

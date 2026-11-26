@@ -31,7 +31,7 @@ export interface Announcement {
   content_hash: string | null;
   /** null للمستلم بعد سحب التعميم. */
   content: { title: string; body: string } | null;
-  mine: { delivered_at: string | null; read_at: string | null; acknowledged_at: string | null } | null;
+  mine: { delivered_at: string | null; read_at: string | null; acknowledged_at: string | null; /** نسخة المدير التنفيذي: اطلاع فقط بلا إقرار. */ observer?: boolean } | null;
   /** تبويب «متابعة التعاميم» فقط. */
   counts?: { recipients: number; read: number; acknowledged: number };
 }

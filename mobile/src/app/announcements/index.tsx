@@ -92,7 +92,7 @@ export default function AnnouncementsScreen() {
           }
           renderItem={({ item: a }) => {
             const unread = !tracking && !a.mine?.read_at;
-            const needsAck = !tracking && a.requires_ack && !a.mine?.acknowledged_at && a.status === 'published';
+            const needsAck = !tracking && a.requires_ack && !a.mine?.observer && !a.mine?.acknowledged_at && a.status === 'published';
             return (
               <Pressable
                 onPress={() => router.push(tracking ? `/announcements/report/${a.id}` : `/announcements/${a.id}`)}

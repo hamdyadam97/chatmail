@@ -65,7 +65,7 @@ export interface Announcement {
   status: 'draft' | 'published' | 'withdrawn';
   published_at: string | null;
   content: { title: string; body: string } | null;
-  mine: { delivered_at: string | null; read_at: string | null; acknowledged_at: string | null } | null;
+  mine: { delivered_at: string | null; read_at: string | null; acknowledged_at: string | null; /** نسخة المدير التنفيذي: اطلاع فقط بلا إقرار. */ observer?: boolean } | null;
   recipient_count?: number;
   is_publisher?: boolean;
   can_track?: boolean;

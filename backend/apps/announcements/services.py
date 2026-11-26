@@ -7,6 +7,11 @@ Invariants:
   * The audience is resolved server-side from active org memberships at
     publish time and snapshotted; only the publisher and that audience can
     open the content. Every recipient can list the declared audience.
+  * The central executive also receives every announcement as an *observer*
+    (user decision 2026-11-26): a member of the thread and a recipient row
+    with observer=True — reads and is notified, but stays out of compliance,
+    acknowledgement and reminders. Read access still comes only from being a
+    recipient (no "view all" permission).
   * Withdrawing hides the content from recipients at once.
   * announcements.publish is checked in the target unit (central for "all";
     for named users, a unit holding each user's membership).
@@ -111,6 +116,52 @@ def resolve_audience(*, publisher, target_type, unit, user_ids) -> list[str]:
     return out
 
 
+EXECUTIVE_ROLE = "executive"
+
+
+def executive_observer_ids(exclude=()) -> list:
+    """Active holders of the central executive role, minus `exclude`."""
+    from apps.authorization.models import UserRoleAssignment
+
+    now = timezone.now()
+    skip = {str(x) for x in exclude}
+    ids = UserRoleAssignment.objects.filter(
+        role__code=EXECUTIVE_ROLE, user__is_active=True, user__purged_at__isnull=True,
+        institute__isnull=True, branch__isnull=True, department__isnull=True,
+    ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now)).values_list("user_id", flat=True)
+    return [u for u in dict.fromkeys(ids) if str(u) not in skip]
+
+
+def _add_observers(announcement, user_ids, added_by) -> None:
+    in_thread = set(ConversationMember.objects.filter(
+        conversation=announcement.thread, user_id__in=user_ids
+    ).values_list("user_id", flat=True))
+    ConversationMember.objects.bulk_create([
+        ConversationMember(conversation=announcement.thread, user_id=u, member_role="member", added_by=added_by)
+        for u in user_ids if u not in in_thread
+    ])
+    AnnouncementRecipient.objects.bulk_create(
+        [AnnouncementRecipient(announcement=announcement, user_id=u, observer=True) for u in user_ids],
+        ignore_conflicts=True,
+    )
+
+
+def add_observer_to_all(user) -> int:
+    """A newly appointed executive: every published announcement so far, as an
+    observer (no notifications for the backlog)."""
+    if user.id not in executive_observer_ids():
+        return 0
+    have = set(AnnouncementRecipient.objects.filter(user=user).values_list("announcement_id", flat=True))
+    todo = Announcement.objects.filter(status__in=["published", "withdrawn"]).exclude(
+        id__in=have).exclude(publisher=user).select_related("thread", "publisher")
+    n = 0
+    with transaction.atomic():
+        for a in todo:
+            _add_observers(a, [user.id], a.publisher)
+            n += 1
+    return n
+
+
 def require_publish_permission(publisher, target_type, unit, audience) -> None:
     if target_type == "users":
         by_user: dict[str, list] = {}
@@ -207,9 +258,11 @@ def trackable_announcements(user) -> list[Announcement]:
         .select_related("publisher", "publisher_membership", "target_institute", "target_branch",
                         "target_department")
         .annotate(
-            n_recipients=Count("recipients", distinct=True),
-            n_read=Count("recipients", filter=Q(recipients__read_at__isnull=False), distinct=True),
-            n_acked=Count("recipients", filter=Q(recipients__acknowledged_at__isnull=False), distinct=True),
+            n_recipients=Count("recipients", filter=Q(recipients__observer=False), distinct=True),
+            n_read=Count("recipients", filter=Q(recipients__observer=False, recipients__read_at__isnull=False),
+                         distinct=True),
+            n_acked=Count("recipients", filter=Q(recipients__observer=False,
+                                                 recipients__acknowledged_at__isnull=False), distinct=True),
         )
         .order_by("-published_at")[:TRACKING_LIMIT]
     )
@@ -304,7 +357,10 @@ def publish(*, publisher, target_type, target_id, user_ids, priority, requires_a
         AnnouncementRecipient.objects.bulk_create(
             [AnnouncementRecipient(announcement=a, user_id=u) for u in audience]
         )
-        notify(audience, "announcement", ref_type="announcement", ref_id=a.id, actor=publisher)
+        observers = executive_observer_ids(exclude=[*audience, publisher.id])
+        if observers:
+            _add_observers(a, observers, publisher)
+        notify([*audience, *observers], "announcement", ref_type="announcement", ref_id=a.id, actor=publisher)
     log(
         actor=publisher,
         action="announcement_published",
@@ -449,8 +505,8 @@ def acknowledge(*, user, announcement) -> AnnouncementRecipient:
         raise PermissionDenied("You are not a recipient of this announcement.")
     if announcement.status != "published":
         raise Conflict("لا يُقَر إلا بتعميم منشور وغير مسحوب.")
-    if not announcement.requires_ack:
-        raise ValidationError({"detail": "هذا التعميم لا يتطلب إقرارًا."})
+    if not announcement.requires_ack or row.observer:
+        raise ValidationError({"detail": "هذا التعميم لا يتطلب إقرارًا منك."})
     if row.acknowledged_at is not None:
         return row  # idempotent
     now = timezone.now()
@@ -469,7 +525,7 @@ def compliance(announcement) -> dict:
     from apps.org.labels import primary_units
 
     now = timezone.now()
-    rows = list(announcement.recipients.select_related("user").order_by("user__full_name"))
+    rows = list(announcement.recipients.filter(observer=False).select_related("user").order_by("user__full_name"))
     units = primary_units(r.user_id for r in rows)
     overdue = bool(announcement.requires_ack and announcement.ack_due_at and announcement.ack_due_at < now)
     return {
@@ -499,7 +555,7 @@ def compliance(announcement) -> dict:
 
 
 def _pending_ack_rows(announcement):
-    return announcement.recipients.filter(acknowledged_at__isnull=True)
+    return announcement.recipients.filter(acknowledged_at__isnull=True, observer=False)
 
 
 def remind(user, announcement) -> int:
