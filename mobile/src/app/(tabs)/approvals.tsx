@@ -2,7 +2,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/Text';
 
 import { StatusChip } from '@/components/approvals';
 import { Avatar, Empty, Header, Loading, T, tap } from '@/components/ui';
@@ -67,7 +68,7 @@ export default function ApprovalsScreen() {
         <FlatList
           data={items}
           keyExtractor={(r) => r.id}
-          contentContainerStyle={{ paddingBottom: 110, flexGrow: 1 }}
+          contentContainerStyle={{ paddingTop: 6, paddingBottom: 110, flexGrow: 1 }}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           refreshControl={
             <RefreshControl
@@ -140,12 +141,12 @@ function Chip({ text, color = colors.textSoft, bg = colors.bg }: { text: string;
 }
 
 const styles = StyleSheet.create({
-  segment: { marginHorizontal: 16, marginBottom: 10, backgroundColor: '#E8E8EF', borderRadius: 10, padding: 3 },
+  segment: { marginHorizontal: 16, marginBottom: 10, backgroundColor: '#ECE8DF', borderRadius: 10, padding: 3 },
   segItem: { flex: 1, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
   segActive: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   segText: { fontSize: font.small, color: colors.textSoft, fontWeight: '600' },
-  row: { gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
+  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  sep: { height: 8 },
   name: { flex: 1, fontWeight: '700', fontSize: font.body },
   date: { fontSize: font.tiny, color: colors.textMuted },
   title: { fontSize: 15, color: colors.textSoft },

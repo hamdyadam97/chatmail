@@ -6,7 +6,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { IconName, T, success, tap } from '@/components/ui';
@@ -306,8 +307,8 @@ function Shortcut({ icon, label, onPress }: { icon: IconName; label: string; onP
   );
 }
 
-const HOME_BG = '#F5F3EE';
-const LINE = '#E6E1D6';
+const HOME_BG = colors.bg;
+const LINE = colors.border;
 
 const styles = StyleSheet.create({
   header: { alignItems: 'center', gap: 12 },

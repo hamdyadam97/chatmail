@@ -3,7 +3,8 @@
  * صورة PNG ويحفظها مختومة كالتوقيع المرفوع من الموقع.
  */
 import { useMemo, useRef, useState } from 'react';
-import { PanResponder, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { PanResponder, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { Text } from '@/components/Text';
 import Svg, { Path } from 'react-native-svg';
 
 import { Button, ErrorBox, success } from '@/components/ui';

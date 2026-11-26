@@ -5,7 +5,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '@/components/Text';
 
 import { Avatar, Button, Header, Loading, T, tap } from '@/components/ui';
 import { api, errorText } from '@/lib/api';
@@ -151,7 +152,7 @@ export default function NewChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  search: { alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 10, backgroundColor: '#E8E8EF', borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
+  search: { alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 10, backgroundColor: '#ECE8DF', borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
   row: { alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff' },
   sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
   groupIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },

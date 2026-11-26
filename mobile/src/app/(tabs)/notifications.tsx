@@ -2,7 +2,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/Text';
 
 import { Empty, Header, IconName, Loading, T, tap } from '@/components/ui';
 import { api, errorText } from '@/lib/api';
@@ -103,7 +104,7 @@ export default function NotificationsScreen() {
             />
           }
           ItemSeparatorComponent={() => <View style={styles.sep} />}
-          contentContainerStyle={{ flexGrow: 1 }}
+          contentContainerStyle={{ paddingTop: 6, flexGrow: 1 }}
           ListEmptyComponent={
             error ? <Empty icon="cloud-offline-outline" title="تعذر التحميل" hint={error} /> : <Empty icon="notifications-off-outline" title="لا إشعارات" />
           }
@@ -128,8 +129,8 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: { alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: '#fff' },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
+  row: { alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 15, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  sep: { height: 8 },
   icon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.navySoft, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, fontSize: font.body, fontWeight: '600' },
   date: { fontSize: font.tiny, color: colors.textMuted },

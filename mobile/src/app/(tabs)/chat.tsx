@@ -2,7 +2,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/Text';
 
 import { Avatar, Empty, Header, IconButton, Loading, T } from '@/components/ui';
 import { errorText } from '@/lib/api';
@@ -50,7 +51,7 @@ export default function ChatListScreen() {
         <FlatList
           data={items}
           keyExtractor={(c) => c.id}
-          contentContainerStyle={{ flexGrow: 1 }}
+          contentContainerStyle={{ paddingTop: 6, flexGrow: 1 }}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           refreshControl={
             <RefreshControl
@@ -111,8 +112,8 @@ export default function ChatListScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: { alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
+  row: { alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  sep: { height: 8 },
   groupAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
   name: { flex: 1, fontSize: font.body, fontWeight: '600' },
   date: { fontSize: font.tiny, color: colors.textMuted },

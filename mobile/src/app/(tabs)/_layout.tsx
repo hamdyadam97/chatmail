@@ -3,6 +3,7 @@ import { Tabs } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 
+import { FONTS } from '@/components/Text';
 import { api } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
@@ -38,7 +39,7 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.navy,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
+        tabBarLabelStyle: { fontSize: 12, fontFamily: FONTS.semibold },
         tabBarStyle: { backgroundColor: '#fff', borderTopColor: colors.border },
         tabBarBadgeStyle: { backgroundColor: colors.gold, color: '#fff', fontSize: 11 },
       }}

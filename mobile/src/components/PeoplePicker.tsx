@@ -1,7 +1,8 @@
 /** اختيار موظفين من الدليل: بحث بالاسم أو الفرع، والمختارون شرائح تُزال بالضغط. */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '@/components/Text';
 
 import { Avatar, T } from '@/components/ui';
 import { api } from '@/lib/api';

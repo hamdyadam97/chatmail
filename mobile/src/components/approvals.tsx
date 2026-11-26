@@ -1,4 +1,5 @@
-import { StyleSheet, Text } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { Text } from '@/components/Text';
 
 import { STATUS_LABELS, type RequestStatus } from '@/lib/approvals';
 

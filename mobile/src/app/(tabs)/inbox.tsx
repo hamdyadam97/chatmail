@@ -2,7 +2,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '@/components/Text';
 
 import { ExternalList } from '@/components/ExternalList';
 import { Avatar, Empty, Header, IconButton, Loading, T, tap } from '@/components/ui';
@@ -173,7 +174,7 @@ export default function MailScreen() {
           onEndReached={more}
           onEndReachedThreshold={0.4}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.navy} colors={[colors.navy]} />}
-          contentContainerStyle={{ paddingBottom: 110, flexGrow: 1 }}
+          contentContainerStyle={{ paddingTop: 6, paddingBottom: 110, flexGrow: 1 }}
           ListEmptyComponent={
             error ? (
               <Empty icon="cloud-offline-outline" title="تعذر التحميل" hint={error} />
@@ -259,10 +260,12 @@ const styles = StyleSheet.create({
   search: {
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#E8E8EF',
-    borderRadius: radius.md,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
     paddingHorizontal: 12,
-    height: 40,
+    height: 44,
   },
   searchInput: { flex: 1, fontSize: font.body, color: colors.text, height: '100%' },
   chips: { gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
@@ -277,8 +280,8 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: colors.navy, borderColor: colors.navy },
   chipText: { fontSize: font.small, fontWeight: '600', color: colors.textSoft },
-  row: { gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
+  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  sep: { height: 8 },
   dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.gold },
   who: { flex: 1, fontSize: font.body, fontWeight: '600' },
   count: {
@@ -292,7 +295,7 @@ const styles = StyleSheet.create({
   },
   date: { fontSize: font.tiny, color: colors.textMuted },
   subject: { flex: 1, fontSize: 15, color: colors.textSoft, fontWeight: '500' },
-  preview: { fontSize: font.small, color: colors.textMuted, lineHeight: 20 },
+  preview: { fontSize: font.small, color: colors.textMuted, lineHeight: 21 },
   fab: {
     position: 'absolute',
     bottom: 20,

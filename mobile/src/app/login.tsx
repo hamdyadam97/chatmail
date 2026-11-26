@@ -1,7 +1,8 @@
 /** الدخول: شعار المؤسسة ← اسم المستخدم وكلمة المرور ← (رمز MFA) ← (كود الجهاز الجديد أول مرة). */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, ErrorBox, Field, T, success } from '@/components/ui';

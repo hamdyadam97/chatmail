@@ -5,7 +5,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/Text';
 
 import { Empty, Header, IconButton, Loading, T, tap } from '@/components/ui';
 import { errorText } from '@/lib/api';
@@ -70,7 +71,7 @@ export default function AnnouncementsScreen() {
         <FlatList
           data={items}
           keyExtractor={(a) => a.id}
-          contentContainerStyle={{ flexGrow: 1 }}
+          contentContainerStyle={{ paddingTop: 6, flexGrow: 1 }}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           refreshControl={
             <RefreshControl
@@ -131,12 +132,12 @@ export default function AnnouncementsScreen() {
 }
 
 const styles = StyleSheet.create({
-  segment: { marginHorizontal: 16, marginBottom: 10, backgroundColor: '#E8E8EF', borderRadius: 10, padding: 3 },
+  segment: { marginHorizontal: 16, marginBottom: 10, backgroundColor: '#ECE8DF', borderRadius: 10, padding: 3 },
   segItem: { flex: 1, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
   segActive: { backgroundColor: '#fff' },
   segText: { fontSize: font.small, color: colors.textSoft, fontWeight: '600' },
-  row: { gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff', alignItems: 'flex-start' },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
+  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18, alignItems: 'flex-start' },
+  sep: { height: 8 },
   icon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.navySoft, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, fontSize: font.body, fontWeight: '600' },
   date: { fontSize: font.tiny, color: colors.textMuted },

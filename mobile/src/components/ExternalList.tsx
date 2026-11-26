@@ -2,7 +2,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/Text';
 
 import { Avatar, Empty, Loading, T } from '@/components/ui';
 import { errorText } from '@/lib/api';
@@ -91,7 +92,7 @@ export function ExternalList({ query }: { query: string }) {
           colors={[colors.navy]}
         />
       }
-      contentContainerStyle={{ paddingBottom: 110, flexGrow: 1 }}
+      contentContainerStyle={{ paddingTop: 6, paddingBottom: 110, flexGrow: 1 }}
       ListEmptyComponent={
         error ? (
           <Empty icon="cloud-offline-outline" title="تعذر التحميل" hint={error} />
@@ -141,8 +142,8 @@ function Row({ item, onPress }: { item: ExternalSummary; onPress: () => void }) 
 const styles = StyleSheet.create({
   address: { alignItems: 'center', gap: 6, marginHorizontal: 16, marginBottom: 8, backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   addressText: { fontSize: font.small, color: colors.textSoft, fontFamily: 'monospace' },
-  row: { gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
+  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  sep: { height: 8 },
   dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.gold },
   who: { flex: 1, fontSize: font.body, fontWeight: '600' },
   count: { fontSize: 11, color: colors.textSoft, backgroundColor: colors.bg, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden' },

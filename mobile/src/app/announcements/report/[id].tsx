@@ -2,7 +2,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/Text';
 
 import { Button, Empty, Header, Loading, T, success, tap } from '@/components/ui';
 import { errorText } from '@/lib/api';
@@ -169,7 +170,7 @@ const styles = StyleSheet.create({
   stat: { flex: 1, backgroundColor: '#fff', borderRadius: radius.md, paddingVertical: 10, alignItems: 'center' },
   statValue: { fontSize: 22, fontWeight: '800', color: colors.navy },
   statLabel: { fontSize: font.tiny, color: colors.textSoft },
-  segment: { backgroundColor: '#E8E8EF', borderRadius: 10, padding: 3 },
+  segment: { backgroundColor: '#ECE8DF', borderRadius: 10, padding: 3 },
   segItem: { flex: 1, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
   segActive: { backgroundColor: '#fff' },
   segText: { fontSize: font.tiny + 1, color: colors.textSoft, fontWeight: '600' },

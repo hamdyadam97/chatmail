@@ -1,3 +1,9 @@
+// الأوزان الأربعة فقط (الفهرس يسحب السبعة ويكبّر التحديث).
+import { IBMPlexSansArabic_400Regular } from '@expo-google-fonts/ibm-plex-sans-arabic/400Regular';
+import { IBMPlexSansArabic_500Medium } from '@expo-google-fonts/ibm-plex-sans-arabic/500Medium';
+import { IBMPlexSansArabic_600SemiBold } from '@expo-google-fonts/ibm-plex-sans-arabic/600SemiBold';
+import { IBMPlexSansArabic_700Bold } from '@expo-google-fonts/ibm-plex-sans-arabic/700Bold';
+import { useFonts } from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import { router, Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -5,6 +11,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { setFontsLoaded } from '@/components/Text';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { routeForUrl } from '@/lib/push';
 import { colors } from '@/lib/theme';
@@ -70,6 +77,15 @@ function RootStack() {
 
 export default function RootLayout() {
   useEffect(() => watchForUpdates(), []);
+  const [fontsLoaded, fontError] = useFonts({
+    IBMPlexSansArabic_400Regular,
+    IBMPlexSansArabic_500Medium,
+    IBMPlexSansArabic_600SemiBold,
+    IBMPlexSansArabic_700Bold,
+  });
+  // شاشة البداية تبقى حتى يُحمَّل الخط؛ إن فشل نكمل بخط النظام.
+  if (!fontsLoaded && !fontError) return null;
+  setFontsLoaded(fontsLoaded);
   return (
     <SafeAreaProvider>
       <AuthProvider>

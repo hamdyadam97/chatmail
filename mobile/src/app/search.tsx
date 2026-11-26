@@ -2,7 +2,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '@/components/Text';
 
 import { Empty, Header, IconName, Loading, T, tap } from '@/components/ui';
 import { api, errorText } from '@/lib/api';
@@ -191,7 +192,7 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   searchWrap: { paddingHorizontal: 16, paddingBottom: 8 },
-  search: { alignItems: 'center', gap: 8, backgroundColor: '#E8E8EF', borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
+  search: { alignItems: 'center', gap: 8, backgroundColor: '#ECE8DF', borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
   searchInput: { flex: 1, fontSize: font.body, color: colors.text, height: '100%' },
   chips: { gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
   chip: { paddingHorizontal: 16, height: 34, borderRadius: 17, backgroundColor: '#fff', borderWidth: 1, borderColor: colors.border, justifyContent: 'center' },
