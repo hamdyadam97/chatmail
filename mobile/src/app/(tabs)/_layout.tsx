@@ -15,7 +15,9 @@ function useBadges() {
     const load = () => {
       api<{ inbox_unread: number }>('/correspondences/counts/').then((c) => setMail(c.inbox_unread)).catch(() => undefined);
       api<{ unread: number }>('/notifications/unread-count/').then((c) => setNotes(c.unread)).catch(() => undefined);
-      api<unknown[]>('/approvals/?box=pending_mine').then((l) => setApprovals(l.length)).catch(() => undefined);
+      api<{ status: string }[]>('/approvals/?box=pending_mine')
+        .then((l) => setApprovals(l.filter((r) => r.status === 'pending').length))
+        .catch(() => undefined);
     };
     load();
     const timer = setInterval(load, 60_000);
@@ -44,6 +46,13 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          title: 'الرئيسية',
+          tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'home' : 'home-outline'} size={24} color={color as string} />,
+        }}
+      />
+      <Tabs.Screen
+        name="inbox"
+        options={{
           title: 'البريد',
           tabBarBadge: badges.mail || undefined,
           tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'mail' : 'mail-outline'} size={25} color={color as string} />,
@@ -71,6 +80,8 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="notifications"
         options={{
+          // صار جرسًا في الرئيسية؛ الشاشة باقية ومساراتها تعمل.
+          href: null,
           title: 'الإشعارات',
           tabBarBadge: badges.notes || undefined,
           tabBarIcon: ({ color, focused }) => (

@@ -75,6 +75,7 @@ export default function NotificationsScreen() {
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Header
         title="الإشعارات"
+        back={router.canGoBack()}
         right={
           unread ? (
             <Pressable hitSlop={8} onPress={readAll}>
