@@ -9,6 +9,9 @@ import { Avatar, Header, IconName, T, tap } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { announcementsApi } from '@/lib/chat';
+import * as Updates from 'expo-updates';
+
+import { fullDate } from '@/lib/format';
 import { pushSupported } from '@/lib/push';
 import { colors, font, forwardIcon, radius, row } from '@/lib/theme';
 import type { Profile } from '@/lib/types';
@@ -91,7 +94,10 @@ export default function AccountScreen() {
           />
         </Group>
 
-        <Text style={styles.version}>نظام المراسلات — الإصدار {Constants.expoConfig?.version}</Text>
+        <Text style={styles.version}>
+          نظام المراسلات — الإصدار {Constants.expoConfig?.version}
+          {!Updates.isEmbeddedLaunch && Updates.createdAt ? `\nآخر تحديث تلقائي: ${fullDate(Updates.createdAt.toISOString())}` : ''}
+        </Text>
       </ScrollView>
     </View>
   );
