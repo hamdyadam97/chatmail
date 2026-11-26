@@ -174,8 +174,8 @@ function Source({ icon, label, onPress }: { icon: IconName; label: string; onPre
 
 const styles = StyleSheet.create({
   label: { fontSize: font.small, color: colors.textSoft, fontWeight: '700', marginBottom: -4 },
-  type: { paddingHorizontal: 16, height: 40, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: '#fff', justifyContent: 'center' },
-  typeActive: { backgroundColor: colors.navy, borderColor: colors.navy },
+  type: { paddingHorizontal: 16, height: 40, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, justifyContent: 'center' },
+  typeActive: { backgroundColor: colors.navyFill, borderColor: colors.navy },
   typeText: { fontSize: font.small, fontWeight: '700', color: colors.text },
   source: {
     flex: 1,
@@ -186,10 +186,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: 'dashed',
     borderColor: colors.navy,
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
   },
   sourceText: { fontSize: font.tiny + 1, fontWeight: '700', color: colors.navy },
-  picked: { alignItems: 'center', gap: 12, backgroundColor: '#fff', borderRadius: radius.md, padding: 10 },
+  picked: { alignItems: 'center', gap: 12, backgroundColor: colors.card, borderRadius: radius.md, padding: 10 },
   thumb: { width: 56, height: 72, borderRadius: 8 },
-  note: { minHeight: 90, backgroundColor: '#fff', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: 12, fontSize: font.body, color: colors.text },
+  note: { minHeight: 90, backgroundColor: colors.card, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: 12, fontSize: font.body, color: colors.text },
 });

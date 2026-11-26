@@ -100,6 +100,6 @@ export default function LoginApprovalsScreen() {
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: '#fff', borderRadius: radius.lg, padding: 16, gap: 12 },
+  card: { backgroundColor: colors.card, borderRadius: radius.lg, padding: 16, gap: 12 },
   code: { fontSize: 34, fontWeight: '800', letterSpacing: 8, textAlign: 'center', color: colors.navy, fontVariant: ['tabular-nums'] },
 });

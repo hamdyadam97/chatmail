@@ -96,7 +96,7 @@ export function SignaturePad({ onSaved }: { onSaved: () => void }) {
 const styles = StyleSheet.create({
   pad: {
     height: 190,
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     borderRadius: radius.md,
     borderWidth: 1.5,
     borderStyle: 'dashed',

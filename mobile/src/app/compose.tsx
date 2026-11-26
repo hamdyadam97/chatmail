@@ -165,7 +165,7 @@ export default function ComposeScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#fff' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.card }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[styles.bar, { paddingTop: Platform.OS === 'ios' ? 14 : insets.top + 10, flexDirection: row }]}>
         <Pressable hitSlop={10} onPress={cancel}>
           <Text style={styles.cancel}>إلغاء</Text>
@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
   },
   cancel: { fontSize: 17, color: colors.navy },
   barTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.navyFill, alignItems: 'center', justifyContent: 'center' },
   line: {
     alignItems: 'center',
     gap: 8,
@@ -335,7 +335,7 @@ const styles = StyleSheet.create({
   ccToggle: { color: colors.navy, fontSize: font.small, fontWeight: '600' },
   pill: { alignItems: 'center', gap: 4, backgroundColor: colors.navySoft, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
   pillText: { color: colors.navy, fontSize: font.small, fontWeight: '600' },
-  suggestions: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: '#FAFAFD' },
+  suggestions: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: colors.bg },
   suggestion: { alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
   files: { flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   file: { alignItems: 'center', gap: 6, backgroundColor: colors.navySoft, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 6, maxWidth: '100%' },

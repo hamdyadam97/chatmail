@@ -112,9 +112,9 @@ export default function ChatListScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: { alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  row: { alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: colors.card, marginHorizontal: 14, borderRadius: 18 },
   sep: { height: 8 },
-  groupAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
+  groupAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: colors.navyFill, alignItems: 'center', justifyContent: 'center' },
   name: { flex: 1, fontSize: font.body, fontWeight: '600' },
   date: { fontSize: font.tiny, color: colors.textMuted },
   preview: { flex: 1, fontSize: font.small, color: colors.textMuted },

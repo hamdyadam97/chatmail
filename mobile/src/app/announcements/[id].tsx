@@ -109,8 +109,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: 'hidden',
   },
-  card: { backgroundColor: '#fff', borderRadius: radius.lg, padding: 16 },
+  card: { backgroundColor: colors.card, borderRadius: radius.lg, padding: 16 },
   body: { fontSize: 17, lineHeight: 29 },
-  done: { alignItems: 'center', gap: 8, backgroundColor: '#E5F5EA', padding: 14, borderRadius: radius.md },
+  done: { alignItems: 'center', gap: 8, backgroundColor: colors.successSoft, padding: 14, borderRadius: radius.md },
   bar: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16, gap: 8, backgroundColor: 'rgba(255,255,255,0.97)', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
 });

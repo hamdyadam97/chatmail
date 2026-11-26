@@ -86,7 +86,7 @@ export function PeoplePicker({ value, onChange, placeholder = 'اكتب اسم �
 const styles = StyleSheet.create({
   pill: { alignItems: 'center', gap: 4, backgroundColor: colors.navySoft, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
   pillText: { color: colors.navy, fontSize: font.small, fontWeight: '600' },
-  input: { backgroundColor: '#fff', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, height: 46, fontSize: font.body, color: colors.text },
-  list: { backgroundColor: '#fff', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
+  input: { backgroundColor: colors.card, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, height: 46, fontSize: font.body, color: colors.text },
+  list: { backgroundColor: colors.card, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
   option: { alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 8 },
 });

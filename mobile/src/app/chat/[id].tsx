@@ -147,7 +147,7 @@ export default function ConversationScreen() {
   const reversed = [...(messages ?? [])].reverse();
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#EFEDE8' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Header title={title} back large={false} />
       {messages === null ? (
         <View style={{ flex: 1, justifyContent: 'center' }}>
@@ -191,7 +191,7 @@ export default function ConversationScreen() {
                   </T>
                   <View style={{ flexDirection: row, alignItems: 'center', gap: 4, alignSelf: 'flex-end' }}>
                     {m.failed ? (
-                      <Text style={[styles.time, { color: '#FFD6D6' }]}>لم تُرسل — اضغط لإعادة المحاولة</Text>
+                      <Text style={[styles.time, { color: colors.dangerSoft }]}>لم تُرسل — اضغط لإعادة المحاولة</Text>
                     ) : (
                       <Text style={[styles.time, mine && { color: 'rgba(255,255,255,0.75)' }]}>{m.pending ? 'يُرسل…' : time(m.created_at)}</Text>
                     )}
@@ -221,14 +221,14 @@ export default function ConversationScreen() {
 
 const styles = StyleSheet.create({
   bubble: { maxWidth: '82%', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8, gap: 2 },
-  mine: { backgroundColor: colors.navy },
-  theirs: { backgroundColor: '#fff' },
+  mine: { backgroundColor: colors.navyFill },
+  theirs: { backgroundColor: colors.card },
   sender: { fontSize: font.tiny, fontWeight: '800', color: colors.gold },
   text: { fontSize: 16, lineHeight: 23, color: colors.text },
   time: { fontSize: 11, color: colors.textMuted },
   day: { alignSelf: 'center', backgroundColor: 'rgba(255,255,255,0.85)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3, marginVertical: 10 },
   dayText: { fontSize: font.tiny, color: colors.textSoft, fontWeight: '600' },
-  composer: { alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingTop: 8, backgroundColor: '#F7F7F7', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  input: { flex: 1, maxHeight: 130, minHeight: 42, backgroundColor: '#fff', borderRadius: 21, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, fontSize: 16, color: colors.text },
-  sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
+  composer: { alignItems: 'flex-end', gap: 8, paddingHorizontal: 10, paddingTop: 8, backgroundColor: colors.bg, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  input: { flex: 1, maxHeight: 130, minHeight: 42, backgroundColor: colors.card, borderRadius: 21, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, fontSize: 16, color: colors.text },
+  sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.navyFill, alignItems: 'center', justifyContent: 'center' },
 });

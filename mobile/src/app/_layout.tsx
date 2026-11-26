@@ -14,7 +14,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { setFontsLoaded } from '@/components/Text';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { routeForUrl } from '@/lib/push';
-import { colors } from '@/lib/theme';
+import { colors, isDark } from '@/lib/theme';
 import { watchForUpdates } from '@/lib/updates';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -89,7 +89,7 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <StatusBar style="dark" />
+        <StatusBar style={isDark ? "light" : "dark"} />
         <RootStack />
       </AuthProvider>
     </SafeAreaProvider>

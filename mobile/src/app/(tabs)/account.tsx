@@ -14,8 +14,20 @@ import * as Updates from 'expo-updates';
 
 import { fullDate } from '@/lib/format';
 import { pushSupported } from '@/lib/push';
-import { colors, font, forwardIcon, radius, row } from '@/lib/theme';
+import { colors, font, forwardIcon, isDark, radius, row, setThemePref, themePref, type ThemePref } from '@/lib/theme';
 import type { Profile } from '@/lib/types';
+
+const THEME_LABELS: Record<ThemePref, string> = { light: 'فاتح', dark: 'ليلي', system: 'تلقائي' };
+
+async function applyTheme(v: ThemePref) {
+  if (v === themePref()) return;
+  await setThemePref(v);
+  try {
+    await Updates.reloadAsync();
+  } catch {
+    Alert.alert('المظهر', 'أغلق التطبيق وافتحه ليظهر المظهر الجديد.');
+  }
+}
 
 export default function AccountScreen() {
   const { user, logout } = useAuth();
@@ -74,6 +86,18 @@ export default function AccountScreen() {
           <Item icon="key-outline" title="طلبات الدخول" hint="أكواد الدخول المرسلة لي" onPress={() => router.push('/login-approvals')} />
           <Item icon="create-outline" title="توقيعي" hint="يُختم على الطلبات التي تعتمدها" onPress={() => router.push('/signature')} />
           <Item icon="lock-closed-outline" title="تغيير كلمة المرور" onPress={() => router.push('/password')} />
+          <Item
+            icon={isDark ? 'moon' : 'sunny-outline'}
+            title="المظهر"
+            value={THEME_LABELS[themePref()]}
+            onPress={() =>
+              Alert.alert('المظهر', 'يُعاد تشغيل الواجهة لتطبيقه.', [
+                { text: 'فاتح', onPress: () => void applyTheme('light') },
+                { text: 'ليلي', onPress: () => void applyTheme('dark') },
+                { text: 'إلغاء', style: 'cancel' },
+              ])
+            }
+          />
           <Item
             icon="notifications-outline"
             title="الإشعارات"
@@ -137,7 +161,7 @@ function Item({ icon, title, value, hint, danger, badge, onPress }: { icon: Icon
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: '#fff', borderRadius: radius.lg },
+  card: { backgroundColor: colors.card, borderRadius: radius.lg },
   profile: { alignItems: 'center', padding: 22, gap: 4 },
   name: { fontSize: 21, fontWeight: '800', color: colors.text, marginTop: 8, textAlign: 'center' },
   username: { fontSize: font.small, color: colors.textMuted },

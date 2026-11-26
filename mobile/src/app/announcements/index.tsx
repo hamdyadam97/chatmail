@@ -99,7 +99,7 @@ export default function AnnouncementsScreen() {
                 onPress={() => router.push(tracking ? `/announcements/report/${a.id}` : `/announcements/${a.id}`)}
                 style={({ pressed }) => [styles.row, { flexDirection: row }, pressed && { backgroundColor: colors.navySoft }]}
               >
-                <View style={[styles.icon, a.priority !== 'normal' && { backgroundColor: '#FDECEC' }]}>
+                <View style={[styles.icon, a.priority !== 'normal' && { backgroundColor: colors.dangerSoft }]}>
                   <Ionicons name="megaphone" size={20} color={a.priority !== 'normal' ? colors.danger : colors.navy} />
                 </View>
                 <View style={{ flex: 1, gap: 3 }}>
@@ -132,11 +132,11 @@ export default function AnnouncementsScreen() {
 }
 
 const styles = StyleSheet.create({
-  segment: { marginHorizontal: 16, marginBottom: 10, backgroundColor: '#ECE8DF', borderRadius: 10, padding: 3 },
+  segment: { marginHorizontal: 16, marginBottom: 10, backgroundColor: colors.chip, borderRadius: 10, padding: 3 },
   segItem: { flex: 1, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  segActive: { backgroundColor: '#fff' },
+  segActive: { backgroundColor: colors.card },
   segText: { fontSize: font.small, color: colors.textSoft, fontWeight: '600' },
-  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18, alignItems: 'flex-start' },
+  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: colors.card, marginHorizontal: 14, borderRadius: 18, alignItems: 'flex-start' },
   sep: { height: 8 },
   icon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.navySoft, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, fontSize: font.body, fontWeight: '600' },
@@ -148,8 +148,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     fontSize: 11,
     fontWeight: '700',
-    color: '#8A5A00',
-    backgroundColor: '#FFF4DC',
+    color: colors.goldText,
+    backgroundColor: colors.goldSoft,
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 2,

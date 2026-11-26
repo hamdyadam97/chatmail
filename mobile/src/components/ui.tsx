@@ -134,7 +134,7 @@ export function Button({
 }
 
 const VARIANTS = {
-  primary: { bg: colors.navy, fg: '#fff', border: colors.navy },
+  primary: { bg: colors.navyFill, fg: '#fff', border: colors.navyFill },
   secondary: { bg: colors.card, fg: colors.navy, border: colors.border },
   danger: { bg: colors.dangerSoft, fg: colors.danger, border: colors.dangerSoft },
   plain: { bg: 'transparent', fg: colors.navy, border: 'transparent' },

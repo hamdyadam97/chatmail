@@ -111,7 +111,7 @@ export default function NotificationsScreen() {
           renderItem={({ item: n }) => (
             <Pressable
               onPress={() => void openOne(n)}
-              style={({ pressed }) => [styles.row, { flexDirection: row }, !n.read_at && { backgroundColor: '#FBFAF4' }, pressed && { backgroundColor: colors.navySoft }]}
+              style={({ pressed }) => [styles.row, { flexDirection: row }, !n.read_at && { backgroundColor: colors.bg }, pressed && { backgroundColor: colors.navySoft }]}
             >
               <View style={[styles.icon, !n.read_at && { backgroundColor: colors.goldSoft }]}>
                 <Ionicons name={ICONS[n.kind] ?? 'notifications'} size={20} color={n.read_at ? colors.navy : colors.gold} />
@@ -129,7 +129,7 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: { alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 15, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  row: { alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 15, backgroundColor: colors.card, marginHorizontal: 14, borderRadius: 18 },
   sep: { height: 8 },
   icon: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.navySoft, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, fontSize: font.body, fontWeight: '600' },

@@ -141,11 +141,11 @@ function Chip({ text, color = colors.textSoft, bg = colors.bg }: { text: string;
 }
 
 const styles = StyleSheet.create({
-  segment: { marginHorizontal: 16, marginBottom: 10, backgroundColor: '#ECE8DF', borderRadius: 10, padding: 3 },
+  segment: { marginHorizontal: 16, marginBottom: 10, backgroundColor: colors.chip, borderRadius: 10, padding: 3 },
   segItem: { flex: 1, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  segActive: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  segActive: { backgroundColor: colors.card, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   segText: { fontSize: font.small, color: colors.textSoft, fontWeight: '600' },
-  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: colors.card, marginHorizontal: 14, borderRadius: 18 },
   sep: { height: 8 },
   name: { flex: 1, fontWeight: '700', fontSize: font.body },
   date: { fontSize: font.tiny, color: colors.textMuted },
@@ -158,7 +158,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: colors.navy,
+    backgroundColor: colors.navyFill,
     paddingHorizontal: 22,
     height: 52,
     borderRadius: 26,

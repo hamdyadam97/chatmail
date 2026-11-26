@@ -152,11 +152,11 @@ export default function NewChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  search: { alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 10, backgroundColor: '#ECE8DF', borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
-  row: { alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff' },
+  search: { alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: 10, backgroundColor: colors.chip, borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
+  row: { alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.card },
   sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
-  groupIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
-  title: { backgroundColor: '#fff', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, height: 48, fontSize: font.body, color: colors.text },
+  groupIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.navyFill, alignItems: 'center', justifyContent: 'center' },
+  title: { backgroundColor: colors.card, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, height: 48, fontSize: font.body, color: colors.text },
   pill: { alignItems: 'center', gap: 4, backgroundColor: colors.navySoft, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
   pillText: { color: colors.navy, fontSize: font.small, fontWeight: '600' },
 });

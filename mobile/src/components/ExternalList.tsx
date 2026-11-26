@@ -140,9 +140,9 @@ function Row({ item, onPress }: { item: ExternalSummary; onPress: () => void }) 
 }
 
 const styles = StyleSheet.create({
-  address: { alignItems: 'center', gap: 6, marginHorizontal: 16, marginBottom: 8, backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  address: { alignItems: 'center', gap: 6, marginHorizontal: 16, marginBottom: 8, backgroundColor: colors.card, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   addressText: { fontSize: font.small, color: colors.textSoft, fontFamily: 'monospace' },
-  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: '#fff', marginHorizontal: 14, borderRadius: 18 },
+  row: { gap: 12, paddingHorizontal: 14, paddingVertical: 13, backgroundColor: colors.card, marginHorizontal: 14, borderRadius: 18 },
   sep: { height: 8 },
   dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.gold },
   who: { flex: 1, fontSize: font.body, fontWeight: '600' },

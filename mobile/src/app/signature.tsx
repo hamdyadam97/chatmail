@@ -104,5 +104,5 @@ export default function SignatureScreen() {
 }
 
 const styles = StyleSheet.create({
-  preview: { backgroundColor: '#fff', borderRadius: radius.md, padding: 16, borderWidth: 1, borderColor: colors.border },
+  preview: { backgroundColor: colors.card, borderRadius: radius.md, padding: 16, borderWidth: 1, borderColor: colors.border },
 });

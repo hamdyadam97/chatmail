@@ -295,13 +295,13 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: '#fff', borderRadius: radius.lg, padding: 14, gap: 10 },
+  card: { backgroundColor: colors.card, borderRadius: radius.lg, padding: 14, gap: 10 },
   label: { fontSize: font.small, color: colors.textMuted, fontWeight: '600' },
   hint: { fontSize: font.tiny + 1, color: colors.textMuted },
   input: { backgroundColor: colors.bg, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, fontSize: font.body, color: colors.text },
   bodyInput: { minHeight: 180 },
-  chip: { alignItems: 'center', gap: 4, paddingHorizontal: 14, height: 34, borderRadius: 17, backgroundColor: '#fff', borderWidth: 1, borderColor: colors.border },
-  chipActive: { backgroundColor: colors.navy, borderColor: colors.navy },
+  chip: { alignItems: 'center', gap: 4, paddingHorizontal: 14, height: 34, borderRadius: 17, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  chipActive: { backgroundColor: colors.navyFill, borderColor: colors.navy },
   chipText: { fontSize: font.small, fontWeight: '600', color: colors.textSoft },
   bar: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16, gap: 6, backgroundColor: 'rgba(255,255,255,0.97)', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
 });

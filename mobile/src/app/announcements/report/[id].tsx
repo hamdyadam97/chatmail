@@ -149,7 +149,7 @@ function PersonRow({ r, requiresAck }: { r: ComplianceRow; requiresAck: boolean 
   const state = r.acknowledged_at
     ? { icon: 'checkmark-done-circle' as const, color: colors.success, text: `أقر ${shortDate(r.acknowledged_at)}` }
     : r.read_at
-      ? { icon: 'eye' as const, color: '#0B6E99', text: `اطلع ${shortDate(r.read_at)}${requiresAck ? ' — لم يقر' : ''}` }
+      ? { icon: 'eye' as const, color: colors.info, text: `اطلع ${shortDate(r.read_at)}${requiresAck ? ' — لم يقر' : ''}` }
       : { icon: 'ellipse-outline' as const, color: r.overdue ? colors.danger : colors.textMuted, text: r.overdue ? 'لم يطلع — متأخر' : 'لم يطلع بعد' };
   return (
     <View style={[styles.row, { flexDirection: row }]}>
@@ -167,14 +167,14 @@ function PersonRow({ r, requiresAck }: { r: ComplianceRow; requiresAck: boolean 
 
 const styles = StyleSheet.create({
   meta: { fontSize: font.tiny + 1, color: colors.textMuted },
-  stat: { flex: 1, backgroundColor: '#fff', borderRadius: radius.md, paddingVertical: 10, alignItems: 'center' },
+  stat: { flex: 1, backgroundColor: colors.card, borderRadius: radius.md, paddingVertical: 10, alignItems: 'center' },
   statValue: { fontSize: 22, fontWeight: '800', color: colors.navy },
   statLabel: { fontSize: font.tiny, color: colors.textSoft },
-  segment: { backgroundColor: '#ECE8DF', borderRadius: 10, padding: 3 },
+  segment: { backgroundColor: colors.chip, borderRadius: 10, padding: 3 },
   segItem: { flex: 1, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  segActive: { backgroundColor: '#fff' },
+  segActive: { backgroundColor: colors.card },
   segText: { fontSize: font.tiny + 1, color: colors.textSoft, fontWeight: '600' },
-  row: { alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 11, backgroundColor: '#fff' },
+  row: { alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 11, backgroundColor: colors.card },
   sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
   state: { fontSize: font.tiny, fontWeight: '600' },
 });

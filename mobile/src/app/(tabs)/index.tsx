@@ -24,9 +24,9 @@ const MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'ماي�
 const LATE_MS = 48 * 3600 * 1000;
 
 const TONES = {
-  request: { bg: '#FBF1DC', fg: '#8A5A12', icon: 'create-outline' as IconName },
-  mail: { bg: '#ECEBF7', fg: colors.navy, icon: 'mail-outline' as IconName },
-  announcement: { bg: '#E3F1EC', fg: '#1F6B52', icon: 'megaphone-outline' as IconName },
+  request: { bg: colors.goldSoft, fg: colors.goldText, icon: 'create-outline' as IconName },
+  mail: { bg: colors.navySoft, fg: colors.navy, icon: 'mail-outline' as IconName },
+  announcement: { bg: colors.successSoft, fg: colors.successText, icon: 'megaphone-outline' as IconName },
 };
 
 type TodayItem =
@@ -203,7 +203,7 @@ export default function HomeScreen() {
             }}
             style={({ pressed }) => [styles.cta, { flexDirection: row }, pressed && { opacity: 0.85 }]}
           >
-            <Ionicons name="create-outline" size={20} color={colors.navyDark} />
+            <Ionicons name="create-outline" size={20} color="#1C1A47" />
             <Text style={styles.ctaText}>{waiting.length > 1 ? 'ابدأ بالأقدم' : 'افتح الطلب'}</Text>
           </Pressable>
         </View>
@@ -250,7 +250,7 @@ export default function HomeScreen() {
               <Pressable
                 key={`${it.kind}-${it.id}`}
                 onPress={() => open(it)}
-                style={({ pressed }) => [styles.item, { flexDirection: row }, pressed && { backgroundColor: '#F7F6FB' }]}
+                style={({ pressed }) => [styles.item, { flexDirection: row }, pressed && { backgroundColor: colors.bg }]}
               >
                 <View style={[styles.itemIcon, { backgroundColor: tone.bg }]}>
                   <Ionicons name={tone.icon} size={20} color={tone.fg} />
@@ -271,7 +271,7 @@ export default function HomeScreen() {
                   <View style={{ alignItems: 'flex-end', gap: 5 }}>
                     <Text style={styles.time}>{shortDate(it.at)}</Text>
                     {it.kind === 'request' ? (
-                      <Text style={[styles.pill, it.late && { backgroundColor: '#FDE8DA', color: '#9A3412' }]}>
+                      <Text style={[styles.pill, it.late && { backgroundColor: colors.dangerSoft, color: '#9A3412' }]}>
                         {it.late ? 'متأخر' : 'يحتاج قرارك'}
                       </Text>
                     ) : it.kind === 'mail' ? (
@@ -312,7 +312,7 @@ const LINE = colors.border;
 
 const styles = StyleSheet.create({
   header: { alignItems: 'center', gap: 12 },
-  avatar: { width: 46, height: 46, borderRadius: 15, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 46, height: 46, borderRadius: 15, backgroundColor: colors.navyFill, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   date: { fontSize: 13, color: colors.textSoft },
   hello: { fontSize: 21, fontWeight: '800', color: colors.text },
@@ -320,15 +320,15 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 15,
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: LINE,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bellDot: { position: 'absolute', top: 10, left: 11, width: 10, height: 10, borderRadius: 5, backgroundColor: '#C2410C', borderWidth: 2, borderColor: '#fff' },
+  bellDot: { position: 'absolute', top: 10, left: 11, width: 10, height: 10, borderRadius: 5, backgroundColor: '#C2410C', borderWidth: 2, borderColor: colors.card },
 
-  hero: { backgroundColor: colors.navy, borderRadius: 26, padding: 20, gap: 16, overflow: 'hidden' },
+  hero: { backgroundColor: colors.navyFill, borderRadius: 26, padding: 20, gap: 16, overflow: 'hidden' },
   heroRing: { position: 'absolute', left: -40, top: -40, width: 160, height: 160, borderRadius: 80, borderWidth: 20, borderColor: 'rgba(255,255,255,0.05)' },
   heroLabel: { fontSize: 14, color: '#CFCDE8' },
   heroCount: { fontSize: 54, fontWeight: '800', color: '#fff', lineHeight: 60 },
@@ -347,16 +347,16 @@ const styles = StyleSheet.create({
   },
   typeChip: { fontSize: 12.5, color: '#fff', backgroundColor: 'rgba(255,255,255,0.09)', paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, overflow: 'hidden' },
   cta: { height: 52, borderRadius: 16, backgroundColor: '#D9AE52', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  ctaText: { fontSize: 16, fontWeight: '800', color: colors.navyDark },
+  ctaText: { fontSize: 16, fontWeight: '800', color: '#1C1A47' },
 
-  calm: { backgroundColor: '#fff', borderRadius: 22, padding: 16, gap: 14, alignItems: 'center', borderWidth: 1, borderColor: LINE },
-  calmIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: '#E3F1EC', alignItems: 'center', justifyContent: 'center' },
+  calm: { backgroundColor: colors.card, borderRadius: 22, padding: 16, gap: 14, alignItems: 'center', borderWidth: 1, borderColor: LINE },
+  calmIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: colors.successSoft, alignItems: 'center', justifyContent: 'center' },
 
   shortcut: {
     width: 58,
     height: 58,
     borderRadius: 19,
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: LINE,
     alignItems: 'center',
@@ -366,14 +366,14 @@ const styles = StyleSheet.create({
 
   section: { fontSize: 19, fontWeight: '800', color: colors.text },
   sectionHint: { fontSize: 12.5, color: colors.textSoft },
-  item: { backgroundColor: '#fff', borderRadius: 18, paddingVertical: 13, paddingHorizontal: 14, gap: 12, alignItems: 'center' },
+  item: { backgroundColor: colors.card, borderRadius: 18, paddingVertical: 13, paddingHorizontal: 14, gap: 12, alignItems: 'center' },
   itemIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   itemTitle: { fontSize: 15, fontWeight: '600', color: colors.text },
   itemSub: { fontSize: 12.5, color: colors.textSoft },
   time: { fontSize: 12, color: colors.textSoft },
-  pill: { fontSize: 11, fontWeight: '700', color: '#8A5A12', backgroundColor: '#FBF1DC', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: 'hidden' },
-  unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.navy },
+  pill: { fontSize: 11, fontWeight: '700', color: colors.goldText, backgroundColor: colors.goldSoft, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: 'hidden' },
+  unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.navyFill },
   ackBtn: { borderWidth: 1, borderColor: '#B9DCCD', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 7 },
-  ackText: { fontSize: 13, fontWeight: '700', color: '#1F6B52' },
-  empty: { backgroundColor: '#fff', borderRadius: 18, padding: 22, alignItems: 'center', gap: 6 },
+  ackText: { fontSize: 13, fontWeight: '700', color: colors.successText },
+  empty: { backgroundColor: colors.card, borderRadius: 18, padding: 22, alignItems: 'center', gap: 6 },
 });

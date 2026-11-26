@@ -156,7 +156,7 @@ function CommentBox({ placeholder, sending, onSend, onCancel, autoFocus }: {
             onSend(text.trim());
             setText('');
           }}
-          style={[styles.btn, { backgroundColor: colors.navy, opacity: ready ? 1 : 0.5, flexDirection: row }]}
+          style={[styles.btn, { backgroundColor: colors.navyFill, opacity: ready ? 1 : 0.5, flexDirection: row }]}
         >
           {sending ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={15} color="#fff" />}
           <Text style={{ color: '#fff', fontWeight: '700' }}>إرسال</Text>
@@ -167,7 +167,7 @@ function CommentBox({ placeholder, sending, onSend, onCancel, autoFocus }: {
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: '#fff', borderRadius: radius.lg, padding: 14, gap: 10 },
+  card: { backgroundColor: colors.card, borderRadius: radius.lg, padding: 14, gap: 10 },
   section: { fontWeight: '800', fontSize: font.body },
   note: { fontSize: font.small, color: colors.text, backgroundColor: colors.bg, borderRadius: 10, padding: 10, overflow: 'hidden' },
   meta: { fontSize: font.tiny, color: colors.textMuted },
@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   btn: { height: 38, paddingHorizontal: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 6 },
-  banner: { backgroundColor: '#FBF4E4', borderWidth: 1, borderColor: '#F6E7C4', borderRadius: radius.lg, padding: 12, gap: 10, alignItems: 'center' },
-  bannerWho: { fontSize: 12, fontWeight: '700', color: '#8A5A12' },
-  bannerBtn: { backgroundColor: colors.navy, borderRadius: 12, paddingHorizontal: 12, height: 36, alignItems: 'center', gap: 5 },
+  banner: { backgroundColor: colors.goldSoft, borderWidth: 1, borderColor: '#F6E7C4', borderRadius: radius.lg, padding: 12, gap: 10, alignItems: 'center' },
+  bannerWho: { fontSize: 12, fontWeight: '700', color: colors.goldText },
+  bannerBtn: { backgroundColor: colors.navyFill, borderRadius: 12, paddingHorizontal: 12, height: 36, alignItems: 'center', gap: 5 },
 });

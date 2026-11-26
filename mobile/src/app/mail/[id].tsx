@@ -225,7 +225,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   people: { fontSize: font.small, color: colors.textSoft, lineHeight: 21 },
-  card: { backgroundColor: '#fff', borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
+  card: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
   cardHead: { gap: 10, padding: 14, alignItems: 'center' },
   sender: { flex: 1, fontWeight: '700', fontSize: font.body },
   time: { fontSize: font.tiny, color: colors.textMuted },

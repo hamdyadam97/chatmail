@@ -2,14 +2,15 @@ import { StyleSheet } from 'react-native';
 import { Text } from '@/components/Text';
 
 import { STATUS_LABELS, type RequestStatus } from '@/lib/approvals';
+import { colors } from '@/lib/theme';
 
 const STYLES: Record<RequestStatus, { color: string; bg: string }> = {
-  pending: { color: '#8A5A00', bg: '#FFF4DC' },
-  approved: { color: '#1E6B35', bg: '#E5F5EA' },
-  completed: { color: '#1E6B35', bg: '#E5F5EA' },
-  rejected: { color: '#B3261E', bg: '#FDECEC' },
-  returned: { color: '#A34A00', bg: '#FDEFE2' },
-  cancelled: { color: '#5E5D72', bg: '#EEEEF2' },
+  pending: { color: colors.goldText, bg: colors.goldSoft },
+  approved: { color: colors.successText, bg: colors.successSoft },
+  completed: { color: colors.successText, bg: colors.successSoft },
+  rejected: { color: colors.danger, bg: colors.dangerSoft },
+  returned: { color: colors.goldText, bg: colors.goldSoft },
+  cancelled: { color: colors.textSoft, bg: colors.bg },
 };
 
 export function StatusChip({ status }: { status: RequestStatus }) {

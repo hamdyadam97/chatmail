@@ -192,16 +192,16 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   searchWrap: { paddingHorizontal: 16, paddingBottom: 8 },
-  search: { alignItems: 'center', gap: 8, backgroundColor: '#ECE8DF', borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
+  search: { alignItems: 'center', gap: 8, backgroundColor: colors.chip, borderRadius: radius.md, paddingHorizontal: 12, height: 42 },
   searchInput: { flex: 1, fontSize: font.body, color: colors.text, height: '100%' },
   chips: { gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
-  chip: { paddingHorizontal: 16, height: 34, borderRadius: 17, backgroundColor: '#fff', borderWidth: 1, borderColor: colors.border, justifyContent: 'center' },
-  chipActive: { backgroundColor: colors.navy, borderColor: colors.navy },
+  chip: { paddingHorizontal: 16, height: 34, borderRadius: 17, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, justifyContent: 'center' },
+  chipActive: { backgroundColor: colors.navyFill, borderColor: colors.navy },
   chipText: { fontSize: font.small, fontWeight: '600', color: colors.textSoft },
-  row: { gap: 4, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
+  row: { gap: 4, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.card },
   sep: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginHorizontal: 16 },
   kind: { fontSize: font.tiny, color: colors.textMuted },
   title: { fontSize: font.body, fontWeight: '700' },
   snippet: { fontSize: font.small, color: colors.textSoft, lineHeight: 21 },
-  mark: { backgroundColor: '#FCE9B8', color: colors.text },
+  mark: { backgroundColor: colors.goldSoft, color: colors.text },
 });

@@ -67,7 +67,7 @@ export default function ExternalScreen() {
           <T style={styles.subject}>{subject}</T>
           <View style={{ flexDirection: row, gap: 8, flexWrap: 'wrap' }}>
             <Text style={styles.badge}>خارجي</Text>
-            {thread.length > 1 && <Text style={[styles.badge, { color: colors.textSoft, backgroundColor: '#fff' }]}>{thread.length} رسائل</Text>}
+            {thread.length > 1 && <Text style={[styles.badge, { color: colors.textSoft, backgroundColor: colors.card }]}>{thread.length} رسائل</Text>}
           </View>
         </View>
         <View style={{ gap: 10, paddingHorizontal: 12 }}>
@@ -255,14 +255,14 @@ const styles = StyleSheet.create({
   subject: { fontSize: 24, fontWeight: '800', lineHeight: 32 },
   badge: {
     fontSize: font.tiny,
-    color: '#8A5A00',
-    backgroundColor: '#FFF4DC',
+    color: colors.goldText,
+    backgroundColor: colors.goldSoft,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     overflow: 'hidden',
   },
-  card: { backgroundColor: '#fff', borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
+  card: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
   cardHead: { gap: 10, padding: 14, alignItems: 'center' },
   sender: { flex: 1, fontWeight: '700', fontSize: font.body },
   time: { fontSize: font.tiny, color: colors.textMuted },

@@ -131,7 +131,7 @@ export default function ExternalComposeScreen() {
   const blocked = mailbox && (!mailbox.sending_enabled || !mailbox.sending_configured);
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#fff' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.card }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[styles.bar, { paddingTop: Platform.OS === 'ios' ? 14 : insets.top + 10, flexDirection: row }]}>
         <Pressable hitSlop={10} onPress={cancel}>
           <Text style={styles.cancel}>إلغاء</Text>
@@ -145,7 +145,7 @@ export default function ExternalComposeScreen() {
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
         <View style={[styles.notice, { flexDirection: row }]}>
           <Ionicons name="globe-outline" size={18} color="#8A5A00" />
-          <T style={{ flex: 1, fontSize: font.tiny + 1, color: '#5C3D00' }}>
+          <T style={{ flex: 1, fontSize: font.tiny + 1, color: colors.goldText }}>
             {blocked
               ? 'الإرسال للخارج غير مفعّل لحسابك — اطلبه من مسؤول النظام.'
               : `ستخرج إلى خارج النظام عبر الإنترنت${mailbox?.address ? ` من ${mailbox.address}` : ''}.`}
@@ -235,13 +235,13 @@ const styles = StyleSheet.create({
   bar: { alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   cancel: { fontSize: 17, color: colors.navy },
   barTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.navy, alignItems: 'center', justifyContent: 'center' },
-  notice: { alignItems: 'center', gap: 8, backgroundColor: '#FFF8E6', paddingHorizontal: 16, paddingVertical: 10 },
+  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.navyFill, alignItems: 'center', justifyContent: 'center' },
+  notice: { alignItems: 'center', gap: 8, backgroundColor: colors.goldSoft, paddingHorizontal: 16, paddingVertical: 10 },
   line: { alignItems: 'center', gap: 8, paddingHorizontal: 16, minHeight: 50, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   label: { fontSize: font.body, color: colors.textMuted },
   input: { flex: 1, fontSize: font.body, color: colors.text, paddingVertical: 6 },
   ccToggle: { color: colors.navy, fontSize: font.small, fontWeight: '600' },
-  suggestions: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: '#FAFAFD' },
+  suggestions: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: colors.bg },
   suggestion: { paddingHorizontal: 16, paddingVertical: 10 },
   suggestionAddr: { fontSize: font.small, color: colors.textSoft, textAlign: 'right' },
   files: { flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },

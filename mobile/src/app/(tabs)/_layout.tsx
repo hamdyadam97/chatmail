@@ -40,7 +40,7 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.navy,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: { fontSize: 12, fontFamily: FONTS.semibold },
-        tabBarStyle: { backgroundColor: '#fff', borderTopColor: colors.border },
+        tabBarStyle: { backgroundColor: colors.card, borderTopColor: colors.border },
         tabBarBadgeStyle: { backgroundColor: colors.gold, color: '#fff', fontSize: 11 },
       }}
     >

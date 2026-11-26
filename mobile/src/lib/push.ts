@@ -9,6 +9,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { api } from './api';
+import { colors } from './theme';
 
 let currentToken: string | null = null;
 
@@ -34,7 +35,7 @@ export async function registerForPush(): Promise<boolean> {
         name: 'الإشعارات',
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 200, 120, 200],
-        lightColor: '#CB962B',
+        lightColor: colors.gold,
       });
     }
     let { status } = await Notifications.getPermissionsAsync();

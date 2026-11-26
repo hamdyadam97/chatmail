@@ -102,7 +102,7 @@ export default function ApprovalScreen() {
         {early && (
           <View style={[styles.notice, { flexDirection: row }]}>
             <Ionicons name="hourglass-outline" size={22} color="#8A5A00" />
-            <T style={{ flex: 1, fontSize: font.small, lineHeight: 22, color: '#5C3D00' }}>
+            <T style={{ flex: 1, fontSize: font.small, lineHeight: 22, color: colors.goldText }}>
               الطلب بانتظار موافقة المدير المباشر. يمكنك الانتظار، أو اعتماده أو رفضه مباشرة الآن — تُتخطى الخطوات السابقة ويُبلَّغ أصحابها.
             </T>
           </View>
@@ -161,7 +161,7 @@ export default function ApprovalScreen() {
           <Pressable
             disabled={!req.delivered_correspondence}
             onPress={() => req.delivered_correspondence && router.push(`/mail/${req.delivered_correspondence.id}`)}
-            style={[styles.notice, { flexDirection: row, backgroundColor: '#E8F4FB' }]}
+            style={[styles.notice, { flexDirection: row, backgroundColor: colors.navySoft }]}
           >
             <Ionicons name={req.delivered_correspondence ? 'paper-plane' : 'paper-plane-outline'} size={20} color="#0B5E86" />
             <T style={{ flex: 1, fontSize: font.small, lineHeight: 22, color: '#0B4A6B' }}>
@@ -184,7 +184,7 @@ export default function ApprovalScreen() {
         <View style={styles.card}>
           <T style={styles.section}>خطوات الاعتماد</T>
           {req.steps.map((s) => (
-            <View key={s.step_order} style={[styles.step, s.status === 'active' && { borderColor: '#F0C36D', backgroundColor: '#FFFBF1' }]}>
+            <View key={s.step_order} style={[styles.step, s.status === 'active' && { borderColor: '#F0C36D', backgroundColor: colors.goldSoft }]}>
               <View style={{ flexDirection: row, justifyContent: 'space-between' }}>
                 <T style={{ fontWeight: '700', fontSize: font.small }}>الخطوة {s.step_order}</T>
                 <Text style={styles.meta}>{STEP_LABELS[s.status]}</Text>
@@ -198,7 +198,7 @@ export default function ApprovalScreen() {
                   {a.decision ? (
                     <DecisionMark decision={a.decision.decision} />
                   ) : a.deferred_at && req.status === 'pending' ? (
-                    <Text style={[styles.meta, { color: '#0B6E99' }]}>مؤجَّل</Text>
+                    <Text style={[styles.meta, { color: colors.info }]}>مؤجَّل</Text>
                   ) : null}
                 </View>
               ))}
@@ -330,7 +330,7 @@ function DecisionMark({ decision }: { decision: Decision }) {
   const map = {
     approved: { icon: 'checkmark-circle', color: colors.success, text: 'اعتمد' },
     rejected: { icon: 'close-circle', color: colors.danger, text: 'رفض' },
-    returned: { icon: 'arrow-undo-circle', color: '#A34A00', text: 'أعاد' },
+    returned: { icon: 'arrow-undo-circle', color: colors.goldText, text: 'أعاد' },
   } as const;
   const m = map[decision];
   return (
@@ -486,8 +486,8 @@ function DecisionSheet({
 const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: '800', lineHeight: 32 },
   meta: { fontSize: font.tiny, color: colors.textMuted },
-  notice: { gap: 10, alignItems: 'center', backgroundColor: '#FFF4DC', padding: 14, borderRadius: radius.md },
-  card: { backgroundColor: '#fff', borderRadius: radius.lg, padding: 14, gap: 10 },
+  notice: { gap: 10, alignItems: 'center', backgroundColor: colors.goldSoft, padding: 14, borderRadius: radius.md },
+  card: { backgroundColor: colors.card, borderRadius: radius.lg, padding: 14, gap: 10 },
   section: { fontWeight: '800', fontSize: font.body },
   step: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 12 },
   note: { fontSize: font.small, color: colors.textSoft, fontStyle: 'italic' },
@@ -505,12 +505,12 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, gap: 12 },
+  sheet: { backgroundColor: colors.card, borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 20, gap: 12 },
   grabber: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.border, marginBottom: 4 },
   sheetTitle: { fontSize: 20, fontWeight: '800' },
   label: { fontSize: font.small, color: colors.textSoft, fontWeight: '600' },
   page: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
-  pageActive: { backgroundColor: colors.navy, borderColor: colors.navy },
+  pageActive: { backgroundColor: colors.navyFill, borderColor: colors.navy },
   pageText: { fontSize: 16, fontWeight: '700', color: colors.text },
   noteInput: {
     minHeight: 80,

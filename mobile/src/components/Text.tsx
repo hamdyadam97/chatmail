@@ -16,6 +16,8 @@ import {
   type TextStyle,
 } from 'react-native';
 
+import { colors } from '@/lib/theme';
+
 export const FONTS = {
   regular: 'IBMPlexSansArabic_400Regular',
   medium: 'IBMPlexSansArabic_500Medium',
@@ -46,11 +48,12 @@ function family(weight: TextStyle['fontWeight']): string {
 }
 
 function withFont(style: TextProps['style']): TextProps['style'] {
-  if (!loaded) return style;
   const flat = (StyleSheet.flatten(style) ?? {}) as TextStyle;
-  if (flat.fontFamily) return style;
+  // نص بلا لون صريح = لون النص في المظهر الحالي (في الليلي لا يبقى أسود).
+  const color = flat.color ?? colors.text;
+  if (!loaded || flat.fontFamily) return { ...flat, color };
   const { fontWeight, ...rest } = flat;
-  return { ...rest, fontFamily: family(fontWeight) };
+  return { ...rest, color, fontFamily: family(fontWeight) };
 }
 
 export const Text = forwardRef<ComponentRef<typeof RNText>, TextProps>(function Text({ style, ...props }, ref) {
