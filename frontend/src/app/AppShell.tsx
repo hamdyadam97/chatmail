@@ -59,7 +59,7 @@ function RailLink({ item, pathname }: { item: RailItem; pathname: string }) {
       <span
         className={cn(
           'flex h-9 w-9 items-center justify-center rounded-lg transition-colors',
-          active ? 'bg-white/20' : 'group-hover:bg-white/10',
+          active ? 'bg-gold-400 text-primary-900 shadow-sm' : 'group-hover:bg-white/10',
         )}
       >
         <Icon className="h-5 w-5" />
@@ -96,7 +96,7 @@ export function AppShell() {
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-gray-50">
       {/* شريط الأقسام — يمين الشاشة في RTL (الشاشات الكبيرة) */}
-      <nav className="hidden w-[76px] shrink-0 flex-col items-center gap-1 bg-primary-900 px-1.5 py-3 md:flex" aria-label="الأقسام">
+      <nav className="hidden w-[76px] shrink-0 flex-col items-center gap-1 bg-primary-700 px-1.5 py-3 md:flex" aria-label="الأقسام">
         <Link to="/mail/inbox" className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-white" aria-label="الرئيسية">
           <Lock className="h-5 w-5" />
         </Link>
