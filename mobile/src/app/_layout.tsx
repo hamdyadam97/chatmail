@@ -5,10 +5,10 @@ import { IBMPlexSansArabic_600SemiBold } from '@expo-google-fonts/ibm-plex-sans-
 import { IBMPlexSansArabic_700Bold } from '@expo-google-fonts/ibm-plex-sans-arabic/700Bold';
 import { useFonts } from 'expo-font';
 import * as Notifications from 'expo-notifications';
-import { router, Stack } from 'expo-router';
+import { router, Stack, useRootNavigationState } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { setFontsLoaded } from '@/components/Text';
@@ -19,28 +19,50 @@ import { watchForUpdates } from '@/lib/updates';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-function openFromNotification(response: Notifications.NotificationResponse | null | undefined) {
-  const url = (response?.notification.request.content.data as { url?: string } | undefined)?.url;
-  const route = routeForUrl(url);
-  if (route) router.push(route as never);
-}
+/** إشعارات فُتحت فعلًا — حتى لا يعود آخر إشعار يفتح نفسه عند كل تجديد للجلسة. */
+const handledNotifications = new Set<string>();
 
 function RootStack() {
   const { status, user } = useAuth();
   const signedIn = status === 'signedIn';
   const mustChange = signedIn && !!user?.must_change_password;
+  const navReady = !!useRootNavigationState()?.key;
+  const [pending, setPending] = useState<string | null>(null);
 
   useEffect(() => {
     if (status !== 'loading') void SplashScreen.hideAsync().catch(() => undefined);
   }, [status]);
 
-  // الضغط على إشعار: يفتح المراسلة (والتطبيق مفتوح أو مُغلق).
+  // الضغط على إشعار (والتطبيق مفتوح أو في الخلفية أو مُغلق): نحفظ وجهته…
   useEffect(() => {
     if (!signedIn || mustChange) return;
-    openFromNotification(Notifications.getLastNotificationResponse());
-    const sub = Notifications.addNotificationResponseReceivedListener(openFromNotification);
+    const take = (response: Notifications.NotificationResponse | null | undefined) => {
+      if (!response) return;
+      const id = response.notification.request.identifier;
+      if (handledNotifications.has(id)) return;
+      handledNotifications.add(id);
+      const url = (response.notification.request.content.data as { url?: string } | undefined)?.url;
+      const route = routeForUrl(url);
+      if (route) setPending(route);
+    };
+    take(Notifications.getLastNotificationResponse());
+    const sub = Notifications.addNotificationResponseReceivedListener(take);
     return () => sub.remove();
   }, [signedIn, mustChange]);
+
+  // …ونفتحها حين تجهز الشاشات: التنقل قبل تركيب المتصفح يفشل (فتح التطبيق من إشعار وهو مُغلق).
+  useEffect(() => {
+    if (!pending || !navReady || !signedIn || mustChange) return;
+    const t = setTimeout(() => {
+      setPending(null);
+      try {
+        router.push(pending as never);
+      } catch {
+        // لا شيء — يبقى المستخدم في الرئيسية.
+      }
+    }, 150);
+    return () => clearTimeout(t);
+  }, [pending, navReady, signedIn, mustChange]);
 
   if (status === 'loading') return null;
 
