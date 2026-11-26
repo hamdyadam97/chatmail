@@ -53,6 +53,11 @@ function RootStack() {
         <Stack.Screen name="chat/new" />
         <Stack.Screen name="announcements/index" />
         <Stack.Screen name="announcements/[id]" />
+        <Stack.Screen name="announcements/new" />
+        <Stack.Screen name="announcements/report/[id]" />
+        <Stack.Screen name="external/[id]" />
+        <Stack.Screen name="external/compose" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="search" />
         <Stack.Screen name="compose" options={{ presentation: 'modal' }} />
         <Stack.Screen name="login-approvals" />
         <Stack.Screen name="password" />

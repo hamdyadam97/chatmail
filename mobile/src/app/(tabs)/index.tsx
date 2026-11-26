@@ -1,27 +1,33 @@
-/** البريد: المجلدات كشرائح أعلى القائمة، بحث، سحب للتحديث، وزر «رسالة جديدة» العائم. */
+/** البريد: المجلدات كشرائح أعلى القائمة (ومنها «الخارجي»)، بحث، سحب للتحديث، وزر «رسالة جديدة» العائم. */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { Avatar, Empty, Header, Loading, T, tap } from '@/components/ui';
+import { ExternalList } from '@/components/ExternalList';
+import { Avatar, Empty, Header, IconButton, Loading, T, tap } from '@/components/ui';
 import { api, errorText } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { shortDate } from '@/lib/format';
 import { colors, font, radius, row, textRight } from '@/lib/theme';
 import type { Folder, MailSummary, Page } from '@/lib/types';
 
-const FOLDERS: { key: Folder; label: string }[] = [
+type Tab = Folder | 'external';
+
+const FOLDERS: { key: Tab; label: string }[] = [
   { key: 'inbox', label: 'الوارد' },
   { key: 'sent', label: 'الصادر' },
   { key: 'important', label: 'المهمة' },
   { key: 'archived', label: 'المؤرشفة' },
   { key: 'drafts', label: 'المسودات' },
+  { key: 'external', label: 'الخارجي' },
 ];
 
 export default function MailScreen() {
   const { user } = useAuth();
-  const [folder, setFolder] = useState<Folder>('inbox');
+  const [tab, setTab] = useState<Tab>('inbox');
+  const external = tab === 'external';
+  const folder: Folder = external ? 'inbox' : tab;
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<MailSummary[] | null>(null);
   const [page, setPage] = useState(1);
@@ -49,18 +55,21 @@ export default function MailScreen() {
   );
 
   useEffect(() => {
+    if (external) return;
     setItems(null);
     const t = setTimeout(() => void load(1), query ? 350 : 0);
     return () => clearTimeout(t);
-  }, [load, query]);
+  }, [load, query, external]);
 
   // بالرجوع من رسالة/إرسال: تحديث صامت (حالة القراءة والردود الجديدة).
   const latestLoad = useRef(load);
   latestLoad.current = load;
   const focusedOnce = useRef(false);
+  const externalRef = useRef(external);
+  externalRef.current = external;
   useFocusEffect(
     useCallback(() => {
-      if (focusedOnce.current) void latestLoad.current(1);
+      if (focusedOnce.current && !externalRef.current) void latestLoad.current(1);
       focusedOnce.current = true;
     }, []),
   );
@@ -110,14 +119,14 @@ export default function MailScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Header title="البريد" />
+      <Header title="البريد" right={<IconButton name="search" onPress={() => router.push('/search')} />} />
       <View style={styles.searchWrap}>
         <View style={[styles.search, { flexDirection: row }]}>
           <Ionicons name="search" size={18} color={colors.textMuted} />
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="بحث في البريد"
+            placeholder={external ? 'بحث في البريد الخارجي' : 'بحث في البريد'}
             placeholderTextColor={colors.textMuted}
             style={[styles.searchInput, textRight]}
             returnKeyType="search"
@@ -132,13 +141,13 @@ export default function MailScreen() {
       <View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.chips, { flexDirection: row }]}>
           {FOLDERS.map((f) => {
-            const active = f.key === folder;
+            const active = f.key === tab;
             return (
               <Pressable
                 key={f.key}
                 onPress={() => {
                   tap();
-                  setFolder(f.key);
+                  setTab(f.key);
                 }}
                 style={[styles.chip, active && styles.chipActive]}
               >
@@ -149,7 +158,9 @@ export default function MailScreen() {
         </ScrollView>
       </View>
 
-      {items === null ? (
+      {external ? (
+        <ExternalList query={query} />
+      ) : items === null ? (
         <Loading />
       ) : (
         <FlatList
@@ -176,12 +187,12 @@ export default function MailScreen() {
       <Pressable
         onPress={() => {
           tap();
-          router.push('/compose');
+          router.push(external ? '/external/compose' : '/compose');
         }}
         style={({ pressed }) => [styles.fab, pressed && { transform: [{ scale: 0.95 }] }]}
       >
         <Ionicons name="create-outline" size={24} color="#fff" />
-        <Text style={styles.fabText}>رسالة جديدة</Text>
+        <Text style={styles.fabText}>{external ? 'رسالة خارجية' : 'رسالة جديدة'}</Text>
       </Pressable>
     </View>
   );

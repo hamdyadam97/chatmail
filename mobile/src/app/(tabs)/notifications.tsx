@@ -60,6 +60,7 @@ export default function NotificationsScreen() {
     if (n.ref_type === 'correspondence' && n.ref_id) router.push(`/mail/${n.ref_id}`);
     else if (n.ref_type === 'approval_request' && n.ref_id) router.push(`/approvals/${n.ref_id}`);
     else if (n.ref_type === 'announcement' && n.ref_id) router.push(`/announcements/${n.ref_id}`);
+    else if (n.ref_type === 'external_message' && n.ref_id) router.push(`/external/${n.ref_id}`);
     else if (n.ref_type === 'login_approval') router.push('/login-approvals');
   };
 

@@ -133,3 +133,23 @@ export async function fileRequest(input: {
   if (!res.ok) throw new ApiError(res.status, data);
   return data as ApprovalRequest;
 }
+
+/** «أُعيد إليك الطلب»: إعادة الإرسال بملاحظة، وبملف جديد اختياريًا (يبدأ التوقيع من الأول). */
+export async function resubmitRequest(id: string, note: string, file?: { uri: string; name: string; mime: string } | null): Promise<ApprovalRequest> {
+  const send = async () => {
+    const form = new FormData();
+    form.append('note', note);
+    if (file) form.append('file', { uri: file.uri, name: file.name, type: file.mime } as unknown as Blob);
+    return fetch(`${API_BASE}/approvals/${id}/resubmit/`, { method: 'POST', headers: await authHeaders(), body: form });
+  };
+  let res: Response;
+  try {
+    res = await send();
+    if (res.status === 401 && (await refreshSession())) res = await send();
+  } catch {
+    throw new ApiError(0, null, 'تعذر الاتصال بالخادم — تأكد من الإنترنت');
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, data);
+  return data as ApprovalRequest;
+}

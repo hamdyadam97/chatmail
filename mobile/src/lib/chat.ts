@@ -66,11 +66,74 @@ export interface Announcement {
   published_at: string | null;
   content: { title: string; body: string } | null;
   mine: { delivered_at: string | null; read_at: string | null; acknowledged_at: string | null } | null;
+  recipient_count?: number;
+  is_publisher?: boolean;
+  can_track?: boolean;
+  /** تبويب «المتابعة» فقط. */
+  counts?: { recipients: number; read: number; acknowledged: number };
+}
+
+export type TargetType = 'users' | 'branch' | 'branches' | 'institute' | 'all';
+
+/** أين يحق لي النشر (حسب دوري)، وهل أتابع اطلاع التعاميم. */
+export interface PublishTargets {
+  all: boolean;
+  institutes: { id: string; name: string; code: string }[];
+  branches: { id: string; name: string; code: string; institute: string }[];
+  can_track?: boolean;
+}
+
+export interface AudienceTarget {
+  target_type: TargetType;
+  target_id: string | null;
+  user_ids: string[];
+  branch_ids: string[];
+}
+
+export interface PersonRef {
+  id: string;
+  full_name: string;
+  username: string;
+  branch?: string | null;
+  institute?: string | null;
+}
+
+export interface ComplianceRow {
+  user: PersonRef;
+  delivered_at: string | null;
+  read_at: string | null;
+  acknowledged_at: string | null;
+  overdue: boolean;
+  reminder_count: number;
+}
+
+export interface Compliance {
+  total: number;
+  delivered: number;
+  read: number;
+  acknowledged: number;
+  overdue: number;
+  rows: ComplianceRow[];
 }
 
 export const announcementsApi = {
   received: (pendingAck = false) => api<Page<Announcement>>(`/announcements/?box=received&page=1${pendingAck ? '&pending_ack=1' : ''}`),
+  tracking: () => api<Page<Announcement>>('/announcements/?box=tracking&page=1&page_size=100'),
   get: (id: string) => api<Announcement>(`/announcements/${id}/`),
   read: (id: string) => api(`/announcements/${id}/read/`, { method: 'POST' }),
   ack: (id: string) => api<{ acknowledged_at: string }>(`/announcements/${id}/ack/`, { method: 'POST' }),
+  targets: () => api<PublishTargets>('/announcements/targets/'),
+  preview: (t: AudienceTarget) => api<{ recipients: PersonRef[] }>('/announcements/audience-preview/', { method: 'POST', body: t }),
+  publish: (
+    body: AudienceTarget & {
+      priority: Announcement['priority'];
+      requires_ack: boolean;
+      ack_due_at: string | null;
+      client_ref: string;
+      title: string;
+      body: string;
+    },
+  ) => api<Announcement>('/announcements/', { method: 'POST', body }),
+  compliance: (id: string) => api<Compliance>(`/announcements/${id}/compliance/`),
+  remind: (id: string) => api<{ reminded: number }>(`/announcements/${id}/remind/`, { method: 'POST' }),
 };

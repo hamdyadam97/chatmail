@@ -1,30 +1,40 @@
-/** التعاميم الواردة: الجديد غير المقروء بارز، وشارة «بانتظار تأكيد اطلاعك». */
+/**
+ * التعاميم الواردة (الجديد غير المقروء بارز، وشارة «بانتظار تأكيد اطلاعك»)،
+ * و«المتابعة» لمن يتابع اطلاع التعاميم، و«+» لمن يحق له النشر.
+ */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
-import { Empty, Header, Loading, T, tap } from '@/components/ui';
+import { Empty, Header, IconButton, Loading, T, tap } from '@/components/ui';
 import { errorText } from '@/lib/api';
-import { announcementsApi, type Announcement } from '@/lib/chat';
+import { announcementsApi, type Announcement, type PublishTargets } from '@/lib/chat';
 import { shortDate } from '@/lib/format';
 import { colors, font, row } from '@/lib/theme';
 
 export default function AnnouncementsScreen() {
-  const [pendingOnly, setPendingOnly] = useState(false);
+  const [box, setBox] = useState<'all' | 'pending' | 'tracking'>('all');
+  const [targets, setTargets] = useState<PublishTargets | null>(null);
+  const canPublish = !!targets && (targets.all || targets.institutes.length > 0 || targets.branches.length > 0);
+  const tracking = box === 'tracking';
+
+  useEffect(() => {
+    announcementsApi.targets().then(setTargets).catch(() => undefined);
+  }, []);
   const [items, setItems] = useState<Announcement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      setItems((await announcementsApi.received(pendingOnly)).results);
+      setItems((box === 'tracking' ? await announcementsApi.tracking() : await announcementsApi.received(box === 'pending')).results);
       setError(null);
     } catch (err) {
       setError(errorText(err));
       setItems((p) => p ?? []);
     }
-  }, [pendingOnly]);
+  }, [box]);
 
   useFocusEffect(
     useCallback(() => {
@@ -34,22 +44,23 @@ export default function AnnouncementsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Header title="التعاميم" back />
+      <Header title="التعاميم" back right={canPublish ? <IconButton name="add-circle" size={30} onPress={() => router.push('/announcements/new')} /> : undefined} />
       <View style={[styles.segment, { flexDirection: row }]}>
         {[
-          { v: false, label: 'كل التعاميم' },
-          { v: true, label: 'بانتظار تأكيدي' },
+          { v: 'all' as const, label: 'الواردة' },
+          { v: 'pending' as const, label: 'بانتظار تأكيدي' },
+          ...(targets?.can_track ? [{ v: 'tracking' as const, label: 'المتابعة' }] : []),
         ].map((o) => (
           <Pressable
             key={o.label}
             onPress={() => {
               tap();
               setItems(null);
-              setPendingOnly(o.v);
+              setBox(o.v);
             }}
-            style={[styles.segItem, pendingOnly === o.v && styles.segActive]}
+            style={[styles.segItem, box === o.v && styles.segActive]}
           >
-            <Text style={[styles.segText, pendingOnly === o.v && { color: colors.navy, fontWeight: '700' }]}>{o.label}</Text>
+            <Text style={[styles.segText, box === o.v && { color: colors.navy, fontWeight: '700' }]}>{o.label}</Text>
           </Pressable>
         ))}
       </View>
@@ -73,14 +84,18 @@ export default function AnnouncementsScreen() {
             />
           }
           ListEmptyComponent={
-            error ? <Empty icon="cloud-offline-outline" title="تعذر التحميل" hint={error} /> : <Empty icon="megaphone-outline" title={pendingOnly ? 'لا شيء بانتظار تأكيدك' : 'لا تعاميم'} />
+            error ? (
+              <Empty icon="cloud-offline-outline" title="تعذر التحميل" hint={error} />
+            ) : (
+              <Empty icon="megaphone-outline" title={box === 'pending' ? 'لا شيء بانتظار تأكيدك' : tracking ? 'لا تعاميم تتابعها' : 'لا تعاميم'} />
+            )
           }
           renderItem={({ item: a }) => {
-            const unread = !a.mine?.read_at;
-            const needsAck = a.requires_ack && !a.mine?.acknowledged_at && a.status === 'published';
+            const unread = !tracking && !a.mine?.read_at;
+            const needsAck = !tracking && a.requires_ack && !a.mine?.acknowledged_at && a.status === 'published';
             return (
               <Pressable
-                onPress={() => router.push(`/announcements/${a.id}`)}
+                onPress={() => router.push(tracking ? `/announcements/report/${a.id}` : `/announcements/${a.id}`)}
                 style={({ pressed }) => [styles.row, { flexDirection: row }, pressed && { backgroundColor: colors.navySoft }]}
               >
                 <View style={[styles.icon, a.priority !== 'normal' && { backgroundColor: '#FDECEC' }]}>
@@ -90,7 +105,7 @@ export default function AnnouncementsScreen() {
                   <View style={{ flexDirection: row, alignItems: 'center', gap: 6 }}>
                     {unread && <View style={styles.dot} />}
                     <T style={[styles.title, unread && { fontWeight: '800' }]} numberOfLines={2}>
-                      {a.status === 'withdrawn' ? 'تعميم مسحوب' : a.content?.title ?? 'تعميم'}
+                      {a.status === 'withdrawn' ? 'تعميم مسحوب' : a.content?.title ?? `تعميم ${a.reference_number ?? ''}`}
                     </T>
                     <Text style={styles.date}>{shortDate(a.published_at)}</Text>
                   </View>
@@ -99,6 +114,12 @@ export default function AnnouncementsScreen() {
                     {a.reference_number ? ` — ${a.reference_number}` : ''}
                   </T>
                   {needsAck && <Text style={styles.ack}>بانتظار تأكيد اطلاعك</Text>}
+                  {tracking && a.counts && (
+                    <Text style={styles.counts}>
+                      اطلع {a.counts.read} من {a.counts.recipients}
+                      {a.requires_ack ? ` · أقر ${a.counts.acknowledged}` : ''}
+                    </Text>
+                  )}
                 </View>
               </Pressable>
             );
@@ -121,6 +142,7 @@ const styles = StyleSheet.create({
   date: { fontSize: font.tiny, color: colors.textMuted },
   meta: { fontSize: font.tiny + 1, color: colors.textMuted },
   dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.gold },
+  counts: { fontSize: font.tiny, color: colors.navy, fontWeight: '700' },
   ack: {
     alignSelf: 'flex-start',
     fontSize: 11,

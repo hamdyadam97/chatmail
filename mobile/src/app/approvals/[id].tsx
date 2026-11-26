@@ -24,11 +24,21 @@ import { StatusChip } from '@/components/approvals';
 import { SignaturePad } from '@/components/SignaturePad';
 import { Avatar, Button, Empty, ErrorBox, Field, Header, Loading, T, success, tap } from '@/components/ui';
 import { errorText } from '@/lib/api';
-import { approvalsApi, EVENT_LABELS, requestTitle, STEP_LABELS, type ApprovalRequest, type Decision, type FileMeta } from '@/lib/approvals';
+import {
+  approvalsApi,
+  EVENT_LABELS,
+  requestTitle,
+  resubmitRequest,
+  STEP_LABELS,
+  type ApprovalRequest,
+  type Decision,
+  type FileMeta,
+} from '@/lib/approvals';
 import { useAuth } from '@/lib/auth';
 import { openAttachment } from '@/lib/files';
 import { fullDate, shortDate } from '@/lib/format';
 import { colors, font, radius, row, textRight } from '@/lib/theme';
+import { pickFile, type LocalFile } from '@/lib/upload';
 
 type Action = Decision | 'deferred';
 
@@ -160,6 +170,8 @@ export default function ApprovalScreen() {
           </Pressable>
         )}
 
+        {req.can_resubmit && <ResubmitPanel request={req} onDone={(r) => setReq(r)} />}
+
         {(req.source_file || req.signed_file) && (
           <View style={styles.card}>
             {req.signed_file && <FileRow file={req.signed_file} label={`النسخة الموقّعة (${req.signature_count} توقيع)`} primary />}
@@ -251,6 +263,74 @@ export default function ApprovalScreen() {
           success();
         }}
       />
+    </View>
+  );
+}
+
+/** «أُعيد إليك الطلب»: ملاحظة لمن أعاده، وملف جديد اختياريًا (للطلبات بتوقيع — يوقّع الجميع من جديد). */
+function ResubmitPanel({ request, onDone }: { request: ApprovalRequest; onDone: (r: ApprovalRequest) => void }) {
+  const [note, setNote] = useState('');
+  const [file, setFile] = useState<LocalFile | null>(null);
+  const [busy, setBusy] = useState(false);
+  const returned = [...request.events].reverse().find((e) => e.kind === 'returned');
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await resubmitRequest(request.id, note.trim(), file);
+      success();
+      setNote('');
+      setFile(null);
+      onDone(r);
+    } catch (err) {
+      Alert.alert('تعذرت إعادة الإرسال', errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={[styles.card, { borderWidth: 1, borderColor: '#F0C36D' }]}>
+      <View style={{ flexDirection: row, alignItems: 'center', gap: 8 }}>
+        <Ionicons name="arrow-undo-circle" size={24} color="#A34A00" />
+        <T style={[styles.section, { flex: 1 }]}>أُعيد إليك الطلب</T>
+      </View>
+      {returned && (
+        <T style={{ fontSize: font.small, color: colors.textSoft }}>
+          أعاده {returned.actor.full_name}
+          {returned.note ? `: «${returned.note}»` : ''}
+        </T>
+      )}
+      <TextInput
+        value={note}
+        onChangeText={setNote}
+        placeholder="ملاحظة لمن أعاده (ماذا عدّلت)…"
+        placeholderTextColor={colors.textMuted}
+        multiline
+        maxLength={1000}
+        style={[styles.noteInput, textRight]}
+      />
+      {request.signable && (
+        <Pressable
+          onPress={() => {
+            tap();
+            pickFile((f) => setFile(f));
+          }}
+          style={({ pressed }) => [styles.file, { flexDirection: row }, pressed && { backgroundColor: colors.navySoft }]}
+        >
+          <Ionicons name={file ? 'document-text' : 'cloud-upload-outline'} size={22} color={colors.navy} />
+          <View style={{ flex: 1 }}>
+            <T style={{ fontWeight: '700', fontSize: font.small }}>{file ? file.name : 'ملف جديد (اختياري)'}</T>
+            <T style={styles.meta}>
+              {file ? 'يبدأ التوقيع من الأول على الملف الجديد' : 'بدونه يعود الطلب لمن أعاده وتبقى التوقيعات السابقة'}
+            </T>
+          </View>
+          {file && (
+            <Pressable hitSlop={8} onPress={() => setFile(null)}>
+              <Ionicons name="close-circle" size={20} color={colors.textMuted} />
+            </Pressable>
+          )}
+        </Pressable>
+      )}
+      <Button title="إعادة الإرسال" icon="send" loading={busy} onPress={submit} />
     </View>
   );
 }
