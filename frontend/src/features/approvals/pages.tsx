@@ -12,7 +12,7 @@ import { approvalsApi, DECISION_LABELS, type ApprovalRequest, type Decision, typ
 import { SignatureManager } from './SignaturePad';
 import { SignPlacer, type Placement } from './SignPlacer';
 import { saveBlob } from '../../shared/lib/download';
-import { StatusBadge, StepsView, Timeline, formatDate } from './components';
+import { NoteBanner, StatusBadge, StepsView, Timeline, formatDate } from './components';
 
 type Tab = 'pending_mine' | 'received' | 'requested_by_me' | 'delegations';
 
@@ -481,6 +481,8 @@ function ApprovalDetail({ id }: { id: string }) {
           </div>
           <StatusBadge status={request.status} />
         </div>
+
+        <NoteBanner request={request} meId={user ? String(user.id) : undefined} />
 
         <div className="rounded-lg bg-gray-50 p-4">
           {!detail ? (

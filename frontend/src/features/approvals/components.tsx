@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, CircleDashed, Plus, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, CircleDashed, MessageSquareReply, Plus, Send, Trash2, XCircle } from 'lucide-react';
 import { Button, Card, Label } from '../../shared/ui';
 import { cn } from '../../shared/lib/cn';
 import { toUserMessage } from '../../shared/api';
@@ -13,6 +13,7 @@ import {
   STATUS_LABELS,
   type ApprovalRequest,
   type EventKind,
+  type RequestEvent,
   type RequestStatus,
   type StepSpec,
 } from './api';
@@ -133,32 +134,171 @@ const EVENT_STYLES: Record<EventKind, string> = {
   carried: 'bg-emerald-300',
   reminded: 'bg-amber-400',
   withdrawn: 'bg-gray-400',
+  comment: 'bg-primary-300',
 };
 
-/** سجل الطلب: من قرر ماذا ومتى، مع الملاحظات. */
+/** سجل الطلب: من قرر ماذا ومتى، مع الملاحظات — وتحت كل ملاحظة «رد»، وفي
+ * آخره خانة تعليق. الردود تظهر تحت الملاحظة كمحادثة صغيرة. */
 export function Timeline({ request }: { request: ApprovalRequest }) {
-  if (!request.events.length) return null;
+  const queryClient = useQueryClient();
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const canComment = request.status !== 'cancelled';
+
+  // «رد» من شريط الملاحظة أعلى الصفحة: #reply-<id>
+  useEffect(() => {
+    const open = () => {
+      const m = window.location.hash.match(/^#reply-([0-9a-f-]{36})$/);
+      if (m) {
+        setReplyTo(m[1]);
+        document.getElementById(`event-${m[1]}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    };
+    open();
+    window.addEventListener('hashchange', open);
+    return () => window.removeEventListener('hashchange', open);
+  }, []);
+
+  const send = useMutation({
+    mutationFn: (v: { text: string; replyTo: string | null }) => approvalsApi.comment(request.id, v.text, v.replyTo),
+    onSuccess: (updated) => {
+      setError(null);
+      setReplyTo(null);
+      if (window.location.hash.startsWith('#reply-')) history.replaceState(null, '', window.location.pathname);
+      queryClient.setQueryData(['approvals', 'detail', request.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ['approvals'] });
+    },
+    onError: (err) => setError(toUserMessage(err, 'تعذر إرسال التعليق')),
+  });
+
+  const top = request.events.filter((e) => !e.reply_to);
+  const repliesOf = (id: string) => request.events.filter((e) => e.reply_to === id);
+  if (!top.length && !canComment) return null;
   return (
     <div className="space-y-2" data-testid="request-timeline">
       <h3 className="text-sm font-semibold text-gray-900">سجل الطلب</h3>
-      <ol className="space-y-2 border-s border-gray-200 ps-4">
-        {request.events.map((e, i) => (
-          <li key={i} className="relative text-sm">
-            <span className={cn('absolute -start-[21px] top-1.5 h-2.5 w-2.5 rounded-full', EVENT_STYLES[e.kind])} />
-            <p className="text-gray-800">
-              <span className="font-medium">{e.actor.full_name}</span> {EVENT_LABELS[e.kind]}
-              {e.on_behalf_of && <span className="text-gray-500"> (بالتفويض عن {e.on_behalf_of.full_name})</span>}
-              <span className="text-gray-500"> — <bdi>الخطوة {e.step_order}</bdi></span>
-              <bdi className="ms-3 text-xs text-gray-400">{formatDate(e.created_at)}</bdi>
-            </p>
-            {e.note && (
-              <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-gray-50 px-3 py-2 text-gray-700" data-testid="event-note">
-                {e.note}
-              </p>
-            )}
-          </li>
-        ))}
-      </ol>
+      {top.length > 0 && (
+        <ol className="space-y-2 border-s border-gray-200 ps-4">
+          {top.map((e) => {
+            const replies = repliesOf(e.id);
+            return (
+              <li key={e.id} id={`event-${e.id}`} className="relative text-sm">
+                <span className={cn('absolute -start-[21px] top-1.5 h-2.5 w-2.5 rounded-full', EVENT_STYLES[e.kind])} />
+                <p className="text-gray-800">
+                  <span className="font-medium">{e.actor.full_name}</span> {EVENT_LABELS[e.kind]}
+                  {e.on_behalf_of && <span className="text-gray-500"> (بالتفويض عن {e.on_behalf_of.full_name})</span>}
+                  {e.kind !== 'comment' && <span className="text-gray-500"> — <bdi>الخطوة {e.step_order}</bdi></span>}
+                  <bdi className="ms-3 text-xs text-gray-400">{formatDate(e.created_at)}</bdi>
+                </p>
+                {e.note && (
+                  <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-gray-50 px-3 py-2 text-gray-700" data-testid="event-note">
+                    {e.note}
+                  </p>
+                )}
+                {replies.length > 0 && (
+                  <ul className="mt-2 space-y-2 border-s-2 border-primary-100 ps-3" data-testid="event-replies">
+                    {replies.map((r) => (
+                      <li key={r.id}>
+                        <p className="text-xs text-gray-500">
+                          <span className="font-medium text-gray-800">{r.actor.full_name}</span> ردّ
+                          <bdi className="ms-2 text-gray-400">{formatDate(r.created_at)}</bdi>
+                        </p>
+                        <p className="mt-0.5 whitespace-pre-wrap break-words rounded-md bg-primary-50/60 px-3 py-1.5 text-gray-800">{r.note}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {canComment && e.note && replyTo !== e.id && (
+                  <button
+                    type="button"
+                    onClick={() => setReplyTo(e.id)}
+                    className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary-700 hover:underline"
+                    data-testid="reply-button"
+                  >
+                    <MessageSquareReply className="h-3.5 w-3.5" />
+                    رد
+                  </button>
+                )}
+                {replyTo === e.id && (
+                  <CommentBox
+                    autoFocus
+                    placeholder={`ردك على ${e.actor.full_name}…`}
+                    sending={send.isPending}
+                    onCancel={() => setReplyTo(null)}
+                    onSend={(text) => send.mutate({ text, replyTo: e.id })}
+                  />
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {canComment && replyTo === null && (
+        <CommentBox placeholder="اكتب تعليقًا أو استفسارًا على الطلب…" sending={send.isPending} onSend={(text) => send.mutate({ text, replyTo: null })} />
+      )}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function CommentBox({ placeholder, sending, onSend, onCancel, autoFocus }: {
+  placeholder: string;
+  sending: boolean;
+  onSend: (text: string) => void;
+  onCancel?: () => void;
+  autoFocus?: boolean;
+}) {
+  const [text, setText] = useState('');
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (autoFocus) ref.current?.focus();
+  }, [autoFocus]);
+  return (
+    <div className="mt-2 flex items-end gap-2" data-testid="comment-box">
+      <textarea
+        ref={ref}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        maxLength={1000}
+        rows={2}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className="min-h-[44px] flex-1 resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
+      />
+      {onCancel && (
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          إلغاء
+        </Button>
+      )}
+      <Button size="sm" disabled={!text.trim()} loading={sending} onClick={() => onSend(text.trim())}>
+        <Send className="h-4 w-4" />
+        إرسال
+      </Button>
+    </div>
+  );
+}
+
+/** ملاحظات القرار والتعليقات (لا ملاحظة التأجيل — تخص وقتها). */
+const BANNER_KINDS: EventKind[] = ['approved', 'rejected', 'returned', 'comment'];
+
+/** لمقدّم الطلب: آخر ملاحظة كتبها معتمد ولم يرد عليها بعد — بارزة أعلى الصفحة. */
+export function NoteBanner({ request, meId }: { request: ApprovalRequest; meId?: string }) {
+  if (!meId || request.requested_by.id !== meId || request.status === 'cancelled') return null;
+  const answered = new Set(request.events.filter((e) => e.reply_to && e.actor.id === meId).map((e) => e.reply_to));
+  const note = [...request.events]
+    .reverse()
+    .find((e: RequestEvent) => !e.reply_to && e.note && e.actor.id !== meId && !answered.has(e.id) && BANNER_KINDS.includes(e.kind));
+  if (!note) return null;
+  return (
+    <div className="flex flex-wrap items-start gap-3 rounded-lg border border-gold-100 bg-gold-50 p-3 text-sm" data-testid="note-banner">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold text-gold-700">ملاحظة من {note.actor.full_name}</p>
+        <p className="mt-0.5 whitespace-pre-wrap break-words text-gray-800">{note.note}</p>
+      </div>
+      <a href={`#reply-${note.id}`} className="inline-flex items-center gap-1 rounded-lg bg-primary-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-800">
+        <MessageSquareReply className="h-4 w-4" />
+        رد
+      </a>
     </div>
   );
 }

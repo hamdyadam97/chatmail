@@ -28,6 +28,8 @@ TITLES = {
     "approval_reminder": "المدير التنفيذي يطلب توقيعك على طلب بانتظار قرارك",
     "approval_delivered": "اعتُمد الخطاب وأُرسل إلى المستلمين",
     "approval_delivery_failed": "اعتُمد الخطاب لكن تعذر إرساله تلقائيًا — أرسله يدويًا",
+    "approval_comment": "تعليق جديد على طلب اعتماد",
+    "approval_comment_reply": "وصلك رد على ملاحظتك في طلب اعتماد",
     "device_alert": "تغيّرت أجهزة حسابك — راجع قائمة أجهزتك",
     "announcement": "صدر تعميم جديد موجّه إليك",
     "announcement_reminder": "تذكير: تعميم بانتظار تأكيد اطلاعك",

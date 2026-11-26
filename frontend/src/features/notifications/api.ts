@@ -13,6 +13,8 @@ export type NotificationKind =
   | 'approval_rejected'
   | 'approval_returned'
   | 'approval_deferred'
+  | 'approval_comment'
+  | 'approval_comment_reply'
   | 'approval_step_approved'
   | 'approval_awaiting_manager'
   | 'approval_overridden'

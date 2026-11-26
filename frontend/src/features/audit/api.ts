@@ -69,6 +69,7 @@ export const ACTION_LABELS: Record<string, string> = {
   approval_requested: 'طلب اعتماد',
   approval_decided: 'قرار اعتماد',
   approval_deferred: 'تأجيل طلب اعتماد',
+  approval_commented: 'تعليق على طلب اعتماد',
   approval_resubmitted: 'إعادة إرسال طلب اعتماد',
   announcement_published: 'نشر تعميم',
   announcement_acknowledged: 'إقرار تعميم',

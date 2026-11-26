@@ -53,6 +53,8 @@ def _decision_dict(d) -> dict:
 
 def _event_dict(e) -> dict:
     return {
+        "id": str(e.id),
+        "reply_to": str(e.reply_to_id) if e.reply_to_id else None,
         "kind": e.kind,
         "actor": _user_ref(e.actor),
         "on_behalf_of": _user_ref(e.on_behalf_of) if e.on_behalf_of_id else None,
@@ -319,6 +321,22 @@ class WithdrawView(APIView):
         req = services.get_viewable(request.user, request_id)
         req = services.withdraw_approval(request.user, req, note=str(request.data.get("note") or ""))
         return Response(request_dict(req, request.user))
+
+
+class CommentView(APIView):
+    """POST {text, reply_to?}: a comment on the request, or a reply to a note in its timeline."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [DecisionThrottle]
+
+    def post(self, request, request_id):
+        req = services.get_viewable(request.user, request_id)
+        text = str(request.data.get("text") or "")
+        if len(text) > services.MAX_NOTE:
+            raise ValidationError({"text": f"التعليق حتى {services.MAX_NOTE} حرف."})
+        services.comment(request.user, req, text=text, reply_to=request.data.get("reply_to") or None)
+        req.refresh_from_db()
+        return Response(request_dict(req, request.user), status=status.HTTP_201_CREATED)
 
 
 class CancelView(APIView):

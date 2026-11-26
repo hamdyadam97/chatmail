@@ -1423,6 +1423,25 @@ async function main() {
     ).then(() => true).catch(() => false);
     check('بعد إعادة الإرسال: مدير النظام يوقّع فيُعتمد الطلب ويُبلَّغ أحمد «اعتُمد طلبك»', adminFinal && approvedNotified,
       `signed=${adminFinal} notified=${approvedNotified}`);
+    // «رد» على ملاحظة المعتمد بعد الاعتماد: من شريط الملاحظة أعلى الصفحة، فيظهر الرد تحتها ويُبلَّغ صاحبها.
+    await ahmed.page.goto(followUrl);
+    const banner = ahmed.page.locator('[data-testid="note-banner"]');
+    const bannerShown = await banner.waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    const bannerNote = await banner.innerText().catch(() => '');
+    await banner.getByRole('link', { name: 'رد' }).click({ timeout: 5000 }).catch(() => undefined);
+    const replyBox = ahmed.page.locator('[data-testid="comment-box"] textarea').first();
+    await replyBox.fill('أرفقت عرض السعر في المراسلة').catch(() => undefined);
+    await ahmed.page.locator('[data-testid="comment-box"]').first().getByRole('button', { name: 'إرسال' }).click({ timeout: 5000 }).catch(() => undefined);
+    const replyShown = await ahmed.page.locator('[data-testid="event-replies"]', { hasText: 'أرفقت عرض السعر في المراسلة' })
+      .waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    const replyNotified = await runPython(
+      'from apps.approvals.models import ApprovalRequest as R; from apps.notifications.models import Notification as N; ' +
+        `r = R.objects.get(id=${JSON.stringify(followId)}); ` +
+        'assert N.objects.filter(user__username="admin.sys", ref_id=r.id, kind="approval_comment_reply").exists() or '
+        + 'N.objects.filter(ref_id=r.id, kind="approval_comment_reply").exists()',
+    ).then(() => true).catch(() => false);
+    check('رد على ملاحظة المعتمد: من شريط الملاحظة، يظهر تحتها ويُبلَّغ صاحبها', bannerShown && bannerNote.includes('أضف عرض السعر')
+      && replyShown && replyNotified, `banner=${bannerShown} shown=${replyShown} notified=${replyNotified}`);
     if (process.env.SHOTS) {
       await ahmed.page.goto(followUrl);
       await ahmed.page.locator('[data-testid="request-timeline"]').waitFor({ timeout: 10000 }).catch(() => undefined);

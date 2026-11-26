@@ -27,6 +27,8 @@ class Notification(models.Model):
         ("approval_reminder", "تذكير بتوقيع طلب"),
         ("approval_delivered", "أُرسل الخطاب المعتمد"),
         ("approval_delivery_failed", "تعذر إرسال الخطاب المعتمد"),
+        ("approval_comment", "تعليق على طلب"),
+        ("approval_comment_reply", "رد على ملاحظة في طلب"),
         ("device_alert", "تنبيه أجهزة"),
         ("announcement", "تعميم"),
         ("announcement_reminder", "تذكير بتعميم"),

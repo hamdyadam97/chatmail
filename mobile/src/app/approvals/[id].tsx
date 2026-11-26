@@ -4,18 +4,18 @@
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '@/components/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { StatusChip } from '@/components/approvals';
+import { NoteBanner, pendingNote, RequestLog } from '@/components/RequestLog';
 import { SignaturePad } from '@/components/SignaturePad';
 import { Avatar, Button, Empty, ErrorBox, Field, Header, Loading, T, success, tap } from '@/components/ui';
 import { errorText } from '@/lib/api';
 import {
   approvalsApi,
-  EVENT_LABELS,
   requestTitle,
   resubmitRequest,
   STEP_LABELS,
@@ -45,6 +45,9 @@ export default function ApprovalScreen() {
   const [req, setReq] = useState<ApprovalRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<Action | null>(null);
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [logY, setLogY] = useState(0);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   const load = useCallback(async () => {
     try {
@@ -70,11 +73,21 @@ export default function ApprovalScreen() {
   const early = !req.my_slot && req.my_early_step != null;
   const canDecide = !!req.my_slot || early;
   const mine = req.requested_by.id === user?.id;
+  const note = pendingNote(req, user?.id);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Header title="" back />
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: canDecide ? 140 : 40 }}>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: canDecide ? 140 : 40 }}>
+        {note && (
+          <NoteBanner
+            note={note}
+            onReply={() => {
+              setReplyTo(note.id);
+              scrollRef.current?.scrollTo({ y: logY, animated: true });
+            }}
+          />
+        )}
         <View style={{ gap: 6 }}>
           {!!req.workflow_name && <T style={{ color: colors.gold, fontWeight: '700' }}>{req.workflow_name}</T>}
           <T style={styles.title}>{requestTitle(req)}</T>
@@ -193,20 +206,9 @@ export default function ApprovalScreen() {
           ))}
         </View>
 
-        {req.events.length > 0 && (
-          <View style={styles.card}>
-            <T style={styles.section}>سجل الطلب</T>
-            {req.events.map((e, i) => (
-              <View key={i} style={{ gap: 2, paddingVertical: 6 }}>
-                <T style={{ fontSize: font.small }}>
-                  <Text style={{ fontWeight: '700' }}>{e.actor.full_name}</Text> {EVENT_LABELS[e.kind] ?? e.kind}
-                </T>
-                {!!e.note && <T style={styles.note}>«{e.note}»</T>}
-                <T style={styles.meta}>{fullDate(e.created_at)}</T>
-              </View>
-            ))}
-          </View>
-        )}
+        <View onLayout={(ev) => setLogY(ev.nativeEvent.layout.y)}>
+          <RequestLog req={req} onUpdated={setReq} replyTo={replyTo} setReplyTo={setReplyTo} />
+        </View>
 
         {mine && req.status === 'pending' && (
           <Button

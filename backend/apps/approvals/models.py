@@ -233,6 +233,8 @@ class ApprovalEvent(models.Model):
         ("reminded", "تذكير بالتوقيع"),
         # The only approver so far took their approval (and signature) back: the round restarts.
         ("withdrawn", "سحب الاعتماد"),
+        # A comment or a reply to a note (user decision 2026-11-26): the note is the text.
+        ("comment", "تعليق"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -246,6 +248,8 @@ class ApprovalEvent(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )
     note_enc = models.BinaryField(null=True, blank=True)
+    # A comment answering another timeline row (a decision's note, or a comment).
+    reply_to = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True, related_name="replies")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

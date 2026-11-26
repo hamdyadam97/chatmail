@@ -38,10 +38,13 @@ export type VerifyResult =
       superseded: boolean;
     };
 
-export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file' | 'skipped' | 'carried' | 'reminded' | 'withdrawn';
+export type EventKind = Decision | 'deferred' | 'resubmitted' | 'resubmitted_file' | 'skipped' | 'carried' | 'reminded' | 'withdrawn' | 'comment';
 
 /** سجل الطلب: القرارات والتأجيل وإعادة الإرسال، مع الملاحظة إن وُجدت. */
 export interface RequestEvent {
+  id: string;
+  /** تعليق يرد على ملاحظة في السجل (معرّفها). */
+  reply_to: string | null;
   kind: EventKind;
   actor: UserRef;
   on_behalf_of: UserRef | null;
@@ -175,6 +178,9 @@ export const approvalsApi = {
     steps: Array<{ type: 'all' | 'any'; approver_selectors: Array<{ role: string; scope: SelectorScope } | { user: string }> }>;
   }) => apiFetch<WorkflowTemplate>('/approvals/workflows/', { method: 'POST', body }),
   withdraw: (id: string) => apiFetch<ApprovalRequest>(`/approvals/${id}/withdraw/`, { method: 'POST', body: {} }),
+  /** تعليق على الطلب، أو رد على ملاحظة في سجله. */
+  comment: (id: string, text: string, replyTo?: string | null) =>
+    apiFetch<ApprovalRequest>(`/approvals/${id}/comment/`, { method: 'POST', body: { text, reply_to: replyTo ?? null } }),
   remind: (id: string) => apiFetch<ApprovalRequest & { reminded: number }>(`/approvals/${id}/remind/`, { method: 'POST' }),
   retireType: (id: string) => apiFetch<WorkflowTemplate>(`/approvals/workflows/${id}/`, { method: 'PATCH', body: { is_active: false } }),
   /** تعديل الاسم والخطوات: الطلبات المقدّمة تبقى بخطواتها، والجديدة تأخذ المعدَّلة. */
@@ -255,4 +261,5 @@ export const EVENT_LABELS: Record<EventKind, string> = {
   carried: 'اعتمد هذه الخطوة أيضًا (باعتماده السابق، بلا توقيع ثانٍ)',
   reminded: 'ذكّر بالتوقيع',
   withdrawn: 'سحب اعتماده — بدأ الطلب من جديد',
+  comment: 'علّق',
 };

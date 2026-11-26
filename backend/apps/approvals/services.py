@@ -389,6 +389,45 @@ def _record(req, kind, actor, step_order, *, on_behalf_of=None, note="") -> Appr
     )
 
 
+def comment(user, req, *, text: str, reply_to=None) -> ApprovalEvent:
+    """A comment on the request, or a reply to a note in its timeline — by
+    anyone who can read the request (requester, approvers). The text is sealed
+    like any note; the notification carries only a fixed title."""
+    text = clean_note(text)
+    if not text:
+        raise ValidationError({"text": "اكتب التعليق."})
+    if req.status == "cancelled":
+        raise Conflict("الطلب ملغى.")
+    parent = None
+    if reply_to:
+        parent = ApprovalEvent.objects.filter(id=reply_to, request=req).select_related("actor").first()
+        if parent is None:
+            raise ValidationError({"reply_to": "الملاحظة غير موجودة في هذا الطلب."})
+        if parent.reply_to_id:  # one level: a reply to a reply joins the same thread
+            parent = parent.reply_to
+    with transaction.atomic():
+        event = _record(req, "comment", user, req.current_step_order or 1, note=text)
+        if parent is not None:
+            event.reply_to = parent
+            event.save(update_fields=["reply_to"])
+        approvers = set(
+            ApprovalStepApprover.objects.filter(step__request=req).values_list("user_id", flat=True)
+        )
+        if parent is not None:
+            # The note's author, the requester, and whoever already replied there.
+            to = {parent.actor_id, req.requested_by_id, *parent.replies.values_list("actor_id", flat=True)}
+            kind = "approval_comment_reply"
+        else:
+            to = {req.requested_by_id, *approvers}
+            kind = "approval_comment"
+        to.discard(user.id)
+        if to:
+            notify(sorted(to, key=str), kind, ref_type="approval_request", ref_id=req.id, actor=user)
+    log(actor=user, action="approval_commented", target_type="approval_request", target_id=req.id,
+        metadata={"reply": parent is not None})
+    return event
+
+
 def event_note(event) -> str:
     from apps import vault
 

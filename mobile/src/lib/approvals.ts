@@ -37,12 +37,23 @@ export interface ApprovalRequest {
   signed_file: FileMeta | null;
   signature_count: number;
   page_count: number | null;
-  events: { kind: string; actor: UserRef; step_order: number; note: string; created_at: string }[];
+  events: ApprovalEvent[];
   can_resubmit: boolean;
   can_withdraw?: boolean;
   deliver_to?: UserRef[];
   deliver_cc?: UserRef[];
   delivered_correspondence?: { id: string; reference_number: string | null } | null;
+}
+
+export interface ApprovalEvent {
+  id: string;
+  /** تعليق يرد على ملاحظة في السجل. */
+  reply_to: string | null;
+  kind: string;
+  actor: UserRef;
+  step_order: number;
+  note: string;
+  created_at: string;
 }
 
 export interface RequestType {
@@ -83,6 +94,7 @@ export const EVENT_LABELS: Record<string, string> = {
   carried: 'اعتمد هذه الخطوة أيضًا (باعتماده السابق)',
   reminded: 'ذكّر بالتوقيع',
   withdrawn: 'سحب اعتماده — بدأ الطلب من جديد',
+  comment: 'علّق',
 };
 
 /** عنوان الطلب للعرض (بلا اسم النوع المكرر). */
@@ -98,6 +110,8 @@ export const approvalsApi = {
     api<ApprovalRequest>(`/approvals/${id}/decide/`, { method: 'POST', body }),
   defer: (id: string, note: string) => api<ApprovalRequest>(`/approvals/${id}/defer/`, { method: 'POST', body: { note } }),
   remind: (id: string) => api<ApprovalRequest & { reminded: number }>(`/approvals/${id}/remind/`, { method: 'POST' }),
+  comment: (id: string, text: string, replyTo: string | null) =>
+    api<ApprovalRequest>(`/approvals/${id}/comment/`, { method: 'POST', body: { text, reply_to: replyTo } }),
   withdraw: (id: string) => api<ApprovalRequest>(`/approvals/${id}/withdraw/`, { method: 'POST', body: {} }),
   cancel: (id: string) => api<ApprovalRequest>(`/approvals/${id}/cancel/`, { method: 'POST' }),
   signature: () => api<{ has_signature: boolean }>('/approvals/signature/'),

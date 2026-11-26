@@ -209,3 +209,44 @@ def test_the_only_signer_can_withdraw_and_sign_again(api_client, org):
     _ok(api_client.post(f"{API}{rid}/decide/", {"decision": "approved", "password": DEFAULT_PASSWORD, "page": 1},
                         format="json", **h["sr_exec"]))
     assert api_client.post(f"{API}{rid}/withdraw/", {}, format="json", **h["sr_bm"]).status_code == 409
+
+
+def test_reply_to_an_approvers_note_after_approval(api_client, board):
+    """«رد» on a note: the requester answers the approver's question even after
+    the final approval; the note's author is told (fixed title, no text)."""
+    b = board
+    req = _ok(request_approval(api_client, b["h_s"], b["corr"]["id"], [("any", [b["r1"]]), ("any", [b["r2"]])]))
+    _ok(decide(api_client, b["h_r1"], req))
+    done = _ok(api_client.post(f"{APPROVALS_URL}{req['id']}/decide/", {"decision": "approved", "note": "الاشتراك لمدة عام؟"},
+                               format="json", **b["h_r2"]))
+    assert done["status"] == "approved"
+    note = done["events"][-1]
+    assert note["note"] == "الاشتراك لمدة عام؟" and note["id"] and note["reply_to"] is None
+
+    before = set(Notification.objects.values_list("id", flat=True))
+    out = _ok(_act(api_client, b["h_s"], req, "comment", text="نعم لمدة عام", reply_to=note["id"]))
+    reply = out["events"][-1]
+    assert (reply["kind"], reply["note"], reply["reply_to"]) == ("comment", "نعم لمدة عام", note["id"])
+    new = Notification.objects.exclude(id__in=before)
+    assert {(n.user_id, n.kind) for n in new} == {(b["r2"].id, "approval_comment_reply")}
+    assert not Notification.objects.filter(title_generic__contains="عام").exists()
+    assert "عام".encode() not in bytes(ApprovalEvent.objects.get(kind="comment").note_enc)
+    assert not AuditLog.objects.filter(action="approval_commented", metadata__icontains="عام").exists()
+
+    # r2 answers back: a reply to the reply joins the same thread and reaches the requester
+    before = set(Notification.objects.values_list("id", flat=True))
+    back = _ok(_act(api_client, b["h_r2"], req, "comment", text="تمام", reply_to=reply["id"]))
+    assert back["events"][-1]["reply_to"] == note["id"]
+    assert {n.user_id for n in Notification.objects.exclude(id__in=before)} == {b["s"].id}
+
+    # a general comment reaches the requester and every approver except its author
+    before = set(Notification.objects.values_list("id", flat=True))
+    _ok(_act(api_client, b["h_r1"], req, "comment", text="ملاحظة عامة"))
+    assert {(n.user_id, n.kind) for n in Notification.objects.exclude(id__in=before)} == {
+        (b["s"].id, "approval_comment"), (b["r2"].id, "approval_comment")}
+
+    # gates: an outsider cannot, empty text and a foreign note are refused
+    assert _act(api_client, b["h_o"], req, "comment", text="مرحبا").status_code == 403
+    assert _act(api_client, b["h_s"], req, "comment", text="  ").status_code == 400
+    assert _act(api_client, b["h_s"], req, "comment", text="x",
+                reply_to="00000000-0000-0000-0000-000000000000").status_code == 400
