@@ -97,7 +97,7 @@ export function AppShell() {
     <div className="flex h-[100dvh] overflow-hidden bg-gray-50">
       {/* شريط الأقسام — يمين الشاشة في RTL (الشاشات الكبيرة) */}
       <nav className="hidden w-[76px] shrink-0 flex-col items-center gap-1 bg-primary-700 px-1.5 py-3 md:flex" aria-label="الأقسام">
-        <Link to="/mail/inbox" className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-white" aria-label="الرئيسية">
+        <Link to="/home" className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-white" aria-label="الرئيسية">
           <Lock className="h-5 w-5" />
         </Link>
         {RAIL_ITEMS.filter((item) => !item.adminOnly || user?.show_admin).map((item) => (

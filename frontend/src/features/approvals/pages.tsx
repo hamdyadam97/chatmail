@@ -299,7 +299,8 @@ function NewRequest({ onDone, onCancel }: { onDone: (id: string) => void; onCanc
 export function Approvals() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('pending_mine');
-  const [creating, setCreating] = useState(false);
+  // «طلب جديد» من الرئيسية: /approvals?new=1
+  const [creating, setCreating] = useState(() => new URLSearchParams(window.location.search).get('new') === '1');
   const { data: types } = useQuery({ queryKey: ['approvals', 'request-types'], queryFn: approvalsApi.requestTypes });
   const tabs: Array<[Tab, string]> = [
     ['pending_mine', 'بانتظار قراري'],

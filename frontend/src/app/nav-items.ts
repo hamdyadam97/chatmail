@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu, UserRound, FileSignature } from 'lucide-react';
+import { Home, BarChart3, Building2, CheckCheck, Contact, FolderTree, KeyRound, Lock, Mail, Megaphone, MessagesSquare, Network, ScrollText, Search, Settings, ShieldCheck, Bell, Archive, Menu, UserRound, FileSignature } from 'lucide-react';
 
 export interface RailItem {
   to: string;
@@ -19,6 +19,7 @@ const ADMIN_MATCH = [...ADMIN_PATHS, '/archive'];
 
 /** شريط الأقسام الرئيسية (أسلوب Teams/Slack): أيقونة + اسم قصير. */
 export const RAIL_ITEMS: RailItem[] = [
+  { to: '/home', label: 'الرئيسية', icon: Home, match: ['/home'] },
   { to: '/mail/inbox', label: 'البريد', icon: Mail, match: ['/mail', '/correspondence', '/compose', '/inbox', '/sent', '/drafts'] },
   { to: '/chat', label: 'المحادثات', icon: MessagesSquare, match: ['/chat', '/direct-messages', '/group-chats', '/channels'] },
   { to: '/announcements', label: 'التعاميم', icon: Megaphone, match: ['/announcements'] },
@@ -38,17 +39,23 @@ export const RAIL_BOTTOM: RailItem[] = [
 ];
 
 /** شريط الموبايل السفلي: أهم أربعة أقسام + «المزيد» (البحث والإدارة والإعدادات). */
+const MOBILE_MAIN = ['/home', '/mail/inbox', '/approvals', '/chat'];
 export const MOBILE_TABS: RailItem[] = [
-  ...RAIL_ITEMS.slice(0, 4),
+  ...MOBILE_MAIN.map((to) => RAIL_ITEMS.find((i) => i.to === to)!),
   {
     to: '/more',
     label: 'المزيد',
     icon: Menu,
-    match: ['/more', ...RAIL_ITEMS.slice(4).flatMap((i) => i.match), ...RAIL_BOTTOM.flatMap((i) => i.match)],
+    match: [
+      '/more',
+      ...RAIL_ITEMS.filter((i) => !MOBILE_MAIN.includes(i.to)).flatMap((i) => i.match),
+      ...RAIL_BOTTOM.flatMap((i) => i.match),
+    ],
   },
 ];
 
 export const MORE_ITEMS: HubItem[] = [
+  { to: '/announcements', label: 'التعاميم', description: 'الواردة وما ينتظر إقرارك', icon: Megaphone },
   { to: '/search', label: 'البحث', description: 'في بريدك ومحادثاتك وتعاميمك', icon: Search },
   { to: '/admin', label: 'الإدارة', description: 'الموظفون والهيكل والتقارير والأرشيف', icon: Building2, adminOnly: true },
   { to: '/settings', label: 'الإعدادات', description: 'الأمان والإشعارات', icon: Settings },

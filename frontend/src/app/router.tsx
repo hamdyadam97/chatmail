@@ -20,6 +20,7 @@ import { AdminHub, MoreHub, SettingsHub } from '../features/hub/pages';
 import { ProfilePage } from '../features/profile/ProfilePage';
 import { RequestTypesPage } from '../features/approvals/RequestTypesPage';
 import { VerifySignaturePage } from '../features/approvals/VerifySignaturePage';
+import { HomePage } from '../features/home/HomePage';
 
 /** تحويل يحافظ على ?query (روابط المسودات/الإحالة/البحث القديمة). */
 function Redirect({ to }: { to: string }) {
@@ -37,7 +38,8 @@ export const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <Navigate to="/mail/inbox" replace /> },
+      { index: true, element: <Navigate to="/home" replace /> },
+      { path: 'home', element: <HomePage /> },
 
       // البريد (Outlook): ثلاث لوحات
       { path: 'mail', element: <Navigate to="/mail/inbox" replace /> },
