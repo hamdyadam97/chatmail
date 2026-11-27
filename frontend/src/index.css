@@ -15,3 +15,23 @@
     display: none;
   }
 }
+
+/* الرئيسية — «لوحة اليوم الملونة» */
+@keyframes home-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes home-pulse { 0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, .5); } 70% { box-shadow: 0 0 0 14px rgba(225, 29, 72, 0); } 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); } }
+@keyframes home-floaty { 0%, 100% { transform: translateY(0) rotate(-6deg); } 50% { transform: translateY(-10px) rotate(-3deg); } }
+@keyframes home-floaty2 { 0%, 100% { transform: translateY(0) rotate(8deg); } 50% { transform: translateY(-8px) rotate(12deg); } }
+@keyframes home-fill { from { transform: scaleX(0); } }
+@keyframes home-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+.home-rise { animation: home-rise .6s cubic-bezier(.2, .8, .2, 1) both; }
+.home-pulse { animation: home-rise .6s cubic-bezier(.2, .8, .2, 1) both, home-pulse 1.8s ease-out .6s infinite; }
+.home-floaty { animation: home-floaty 4.5s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.home-floaty2 { animation: home-floaty2 5.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.home-fill { animation: home-fill 1.2s cubic-bezier(.2, .8, .2, 1) both; transform-origin: right; }
+.home-blink { animation: home-blink 1.4s ease-in-out infinite; }
+.home-lift { transition: transform .2s ease, box-shadow .2s ease; }
+.home-lift:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(19, 41, 75, .12); }
+@media (prefers-reduced-motion: reduce) {
+  .home-rise, .home-pulse, .home-floaty, .home-floaty2, .home-fill, .home-blink { animation: none; }
+  .home-lift:hover { transform: none; }
+}

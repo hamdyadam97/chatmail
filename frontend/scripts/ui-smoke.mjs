@@ -561,7 +561,7 @@ async function main() {
     const homeItem = mohamed.page.locator('[data-testid="home-today"] a', { hasText: subject }).first();
     const onHome = await homeItem.waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
     const pendingCard = await mohamed.page.locator('[data-testid="home-pending"]').isVisible().catch(() => false);
-    if (process.env.SHOTS) console.log(`    لقطة الرئيسية: ${await shot(mohamed, 'home')}`);
+    if (process.env.SHOTS) { await mohamed.page.waitForTimeout(2000); console.log(`    لقطة الرئيسية: ${await shot(mohamed, 'home')}`); }
     await homeItem.click({ timeout: 5000 }).catch(() => undefined);
     const homeOpens = await mohamed.page.waitForURL(/\/mail\/inbox\/[0-9a-f-]{36}$/, { timeout: 15000 }).then(() => true).catch(() => false);
     check('الرئيسية: تفتح أولًا، والرسالة الجديدة في «اليوم» وتفتح المراسلة', onHome && pendingCard && homeOpens);
