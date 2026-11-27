@@ -132,7 +132,9 @@ def filtered_managed_users(request):
     if announcement is not None:
         from apps.announcements.models import AnnouncementRecipient
 
-        rows = AnnouncementRecipient.objects.filter(announcement=announcement, observer=False)
+        from apps.announcements.services import COUNTED
+
+        rows = AnnouncementRecipient.objects.filter(COUNTED, announcement=announcement)
         ack = request.query_params.get("ack", "")
         if ack == "yes":
             rows = rows.filter(acknowledged_at__isnull=False)

@@ -42,7 +42,7 @@ def announcement_dict(a: Announcement, viewer, row=None) -> dict:
         "created_at": a.created_at.isoformat(),
         "published_at": a.published_at.isoformat() if a.published_at else None,
         "withdrawn_at": a.withdrawn_at.isoformat() if a.withdrawn_at else None,
-        "recipient_count": a.recipients.filter(observer=False).count(),
+        "recipient_count": services.counted_recipients(a).count(),
         "is_publisher": a.publisher_id == viewer.id,
         "can_track": services.can_track(viewer, a),
         "content_hash": base64.b64encode(bytes(a.content_hash)).decode() if a.content_hash else None,

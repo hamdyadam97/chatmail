@@ -118,6 +118,18 @@ def resolve_audience(*, publisher, target_type, unit, user_ids) -> list[str]:
 
 EXECUTIVE_ROLE = "executive"
 
+# Who counts in compliance (totals, percentages, «متأخرون», reminders): the
+# declared audience minus the executive's observer copy, deleted («موظف
+# محذوف») and archived (deactivated) accounts — they can never acknowledge,
+# so counting them only drags the percentages down (user decision 2026-11-27).
+COUNTED = Q(observer=False, user__is_active=True, user__purged_at__isnull=True)
+COUNTED_REL = Q(recipients__observer=False, recipients__user__is_active=True,
+                recipients__user__purged_at__isnull=True)
+
+
+def counted_recipients(announcement):
+    return announcement.recipients.filter(COUNTED)
+
 
 def executive_observer_ids(exclude=()) -> list:
     """Active holders of the central executive role, minus `exclude`."""
@@ -258,11 +270,9 @@ def trackable_announcements(user) -> list[Announcement]:
         .select_related("publisher", "publisher_membership", "target_institute", "target_branch",
                         "target_department")
         .annotate(
-            n_recipients=Count("recipients", filter=Q(recipients__observer=False), distinct=True),
-            n_read=Count("recipients", filter=Q(recipients__observer=False, recipients__read_at__isnull=False),
-                         distinct=True),
-            n_acked=Count("recipients", filter=Q(recipients__observer=False,
-                                                 recipients__acknowledged_at__isnull=False), distinct=True),
+            n_recipients=Count("recipients", filter=COUNTED_REL, distinct=True),
+            n_read=Count("recipients", filter=COUNTED_REL & Q(recipients__read_at__isnull=False), distinct=True),
+            n_acked=Count("recipients", filter=COUNTED_REL & Q(recipients__acknowledged_at__isnull=False), distinct=True),
         )
         .order_by("-published_at")[:TRACKING_LIMIT]
     )
@@ -525,7 +535,7 @@ def compliance(announcement) -> dict:
     from apps.org.labels import primary_units
 
     now = timezone.now()
-    rows = list(announcement.recipients.filter(observer=False).select_related("user").order_by("user__full_name"))
+    rows = list(counted_recipients(announcement).select_related("user").order_by("user__full_name"))
     units = primary_units(r.user_id for r in rows)
     overdue = bool(announcement.requires_ack and announcement.ack_due_at and announcement.ack_due_at < now)
     return {
@@ -555,7 +565,7 @@ def compliance(announcement) -> dict:
 
 
 def _pending_ack_rows(announcement):
-    return announcement.recipients.filter(acknowledged_at__isnull=True, observer=False)
+    return counted_recipients(announcement).filter(acknowledged_at__isnull=True)
 
 
 def remind(user, announcement) -> int:

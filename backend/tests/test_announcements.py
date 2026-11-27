@@ -363,3 +363,21 @@ def test_central_admin_adds_late_joiners_to_an_all_announcement(api_client, user
     api_client.post(f"{ANN_URL}{ann['id']}/withdraw/", **auth(api_client, "a_exe2"))
     make_employee(user_factory, "a_newer", org["branch_a"])
     assert api_client.get(url, **h_admin).json()["can_add"] is False
+
+
+def test_deleted_and_archived_recipients_do_not_count(api_client, org):
+    """«موظف محذوف» and archived employees stay on the announcement but leave
+    the totals, percentages and reminders (they can never acknowledge)."""
+    from django.utils import timezone as tz
+
+    ann = published(api_client, org)
+    ack(api_client, org["h_e1"], ann)
+    org["e2"].is_active = False  # archived
+    org["e2"].save(update_fields=["is_active"])
+    org["e3"].purged_at = tz.now()  # deleted
+    org["e3"].save(update_fields=["purged_at"])
+    rep = api_client.get(f"{ANN_URL}{ann['id']}/compliance/", **org["h_pub"]).json()
+    assert (rep["total"], rep["acknowledged"]) == (1, 1)
+    assert {r["user"]["username"] for r in rep["rows"]} == {"a_e1"}
+    assert api_client.get(f"{ANN_URL}{ann['id']}/", **org["h_pub"]).json()["recipient_count"] == 1
+    assert api_client.post(f"{ANN_URL}{ann['id']}/remind/", **org["h_pub"]).json() == {"reminded": 0}
