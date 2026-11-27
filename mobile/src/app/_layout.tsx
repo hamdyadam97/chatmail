@@ -19,6 +19,33 @@ import { watchForUpdates } from '@/lib/updates';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
+/**
+ * رابط الإشعار (`data.url` من الخادم). على أندرويد قد يصل البيان في غير
+ * `content.data` حسب حالة التطبيق عند الوصول: نصًا JSON في `dataString` أو
+ * `body`، أو داخل رسالة Firebase الخام.
+ */
+function notificationUrl(response: Notifications.NotificationResponse): string | undefined {
+  const pick = (v: unknown): string | undefined => {
+    if (!v) return undefined;
+    if (typeof v === 'string') {
+      try {
+        return pick(JSON.parse(v));
+      } catch {
+        return v.startsWith('/') ? v : undefined;
+      }
+    }
+    if (typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      if (typeof o.url === 'string') return o.url;
+      return pick(o.body) ?? pick(o.dataString) ?? pick(o.data);
+    }
+    return undefined;
+  };
+  const req = response.notification.request;
+  const trigger = req.trigger as { remoteMessage?: { data?: unknown } } | null;
+  return pick(req.content.data) ?? pick((req.content as { dataString?: string }).dataString) ?? pick(trigger?.remoteMessage?.data);
+}
+
 /** إشعارات فُتحت فعلًا — حتى لا يعود آخر إشعار يفتح نفسه عند كل تجديد للجلسة. */
 const handledNotifications = new Set<string>();
 
@@ -41,9 +68,7 @@ function RootStack() {
       const id = response.notification.request.identifier;
       if (handledNotifications.has(id)) return;
       handledNotifications.add(id);
-      const url = (response.notification.request.content.data as { url?: string } | undefined)?.url;
-      const route = routeForUrl(url);
-      if (route) setPending(route);
+      setPending(routeForUrl(notificationUrl(response)) ?? '/notifications');
     };
     take(Notifications.getLastNotificationResponse());
     const sub = Notifications.addNotificationResponseReceivedListener(take);
@@ -52,16 +77,22 @@ function RootStack() {
 
   // …ونفتحها حين تجهز الشاشات: التنقل قبل تركيب المتصفح يفشل (فتح التطبيق من إشعار وهو مُغلق).
   useEffect(() => {
-    if (!pending || !navReady || !signedIn || mustChange) return;
-    const t = setTimeout(() => {
-      setPending(null);
+    if (!pending || !signedIn || mustChange) return;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const attempt = () => {
+      tries += 1;
       try {
         router.push(pending as never);
+        setPending(null);
       } catch {
-        // لا شيء — يبقى المستخدم في الرئيسية.
+        // المتصفح لم يُركَّب بعد: نعيد المحاولة حتى ~5 ثوانٍ.
+        if (tries < 20) timer = setTimeout(attempt, 250);
+        else setPending(null);
       }
-    }, 150);
-    return () => clearTimeout(t);
+    };
+    timer = setTimeout(attempt, navReady ? 100 : 400);
+    return () => clearTimeout(timer);
   }, [pending, navReady, signedIn, mustChange]);
 
   if (status === 'loading') return null;
