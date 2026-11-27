@@ -48,6 +48,7 @@ export interface MailSummary {
   read_at: string | null;
   archived: boolean;
   is_important: boolean;
+  due_date?: string | null;
   participants: Participant[];
   thread_count?: number;
   thread_last_at?: string | null;

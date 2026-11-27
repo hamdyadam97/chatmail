@@ -1,38 +1,56 @@
 /**
- * الرئيسية — «مكتب اليوم»: ما ينتظر قرارك في بطاقة واحدة واضحة، ثم
- * اختصارات العمل اليومي، ثم «اليوم»: الطلبات والرسائل غير المقروءة
- * والتعاميم التي تنتظر إقرارك في قائمة واحدة مرتبة بالأحدث.
+ * الرئيسية — «لوحة اليوم الملونة» (قرار المستخدم 2026-11-27، نفس الموقع):
+ * أربع بطاقات ملونة (متأخر، تنبيهات، رسائل مهمة، تم اليوم)، وبطاقة كحلية
+ * «طلبات بانتظار توقيعك»، و«اليوم» بفلاتر ملونة، و«مهلة الرد».
+ * في المظهر الليلي تبقى ألوان البطاقات وتصير الأرضية والقوائم داكنة.
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
-import { Text } from '@/components/Text';
+import Svg, { Circle, G, Path, Rect } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Text } from '@/components/Text';
 import { IconName, T, success, tap } from '@/components/ui';
 import { api } from '@/lib/api';
 import { approvalsApi, requestTitle, type ApprovalRequest } from '@/lib/approvals';
 import { useAuth } from '@/lib/auth';
 import { announcementsApi, type Announcement } from '@/lib/chat';
-import { initials, shortDate } from '@/lib/format';
-import { colors, forwardIcon, row } from '@/lib/theme';
+import { colors, isDark, row } from '@/lib/theme';
 import type { MailSummary, Page } from '@/lib/types';
 
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
-const LATE_MS = 48 * 3600 * 1000;
+const DAY_MS = 86400000;
+const LATE_MS = 2 * DAY_MS;
+const AVATARS = ['#13294B', '#0E7490', '#B45309', '#BE185D', '#4338CA', '#047857', '#9333EA'];
+const NAVY = '#13294B';
+const GOLD = '#D4A94E';
+const PAGE_BG = isDark ? colors.bg : '#F5F3FF';
+const SURFACE = isDark ? colors.card : '#FFFFFF';
+const INK = isDark ? colors.text : '#16202E';
+const MUTED = isDark ? colors.textSoft : '#5B5F73';
 
-const TONES = {
-  request: { bg: colors.goldSoft, fg: colors.goldText, icon: 'create-outline' as IconName },
-  mail: { bg: colors.navySoft, fg: colors.navy, icon: 'mail-outline' as IconName },
-  announcement: { bg: colors.successSoft, fg: colors.successText, icon: 'megaphone-outline' as IconName },
+type Kind = 'late' | 'alert' | 'important' | 'done';
+const KINDS: Record<Kind, { solid: string; soft: string; ink: string; wash: string; label: string }> = {
+  late: { solid: '#E11D48', soft: '#FFE4E6', ink: '#9F1239', wash: '#FFF1F2', label: 'متأخر' },
+  alert: { solid: '#B45309', soft: '#FEF3C7', ink: '#92400E', wash: '#FFFBEB', label: 'تنبيهات' },
+  important: { solid: '#7C3AED', soft: '#EDE9FE', ink: '#5B21B6', wash: '#F5F3FF', label: 'مهم' },
+  done: { solid: '#059669', soft: '#D1FAE5', ink: '#065F46', wash: '#ECFDF5', label: 'تم' },
 };
 
-type TodayItem =
-  | { kind: 'request'; id: string; at: string; title: string; sub: string; late: boolean }
-  | { kind: 'mail'; id: string; at: string; title: string; sub: string }
-  | { kind: 'announcement'; id: string; at: string; title: string; sub: string; ack: boolean };
+interface Item {
+  key: string;
+  kind: Kind;
+  at: string;
+  title: string;
+  sub: string;
+  who: string;
+  tag: string;
+  go: () => void;
+  ackId?: string;
+}
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -41,37 +59,62 @@ function greeting(): string {
   return 'مساء الخير';
 }
 
-function today(): string {
-  const d = new Date();
-  return `${DAYS[d.getDay()]}، ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = (w: string) => (w.startsWith('ال') && w.length > 3 ? w[2] : w[0]);
+  return parts.length > 1 ? `${first(parts[0])}${first(parts[1])}` : (parts[0] ?? '؟').slice(0, 2);
 }
 
-function firstName(full?: string): string {
-  return (full ?? '').trim().split(/\s+/)[0] ?? '';
+function avatarColor(name: string): string {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATARS[h % AVATARS.length];
+}
+
+function startOfDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+function ago(iso: string): string {
+  const d = new Date(iso);
+  const days = Math.round((startOfDay(new Date()) - startOfDay(d)) / DAY_MS);
+  if (days <= 0) {
+    const h = d.getHours() % 12 || 12;
+    return `${h}:${String(d.getMinutes()).padStart(2, '0')} ${d.getHours() < 12 ? 'ص' : 'م'}`;
+  }
+  if (days === 1) return 'أمس';
+  if (days === 2) return 'منذ يومين';
+  if (days < 11) return `منذ ${days} أيام`;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+function daysLeft(iso: string): number {
+  return Math.round((startOfDay(new Date(iso)) - startOfDay(new Date())) / DAY_MS);
 }
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [pending, setPending] = useState<ApprovalRequest[] | null>(null);
-  const [mail, setMail] = useState<MailSummary[]>([]);
+  const [received, setReceived] = useState<ApprovalRequest[]>([]);
+  const [inbox, setInbox] = useState<MailSummary[]>([]);
+  const [important, setImportant] = useState<Page<MailSummary> | null>(null);
+  const [replies, setReplies] = useState<MailSummary[]>([]);
   const [anns, setAnns] = useState<Announcement[]>([]);
   const [notes, setNotes] = useState(0);
-  const [canPublish, setCanPublish] = useState(false);
+  const [filter, setFilter] = useState<Kind | 'all'>('all');
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    const mail = (folder: string) => api<Page<MailSummary>>(`/correspondences/?folder=${folder}&page=1`);
     await Promise.all([
       approvalsApi.list('pending_mine').then(setPending).catch(() => setPending((p) => p ?? [])),
-      api<Page<MailSummary>>('/correspondences/?folder=inbox&page=1')
-        .then((p) => setMail(p.results.filter((m) => !m.read_at)))
-        .catch(() => undefined),
+      approvalsApi.list('received').then(setReceived).catch(() => undefined),
+      mail('inbox').then((p) => setInbox(p.results)).catch(() => undefined),
+      mail('important').then(setImportant).catch(() => undefined),
+      mail('pending_replies').then((p) => setReplies(p.results)).catch(() => undefined),
       announcementsApi.received(true).then((p) => setAnns(p.results)).catch(() => undefined),
       api<{ unread: number }>('/notifications/unread-count/').then((c) => setNotes(c.unread)).catch(() => undefined),
-      announcementsApi
-        .targets()
-        .then((t) => setCanPublish(t.all || t.institutes.length > 0 || t.branches.length > 0))
-        .catch(() => undefined),
     ]);
   }, []);
 
@@ -87,50 +130,91 @@ export default function HomeScreen() {
     setRefreshing(false);
   };
 
-  // الأقدم أولًا: «ابدأ» يفتح ما انتظر أطول.
-  const waiting = (pending ?? []).filter((r) => r.status === 'pending').sort((a, b) => a.created_at.localeCompare(b.created_at));
   const now = Date.now();
-  const late = waiting.filter((r) => now - new Date(r.created_at).getTime() > LATE_MS).length;
-  const byType = new Map<string, number>();
-  for (const r of waiting) {
-    const k = r.workflow_name || 'مراسلة';
-    byType.set(k, (byType.get(k) ?? 0) + 1);
-  }
+  const waiting = (pending ?? []).filter((r) => r.status === 'pending').sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const lateRequests = waiting.filter((r) => now - new Date(r.created_at).getTime() > LATE_MS);
+  const replyRows = replies.filter((m) => m.due_date);
+  const overdueReplies = replyRows.filter((m) => daysLeft(m.due_date!) < 0);
+  const today = startOfDay(new Date());
+  const doneToday = received.filter((r) =>
+    r.steps.some((s) => s.approvers.some((a) => a.user.id === user?.id && a.decision && new Date(a.decision.decided_at).getTime() >= today)),
+  );
+  const importantRows = important?.results ?? [];
 
-  const items: TodayItem[] = [
-    ...waiting.map<TodayItem>((r) => ({
-      kind: 'request',
-      id: r.id,
-      at: r.created_at,
-      title: requestTitle(r),
-      sub: `${r.workflow_name || 'طلب اعتماد'} · من ${r.requested_by.full_name}`,
-      late: now - new Date(r.created_at).getTime() > LATE_MS,
+  const items = useMemo<Item[]>(() => {
+    const out: Item[] = [];
+    const seen = new Set<string>();
+    const push = (it: Item) => {
+      if (!seen.has(it.key)) {
+        seen.add(it.key);
+        out.push(it);
+      }
+    };
+    for (const r of waiting) {
+      const late = now - new Date(r.created_at).getTime() > LATE_MS;
+      push({
+        key: `r-${r.id}`, kind: late ? 'late' : 'alert', at: r.created_at, title: requestTitle(r),
+        sub: `${r.workflow_name || 'طلب اعتماد'} · من ${r.requested_by.full_name}`, who: r.requested_by.full_name,
+        tag: late ? 'متأخر' : 'توقيعك', go: () => router.push(`/approvals/${r.id}`),
+      });
+    }
+    for (const m of overdueReplies) {
+      push({
+        key: `m-${m.id}`, kind: 'late', at: m.sent_at || m.created_at, title: m.subject || '(بلا عنوان)',
+        sub: 'مراسلة · فات موعد الرد', who: m.sender.full_name, tag: 'متأخر', go: () => router.push(`/mail/${m.id}`),
+      });
+    }
+    for (const a of anns) {
+      push({
+        key: `a-${a.id}`, kind: 'alert', at: a.published_at || '', title: a.content?.title || 'تعميم',
+        sub: a.ack_due_at ? `تعميم · الإقرار قبل ${DAYS[new Date(a.ack_due_at).getDay()]}` : `تعميم · من ${a.publisher.full_name}`,
+        who: a.publisher.full_name, tag: 'تنبيه', go: () => router.push(`/announcements/${a.id}`),
+        ackId: a.requires_ack && !a.mine?.observer ? a.id : undefined,
+      });
+    }
+    for (const m of importantRows.slice(0, 6)) {
+      push({
+        key: `m-${m.id}`, kind: 'important', at: m.sent_at || m.created_at, title: m.subject || '(بلا عنوان)',
+        sub: `مراسلة · من ${m.sender.full_name}`, who: m.sender.full_name, tag: 'مهمة', go: () => router.push(`/mail/${m.id}`),
+      });
+    }
+    for (const m of inbox.filter((x) => !x.read_at).slice(0, 6)) {
+      push({
+        key: `m-${m.id}`, kind: 'alert', at: m.sent_at || m.created_at, title: m.subject || '(بلا عنوان)',
+        sub: `مراسلة · من ${m.sender.full_name}`, who: m.sender.full_name, tag: 'جديدة', go: () => router.push(`/mail/${m.id}`),
+      });
+    }
+    for (const r of doneToday) {
+      push({
+        key: `d-${r.id}`, kind: 'done', at: r.decided_at || r.created_at, title: requestTitle(r),
+        sub: `${r.workflow_name || 'طلب اعتماد'} · ${r.signable ? 'تم التوقيع' : 'تم القرار'}`, who: r.requested_by.full_name,
+        tag: 'تم', go: () => router.push(`/approvals/${r.id}`),
+      });
+    }
+    const order: Record<Kind, number> = { late: 0, alert: 1, important: 2, done: 3 };
+    return out.sort((a, b) => order[a.kind] - order[b.kind] || b.at.localeCompare(a.at));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, received, inbox, important, replies, anns]);
+
+  const shown = filter === 'all' ? items : items.filter((i) => i.kind === filter);
+  const count = (k: Kind) => items.filter((i) => i.kind === k).length;
+  const lateCount = lateRequests.length + overdueReplies.length;
+  const firstLate = lateRequests[0];
+  const nextAck = anns.find((a) => a.ack_due_at);
+  const senders = [...new Set(importantRows.map((m) => m.sender.full_name.split(/\s+/)[0]))].slice(0, 2);
+
+  const deadlines = [
+    ...replyRows.map((m) => ({ key: `m-${m.id}`, title: m.subject || '(بلا عنوان)', left: daysLeft(m.due_date!), go: () => router.push(`/mail/${m.id}`) })),
+    ...anns.filter((a) => a.ack_due_at).map((a) => ({
+      key: `a-${a.id}`, title: `إقرار ${a.content?.title || 'تعميم'}`, left: daysLeft(a.ack_due_at!), go: () => router.push(`/announcements/${a.id}`),
     })),
-    ...mail.map<TodayItem>((m) => ({
-      kind: 'mail',
-      id: m.id,
-      at: m.sent_at || m.created_at,
-      title: m.subject || '(بلا عنوان)',
-      sub: `مراسلة · من ${m.sender.full_name}`,
-    })),
-    ...anns.map<TodayItem>((a) => ({
-      kind: 'announcement',
-      id: a.id,
-      at: a.published_at || '',
-      title: a.content?.title || 'تعميم',
-      sub: a.ack_due_at ? `تعميم · الإقرار قبل ${shortDate(a.ack_due_at)}` : `تعميم · من ${a.publisher.full_name}`,
-      ack: a.requires_ack,
+    ...lateRequests.map((r) => ({
+      key: `r-${r.id}`, title: requestTitle(r), left: -Math.max(0, Math.floor((now - new Date(r.created_at).getTime()) / DAY_MS) - 2),
+      go: () => router.push(`/approvals/${r.id}`),
     })),
   ]
-    .sort((a, b) => b.at.localeCompare(a.at))
-    .slice(0, 8);
-
-  const open = (it: TodayItem) => {
-    tap();
-    if (it.kind === 'request') router.push(`/approvals/${it.id}`);
-    else if (it.kind === 'mail') router.push(`/mail/${it.id}`);
-    else router.push(`/announcements/${it.id}`);
-  };
+    .sort((a, b) => a.left - b.left)
+    .slice(0, 5);
 
   const acknowledge = async (id: string) => {
     tap();
@@ -143,21 +227,24 @@ export default function HomeScreen() {
     }
   };
 
+  const d = new Date();
+  const name = (user?.full_name ?? '').trim();
+  const firstName = name.split(/\s+/)[0] || user?.username;
+
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: HOME_BG }}
-      contentContainerStyle={{ paddingTop: insets.top + 14, paddingHorizontal: 18, paddingBottom: 32, gap: 20 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} tintColor={colors.navy} />}
+      style={{ flex: 1, backgroundColor: PAGE_BG }}
+      contentContainerStyle={{ paddingTop: insets.top + 14, paddingHorizontal: 16, paddingBottom: 32, gap: 18 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} tintColor={NAVY} />}
     >
       {/* التحية */}
-      <View style={[styles.header, { flexDirection: row }]}>
-        <Pressable onPress={() => router.push('/account')} style={styles.avatar} accessibilityLabel="حسابي">
-          <Text style={styles.avatarText}>{initials(user?.full_name)}</Text>
-        </Pressable>
-        <View style={{ flex: 1, gap: 1 }}>
-          <T style={styles.date}>{today()}</T>
-          <T style={styles.hello} numberOfLines={1}>
-            {greeting()}، {firstName(user?.full_name) || user?.username}
+      <View style={{ flexDirection: row, alignItems: 'center', gap: 12 }}>
+        <View style={{ flex: 1 }}>
+          <T style={{ fontSize: 13, color: MUTED }}>
+            {DAYS[d.getDay()]}، {d.getDate()} {MONTHS[d.getMonth()]}
+          </T>
+          <T style={{ fontSize: 22, fontWeight: '700', color: INK }} numberOfLines={1}>
+            {greeting()}، {firstName}
           </T>
         </View>
         <Pressable
@@ -168,119 +255,147 @@ export default function HomeScreen() {
           style={styles.bell}
           accessibilityLabel={notes ? `الإشعارات، ${notes} جديد` : 'الإشعارات'}
         >
-          <Ionicons name="notifications-outline" size={22} color={colors.navy} />
-          {notes > 0 && <View style={styles.bellDot} />}
+          <Ionicons name="notifications-outline" size={22} color="#B45309" />
+          {notes > 0 && (
+            <View style={styles.bellBadge}>
+              <Text style={{ color: '#fff', fontSize: 10.5, fontWeight: '700' }}>{notes > 99 ? '99+' : notes}</Text>
+            </View>
+          )}
+        </Pressable>
+        <Pressable onPress={() => router.push('/account')} accessibilityLabel="حسابي"
+          style={[styles.avatar, { backgroundColor: avatarColor(name || 'x') }]}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>{initialsOf(name || user?.username || '؟')}</Text>
         </Pressable>
       </View>
 
-      {/* بانتظار قرارك */}
-      {pending === null ? (
-        <View style={[styles.hero, { minHeight: 186 }]} />
-      ) : waiting.length > 0 ? (
-        <View style={styles.hero}>
-          <View style={styles.heroRing} />
-          <View style={{ flexDirection: row, justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-            <View style={{ gap: 2 }}>
-              <T style={styles.heroLabel}>بانتظار قرارك</T>
-              <View style={{ flexDirection: row, alignItems: 'baseline', gap: 8 }}>
-                <Text style={styles.heroCount}>{waiting.length}</Text>
-                <Text style={styles.heroUnit}>{waiting.length === 1 ? 'طلب' : waiting.length === 2 ? 'طلبان' : waiting.length <= 10 ? 'طلبات' : 'طلبًا'}</Text>
-              </View>
-            </View>
-            {late > 0 && <Text style={styles.lateChip}>{late === 1 ? 'واحد ينتظر أكثر من يومين' : `${late} تنتظر أكثر من يومين`}</Text>}
-          </View>
-          <View style={{ flexDirection: row, flexWrap: 'wrap', gap: 8 }}>
-            {[...byType].map(([name, n]) => (
-              <Text key={name} style={styles.typeChip}>
-                {name} · {n}
-              </Text>
-            ))}
-          </View>
-          <Pressable
-            onPress={() => {
-              tap();
-              router.push(`/approvals/${waiting[0].id}`);
-            }}
-            style={({ pressed }) => [styles.cta, { flexDirection: row }, pressed && { opacity: 0.85 }]}
-          >
-            <Ionicons name="create-outline" size={20} color="#1C1A47" />
-            <Text style={styles.ctaText}>{waiting.length > 1 ? 'ابدأ بالأقدم' : 'افتح الطلب'}</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <View style={[styles.calm, { flexDirection: row }]}>
-          <View style={styles.calmIcon}>
-            <Ionicons name="checkmark-done" size={24} color="#1F6B52" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <T style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>لا شيء بانتظار قرارك</T>
-            <T style={{ fontSize: 13, color: colors.textSoft }}>كل الطلبات الموجهة إليك تم البت فيها.</T>
-          </View>
-        </View>
-      )}
+      {/* البطاقات الأربع */}
+      <View style={{ flexDirection: row, flexWrap: 'wrap', gap: 12 }}>
+        <Stat bg="#E11D48" fg="#fff" subFg="#FFE4E6" icon="time-outline" label="متأخر" value={lateCount}
+          sub={firstLate ? `${requestTitle(firstLate)} — ${ago(firstLate.created_at)}` : lateCount ? 'مراسلات فات موعد ردها' : 'لا شيء متأخر'}
+          onPress={() => router.push(firstLate ? `/approvals/${firstLate.id}` : '/approvals')} />
+        <Stat bg="#F59E0B" fg="#1F1300" subFg="#1F1300" icon="warning-outline" label="تنبيهات" value={anns.length}
+          sub={nextAck ? `إقرار تعميم قبل ${DAYS[new Date(nextAck.ack_due_at!).getDay()]}` : anns.length ? 'تعاميم بانتظار إقرارك' : 'لا تعاميم بانتظارك'}
+          onPress={() => router.push('/announcements')} />
+        <Stat bg="#7C3AED" fg="#fff" subFg="#EDE9FE" icon="star" label="رسائل مهمة" value={important?.count ?? 0}
+          sub={senders.length ? `من ${senders.join(' و')}` : 'علّم رسالة كمهمة'}
+          onPress={() => router.push('/inbox')} />
+        <Stat bg="#059669" fg="#fff" subFg="#D1FAE5" icon="checkmark" label="تم اليوم" value={doneToday.length}
+          sub="موافقات وتوقيعات" onPress={() => router.push('/approvals')} />
+      </View>
 
-      {/* اختصارات */}
-      <View style={{ flexDirection: row, justifyContent: 'space-between' }}>
-        <Shortcut icon="mail-outline" label="رسالة" onPress={() => router.push('/compose')} />
-        <Shortcut icon="document-attach-outline" label="طلب جديد" onPress={() => router.push('/approvals/new')} />
-        <Shortcut
-          icon="megaphone-outline"
-          label={canPublish ? 'تعميم' : 'التعاميم'}
-          onPress={() => router.push(canPublish ? '/announcements/new' : '/announcements')}
-        />
-        <Shortcut icon="search-outline" label="بحث" onPress={() => router.push('/search')} />
+      {/* بانتظار توقيعك */}
+      <View style={styles.navyCard}>
+        <Svg width={150} height={104} viewBox="0 0 128 92" style={{ alignSelf: 'center' }}>
+          <G rotation={8} origin="89, 30">
+            <Rect x={62} y={10} width={54} height={40} rx={8} fill="#8B5CF6" />
+            <Path d="M62 16l27 18 27-18" fill="none" stroke="#EDE9FE" strokeWidth={3} strokeLinejoin="round" />
+          </G>
+          <G rotation={-6} origin="45, 53">
+            <Rect x={14} y={30} width={62} height={46} rx={9} fill="#FFFFFF" />
+            <Path d="M14 37l31 21 31-21" fill="none" stroke={GOLD} strokeWidth={3.5} strokeLinejoin="round" />
+            <Circle cx={72} cy={32} r={9} fill="#F43F5E" />
+            <Path d="M72 28v5M72 36v.5" stroke="#FFFFFF" strokeWidth={2.5} strokeLinecap="round" />
+          </G>
+          <Circle cx={112} cy={70} r={7} fill="#F59E0B" />
+          <Circle cx={8} cy={18} r={4} fill="#2DD4BF" />
+        </Svg>
+        <View style={{ flexDirection: row, alignItems: 'baseline', gap: 8 }}>
+          <Text style={{ fontSize: 44, fontWeight: '700', color: GOLD, lineHeight: 52 }}>{pending === null ? '…' : waiting.length}</Text>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: '#fff' }}>
+            {waiting.length ? 'طلبات بانتظار توقيعك' : 'لا طلبات بانتظار توقيعك'}
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => {
+            tap();
+            router.push(waiting.length ? `/approvals/${waiting[0].id}` : '/approvals/new');
+          }}
+          style={({ pressed }) => [styles.cta, { flexDirection: row }, !waiting.length && { backgroundColor: 'rgba(255,255,255,0.12)' }, pressed && { opacity: 0.85 }]}
+        >
+          <Ionicons name={waiting.length ? 'create-outline' : 'add'} size={20} color={waiting.length ? NAVY : '#fff'} />
+          <Text style={{ fontSize: 16, fontWeight: '700', color: waiting.length ? NAVY : '#fff' }}>
+            {waiting.length > 1 ? 'ابدأ التوقيع بالأقدم' : waiting.length ? 'ابدأ التوقيع' : 'طلب جديد'}
+          </Text>
+        </Pressable>
       </View>
 
       {/* اليوم */}
-      <View style={{ gap: 10 }}>
-        <View style={{ flexDirection: row, justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <T style={styles.section}>اليوم</T>
-          {items.length > 0 && <T style={styles.sectionHint}>{items.length === 8 ? 'آخر 8' : `${items.length}`}</T>}
-        </View>
-        {items.length === 0 && pending !== null ? (
-          <View style={styles.empty}>
-            <Ionicons name="sunny-outline" size={30} color={colors.gold} />
-            <T style={{ fontSize: 15, fontWeight: '600', color: colors.text, textAlign: 'center' }}>كل شيء مقروء</T>
-            <T style={{ fontSize: 13, color: colors.textSoft, textAlign: 'center' }}>لا رسائل جديدة ولا تعاميم تنتظر إقرارك.</T>
+      <View style={[styles.panel, { gap: 12 }]}>
+        <T style={{ fontSize: 19, fontWeight: '700', color: INK }}>اليوم</T>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, flexDirection: row }}>
+          <Chip active={filter === 'all'} onPress={() => setFilter('all')} label="الكل" count={items.length} solid={NAVY} soft="#E0E7FF" ink={NAVY} />
+          {(Object.keys(KINDS) as Kind[]).map((k) => (
+            <Chip key={k} active={filter === k} onPress={() => setFilter(k)} count={count(k)} {...KINDS[k]} />
+          ))}
+        </ScrollView>
+        {pending === null ? null : shown.length === 0 ? (
+          <View style={[styles.empty, { backgroundColor: isDark ? colors.successSoft : '#ECFDF5' }]}>
+            <Ionicons name="checkmark-done" size={30} color="#059669" />
+            <T style={{ fontSize: 15, fontWeight: '700', color: isDark ? colors.successText : '#065F46', textAlign: 'center' }}>
+              {filter === 'all' ? 'لا شيء ينتظرك الآن' : 'لا عناصر هنا'}
+            </T>
           </View>
         ) : (
-          items.map((it) => {
-            const tone = TONES[it.kind];
+          shown.map((it) => {
+            const k = KINDS[it.kind];
             return (
               <Pressable
-                key={`${it.kind}-${it.id}`}
-                onPress={() => open(it)}
-                style={({ pressed }) => [styles.item, { flexDirection: row }, pressed && { backgroundColor: colors.bg }]}
+                key={it.key}
+                onPress={() => {
+                  tap();
+                  it.go();
+                }}
+                style={({ pressed }) => [styles.item, { flexDirection: row, backgroundColor: isDark ? colors.bg : k.wash }, pressed && { opacity: 0.8 }]}
               >
-                <View style={[styles.itemIcon, { backgroundColor: tone.bg }]}>
-                  <Ionicons name={tone.icon} size={20} color={tone.fg} />
+                <View style={{ width: 46, height: 46 }}>
+                  <View style={[styles.itemAvatar, { backgroundColor: avatarColor(it.who) }]}>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{initialsOf(it.who)}</Text>
+                  </View>
+                  <View style={[styles.itemDot, { backgroundColor: k.solid, borderColor: isDark ? colors.bg : '#fff' }]} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                  <T style={[styles.itemTitle, it.kind === 'mail' && { fontWeight: '700' }]} numberOfLines={1}>
-                    {it.title}
-                  </T>
-                  <T style={styles.itemSub} numberOfLines={1}>
-                    {it.sub}
-                  </T>
+                  <T style={{ fontSize: 15, fontWeight: '700', color: INK }} numberOfLines={1}>{it.title}</T>
+                  <T style={{ fontSize: 12.5, color: MUTED }} numberOfLines={1}>{it.sub}</T>
+                  <T style={{ fontSize: 11.5, color: MUTED }}>{ago(it.at)}</T>
                 </View>
-                {it.kind === 'announcement' && it.ack ? (
-                  <Pressable onPress={() => void acknowledge(it.id)} hitSlop={8} style={styles.ackBtn}>
-                    <Text style={styles.ackText}>أقرّ</Text>
+                {it.ackId ? (
+                  <Pressable onPress={() => void acknowledge(it.ackId!)} hitSlop={8} style={[styles.tag, { backgroundColor: k.solid }]}>
+                    <Text style={styles.tagText}>أقرّ</Text>
                   </Pressable>
                 ) : (
-                  <View style={{ alignItems: 'flex-end', gap: 5 }}>
-                    <Text style={styles.time}>{shortDate(it.at)}</Text>
-                    {it.kind === 'request' ? (
-                      <Text style={[styles.pill, it.late && { backgroundColor: colors.dangerSoft, color: '#9A3412' }]}>
-                        {it.late ? 'متأخر' : 'يحتاج قرارك'}
-                      </Text>
-                    ) : it.kind === 'mail' ? (
-                      <View style={styles.unreadDot} />
-                    ) : (
-                      <Ionicons name={forwardIcon} size={16} color={colors.textMuted} />
-                    )}
+                  <View style={[styles.tag, { backgroundColor: k.solid }]}>
+                    <Text style={styles.tagText}>{it.tag}</Text>
                   </View>
                 )}
+              </Pressable>
+            );
+          })
+        )}
+      </View>
+
+      {/* مهلة الرد */}
+      <View style={[styles.panel, { gap: 14 }]}>
+        <T style={{ fontSize: 17, fontWeight: '700', color: INK }}>مهلة الرد</T>
+        {deadlines.length === 0 ? (
+          <T style={{ fontSize: 13, color: MUTED }}>لا مواعيد قريبة.</T>
+        ) : (
+          deadlines.map((x) => {
+            const over = x.left < 0;
+            const soon = !over && x.left <= 3;
+            const tone = over ? { bar: '#E11D48', track: '#FFE4E6', ink: '#9F1239' }
+              : soon ? { bar: '#F59E0B', track: '#FEF3C7', ink: '#92400E' }
+                : { bar: '#7C3AED', track: '#EDE9FE', ink: '#5B21B6' };
+            const pct = over ? 100 : Math.max(12, Math.round(((7 - Math.min(x.left, 7)) / 7) * 100));
+            const label = over ? `تجاوز +${-x.left} يوم` : x.left === 0 ? 'اليوم' : x.left === 1 ? 'باقي يوم' : `باقي ${x.left} أيام`;
+            return (
+              <Pressable key={x.key} onPress={x.go} style={{ gap: 6 }}>
+                <View style={{ flexDirection: row, justifyContent: 'space-between', gap: 10 }}>
+                  <T style={{ flex: 1, fontSize: 13, fontWeight: '600', color: INK }} numberOfLines={1}>{x.title}</T>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? tone.bar : tone.ink }}>{label}</Text>
+                </View>
+                <View style={{ height: 10, borderRadius: 999, backgroundColor: isDark ? colors.chip : tone.track, overflow: 'hidden', flexDirection: row }}>
+                  <View style={{ width: `${pct}%`, backgroundColor: tone.bar, borderRadius: 999 }} />
+                </View>
               </Pressable>
             );
           })
@@ -290,90 +405,65 @@ export default function HomeScreen() {
   );
 }
 
-function Shortcut({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
+function Stat({ bg, fg, subFg, icon, label, value, sub, onPress }: {
+  bg: string; fg: string; subFg: string; icon: IconName; label: string; value: number; sub: string; onPress: () => void;
+}) {
   return (
     <Pressable
       onPress={() => {
         tap();
         onPress();
       }}
-      style={({ pressed }) => [{ alignItems: 'center', gap: 7, width: 76 }, pressed && { opacity: 0.6 }]}
+      style={({ pressed }) => [styles.stat, { backgroundColor: bg }, pressed && { transform: [{ scale: 0.97 }] }]}
     >
-      <View style={styles.shortcut}>
-        <Ionicons name={icon} size={24} color={colors.navy} />
+      <View style={{ flexDirection: row, justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text style={{ fontSize: 13.5, fontWeight: '600', color: fg }}>{label}</Text>
+        <Ionicons name={icon} size={20} color={fg} />
       </View>
-      <Text style={styles.shortcutLabel}>{label}</Text>
+      <Text style={{ fontSize: 34, fontWeight: '700', color: fg, lineHeight: 42 }}>{value}</Text>
+      <Text style={{ fontSize: 12, color: subFg }} numberOfLines={1}>{sub}</Text>
     </Pressable>
   );
 }
 
-const HOME_BG = colors.bg;
-const LINE = colors.border;
+function Chip({ active, onPress, label, count, solid, soft, ink }: {
+  active: boolean; onPress: () => void; label: string; count: number; solid: string; soft: string; ink: string;
+}) {
+  return (
+    <Pressable
+      onPress={() => {
+        tap();
+        onPress();
+      }}
+      style={[styles.chip, { flexDirection: row, backgroundColor: active ? solid : isDark ? colors.chip : soft }]}
+    >
+      {!active && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: solid }} />}
+      <Text style={{ fontSize: 13.5, fontWeight: active ? '700' : '600', color: active ? '#fff' : isDark ? colors.text : ink }}>{label}</Text>
+      {active && (
+        <View style={{ backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 999, paddingHorizontal: 7 }}>
+          <Text style={{ fontSize: 11.5, color: '#fff', fontWeight: '700' }}>{count}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
 
 const styles = StyleSheet.create({
-  header: { alignItems: 'center', gap: 12 },
-  avatar: { width: 46, height: 46, borderRadius: 15, backgroundColor: colors.navyFill, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  date: { fontSize: 13, color: colors.textSoft },
-  hello: { fontSize: 21, fontWeight: '800', color: colors.text },
-  bell: {
-    width: 46,
-    height: 46,
-    borderRadius: 15,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: LINE,
-    alignItems: 'center',
-    justifyContent: 'center',
+  bell: { width: 46, height: 46, borderRadius: 14, backgroundColor: '#FEF3C7', alignItems: 'center', justifyContent: 'center' },
+  bellBadge: {
+    position: 'absolute', top: -4, left: -4, minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10,
+    backgroundColor: '#E11D48', borderWidth: 2, borderColor: PAGE_BG, alignItems: 'center', justifyContent: 'center',
   },
-  bellDot: { position: 'absolute', top: 10, left: 11, width: 10, height: 10, borderRadius: 5, backgroundColor: '#C2410C', borderWidth: 2, borderColor: colors.card },
-
-  hero: { backgroundColor: colors.navyFill, borderRadius: 26, padding: 20, gap: 16, overflow: 'hidden' },
-  heroRing: { position: 'absolute', left: -40, top: -40, width: 160, height: 160, borderRadius: 80, borderWidth: 20, borderColor: 'rgba(255,255,255,0.05)' },
-  heroLabel: { fontSize: 14, color: '#CFCDE8' },
-  heroCount: { fontSize: 54, fontWeight: '800', color: '#fff', lineHeight: 60 },
-  heroUnit: { fontSize: 17, fontWeight: '600', color: '#fff' },
-  lateChip: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FDBA74',
-    backgroundColor: 'rgba(251,146,60,0.16)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    overflow: 'hidden',
-    maxWidth: 170,
-    textAlign: 'center',
-  },
-  typeChip: { fontSize: 12.5, color: '#fff', backgroundColor: 'rgba(255,255,255,0.09)', paddingHorizontal: 11, paddingVertical: 5, borderRadius: 999, overflow: 'hidden' },
-  cta: { height: 52, borderRadius: 16, backgroundColor: '#D9AE52', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  ctaText: { fontSize: 16, fontWeight: '800', color: '#1C1A47' },
-
-  calm: { backgroundColor: colors.card, borderRadius: 22, padding: 16, gap: 14, alignItems: 'center', borderWidth: 1, borderColor: LINE },
-  calmIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: colors.successSoft, alignItems: 'center', justifyContent: 'center' },
-
-  shortcut: {
-    width: 58,
-    height: 58,
-    borderRadius: 19,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: LINE,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  shortcutLabel: { fontSize: 12.5, fontWeight: '600', color: colors.text },
-
-  section: { fontSize: 19, fontWeight: '800', color: colors.text },
-  sectionHint: { fontSize: 12.5, color: colors.textSoft },
-  item: { backgroundColor: colors.card, borderRadius: 18, paddingVertical: 13, paddingHorizontal: 14, gap: 12, alignItems: 'center' },
-  itemIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  itemTitle: { fontSize: 15, fontWeight: '600', color: colors.text },
-  itemSub: { fontSize: 12.5, color: colors.textSoft },
-  time: { fontSize: 12, color: colors.textSoft },
-  pill: { fontSize: 11, fontWeight: '700', color: colors.goldText, backgroundColor: colors.goldSoft, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: 'hidden' },
-  unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.navyFill },
-  ackBtn: { borderWidth: 1, borderColor: '#B9DCCD', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 7 },
-  ackText: { fontSize: 13, fontWeight: '700', color: colors.successText },
-  empty: { backgroundColor: colors.card, borderRadius: 18, padding: 22, alignItems: 'center', gap: 6 },
+  avatar: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: SURFACE },
+  stat: { flexBasis: '47%', flexGrow: 1, borderRadius: 22, padding: 16, gap: 6 },
+  navyCard: { backgroundColor: NAVY, borderRadius: 24, padding: 18, gap: 14, overflow: 'hidden' },
+  cta: { height: 50, borderRadius: 16, backgroundColor: GOLD, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  panel: { backgroundColor: SURFACE, borderRadius: 24, padding: 16 },
+  chip: { height: 38, paddingHorizontal: 14, borderRadius: 999, alignItems: 'center', gap: 6 },
+  empty: { borderRadius: 18, padding: 22, alignItems: 'center', gap: 6 },
+  item: { borderRadius: 18, padding: 12, gap: 12, alignItems: 'center' },
+  itemAvatar: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
+  itemDot: { position: 'absolute', bottom: -3, left: -3, width: 20, height: 20, borderRadius: 10, borderWidth: 2.5 },
+  tag: { borderRadius: 999, paddingHorizontal: 11, paddingVertical: 5 },
+  tagText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });
