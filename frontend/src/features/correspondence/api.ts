@@ -129,6 +129,8 @@ export interface ReplyBody {
   subject: string;
   body: string;
   attachment_ids: string[];
+  to_user_ids?: string[];
+  cc_user_ids?: string[];
 }
 
 export interface ListParams {

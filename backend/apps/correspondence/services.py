@@ -386,9 +386,12 @@ def update_draft(*, requester, correspondence, to_ids, cc_ids, priority, classif
 
 
 def prepare_reply(*, requester, parent, priority, due_date, membership_id, client_ref,
-                  subject, body, attachment_ids) -> PrepareResult:
-    """A reply stays in the parent's thread: its audience is the thread's
-    live members (reply-all). To answer a subset, start a new correspondence."""
+                  subject, body, attachment_ids, to_ids=None, cc_ids=None) -> PrepareResult:
+    """A reply stays in the parent's thread. Without ``to_ids`` its audience
+    is the parent's live recipients (reply-all); with it, the sender's edited
+    list. Someone added here joins the thread but reads only the items they
+    are a participant of (this reply onwards) — never the earlier history;
+    someone left out simply has no row on this reply."""
     existing = _existing_by_client_ref(requester, client_ref)
     if existing is not None:
         if existing.reply_to_id != parent.id:
@@ -405,23 +408,35 @@ def prepare_reply(*, requester, parent, priority, due_date, membership_id, clien
     _resolve_attachments(requester, attachment_ids)
     content = build_content(subject=subject, body=body, attachment_ids=attachment_ids)
 
-    audience = [
-        p
-        for p in visible_participants(parent, requester)
-        if p.kind != "bcc" and p.user_id != requester.id and p.user.is_active
-    ]
-    if not audience:
-        raise ValidationError({"detail": "No active recipient left in this thread."})
-    users = [p.user for p in audience]
-    if parent.sender_id != requester.id:
-        to_users = [u for u in users if u.id == parent.sender_id]
-    else:  # following up on my own correspondence: same "to" as before
-        to_users = [p.user for p in audience if p.kind == "to"]
-    to_users = to_users or users[:1]
-    recipients = {"to": to_users, "cc": [u for u in users if u not in to_users]}
+    if to_ids is not None:
+        recipients = _load_recipients(requester, to_ids, cc_ids or [], [], require_to=True)
+    else:
+        audience = [
+            p
+            for p in visible_participants(parent, requester)
+            if p.kind != "bcc" and p.user_id != requester.id and p.user.is_active
+        ]
+        if not audience:
+            raise ValidationError({"detail": "No active recipient left in this thread."})
+        users = [p.user for p in audience]
+        if parent.sender_id != requester.id:
+            to_users = [u for u in users if u.id == parent.sender_id]
+        else:  # following up on my own correspondence: same "to" as before
+            to_users = [p.user for p in audience if p.kind == "to"]
+        to_users = to_users or users[:1]
+        recipients = {"to": to_users, "cc": [u for u in users if u not in to_users]}
 
     root = parent.thread_root or parent
     with transaction.atomic():
+        for user in recipients["to"] + recipients["cc"]:
+            member, created = ConversationMember.objects.get_or_create(
+                conversation=parent.thread, user=user,
+                defaults={"member_role": "member", "added_by": requester},
+            )
+            if not created and member.removed_at is not None:
+                member.removed_at = None
+                member.added_by = requester
+                member.save(update_fields=["removed_at", "added_by"])
         correspondence = Correspondence(
             sender=requester,
             sender_membership=membership,

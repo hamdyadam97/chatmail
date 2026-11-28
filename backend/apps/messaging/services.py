@@ -301,8 +301,11 @@ def store_message(
             client_msg_id=client_msg_id,
         )
 
+    # Gated threads carry no WS stream (see _forbid_gated): their content is
+    # never broadcast to every thread member.
     event = _message_event(message, content)
-    _broadcast_events([dict(event)])
+    if conversation.type not in CONTENT_GATED_TYPES:
+        _broadcast_events([dict(event)])
     if conversation.type in ("dm", "group"):
         _push_chat_message(conversation, requester)
     log(

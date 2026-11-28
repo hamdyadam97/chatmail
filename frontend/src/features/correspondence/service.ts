@@ -65,6 +65,9 @@ export interface ReplyInput {
   priority: Priority;
   dueDate: string | null;
   files: File[];
+  /** المستلمون بعد تعديل المستخدم (يحددهم الخادم إن غابت). */
+  to?: string[];
+  cc?: string[];
 }
 
 export async function replyToCorrespondence(parent: CorrespondenceDetail, input: ReplyInput): Promise<CorrespondenceDetail> {
@@ -76,5 +79,6 @@ export async function replyToCorrespondence(parent: CorrespondenceDetail, input:
     subject: input.subject,
     body: input.body,
     attachment_ids: uploaded.map((a) => a.id),
+    ...(input.to ? { to_user_ids: input.to, cc_user_ids: input.cc ?? [] } : {}),
   });
 }

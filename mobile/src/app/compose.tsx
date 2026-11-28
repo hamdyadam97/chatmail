@@ -45,11 +45,42 @@ export default function ComposeScreen() {
   const uploading = files.some((f) => !f.meta);
 
   useEffect(() => {
-    if (isReply) return;
     api<DirectoryUser[] | { results: DirectoryUser[] }>('/users/')
       .then((d) => setUsers(Array.isArray(d) ? d : d.results ?? []))
       .catch(() => undefined);
-  }, [isReply]);
+  }, []);
+
+  // الرد: المستلمون كما يختارهم الخادم (المرسل في «إلى» والباقون نسخة، أو نفس
+  // «إلى»/«نسخة» لمتابعة رسالتي)، ثم يضيف المستخدم أو يحذف.
+  useEffect(() => {
+    if (!replyTo) return;
+    api<MailDetail>(`/correspondences/${replyTo}/`)
+      .then((d) => {
+        const me = String(user?.id ?? '');
+        const ref = (p: { id: string; full_name: string; username: string }) => ({ id: p.id, full_name: p.full_name, username: p.username });
+        const people = d.participants.filter((p) => (p.kind === 'to' || p.kind === 'cc') && String(p.user.id) !== me);
+        let toList, ccList;
+        if (String(d.sender.id) !== me) {
+          toList = [ref(d.sender)];
+          ccList = people.filter((p) => String(p.user.id) !== String(d.sender.id)).map((p) => ref(p.user));
+        } else {
+          toList = people.filter((p) => p.kind === 'to').map((p) => ref(p.user));
+          ccList = people.filter((p) => p.kind === 'cc').map((p) => ref(p.user));
+        }
+        setTo(toList);
+        setCc(ccList);
+        setShowCc(ccList.length > 0);
+      })
+      .catch(() => undefined);
+  }, [replyTo, user]);
+
+  // من أُرشف حسابه لا يبقى مستلمًا (الخادم يرفض المعطّل).
+  useEffect(() => {
+    if (!isReply || !users.length) return;
+    const active = new Set(users.map((u) => String(u.id)));
+    setTo((v) => v.filter((u) => active.has(String(u.id))));
+    setCc((v) => v.filter((u) => active.has(String(u.id))));
+  }, [isReply, users]);
 
   // فتح مسودة محفوظة: المستلمون والموضوع والنص ومرفقاتها.
   useEffect(() => {
@@ -124,7 +155,7 @@ export default function ComposeScreen() {
     setQuery('');
   };
 
-  const canSend = !sending && !uploading && body.trim().length > 0 && (isReply || (to.length > 0 && subject.trim().length > 0));
+  const canSend = !sending && !uploading && body.trim().length > 0 && to.length > 0 && (isReply || subject.trim().length > 0);
 
   const send = async () => {
     setSending(true);
@@ -132,7 +163,16 @@ export default function ComposeScreen() {
       if (isReply) {
         await api(`/correspondences/${replyTo}/reply/`, {
           method: 'POST',
-          body: { client_ref: clientRef(), priority: 'normal', due_date: null, subject: subject.trim(), body, attachment_ids: attachmentIds },
+          body: {
+            client_ref: clientRef(),
+            priority: 'normal',
+            due_date: null,
+            subject: subject.trim(),
+            body,
+            attachment_ids: attachmentIds,
+            to_user_ids: to.map((u) => String(u.id)),
+            cc_user_ids: cc.map((u) => String(u.id)),
+          },
         });
       } else if (draftId) {
         await api(`/correspondences/${draftId}/`, { method: 'PATCH', body: draftBody() });
@@ -150,7 +190,7 @@ export default function ComposeScreen() {
   };
 
   const cancel = () => {
-    if (!body.trim() && !to.length && !files.length) return router.back();
+    if (!body.trim() && (isReply || !to.length) && !files.length) return router.back();
     if (isReply) {
       return Alert.alert('تجاهل الرد؟', 'لن يُحفظ.', [
         { text: 'متابعة الكتابة', style: 'cancel' },
@@ -177,7 +217,7 @@ export default function ComposeScreen() {
       </View>
 
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
-        {!isReply && (
+        {(
           <>
             <Recipients
               label="إلى"
@@ -224,6 +264,9 @@ export default function ComposeScreen() {
                   </Pressable>
                 ))}
               </View>
+            )}
+            {isReply && (
+              <Text style={styles.hint}>من تضيفه يرى هذا الرد وما بعده فقط، لا الرسائل السابقة.</Text>
             )}
           </>
         )}
@@ -332,6 +375,7 @@ const styles = StyleSheet.create({
   },
   label: { fontSize: font.body, color: colors.textMuted },
   input: { flex: 1, fontSize: font.body, color: colors.text, paddingVertical: 6 },
+  hint: { fontSize: font.tiny, color: colors.textMuted, paddingHorizontal: 16, paddingVertical: 6 },
   ccToggle: { color: colors.navy, fontSize: font.small, fontWeight: '600' },
   pill: { alignItems: 'center', gap: 4, backgroundColor: colors.navySoft, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
   pillText: { color: colors.navy, fontSize: font.small, fontWeight: '600' },

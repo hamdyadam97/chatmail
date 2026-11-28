@@ -66,6 +66,18 @@ class ConversationListCreateView(APIView):
         )
 
 
+def _forbid_gated(conversation) -> None:
+    """A correspondence/announcement thread's messages are read only through
+    its own API, which filters per item by participation — thread membership
+    alone (e.g. someone added on a later reply) must not expose the history."""
+    from rest_framework.exceptions import PermissionDenied
+
+    from apps.messaging.services import CONTENT_GATED_TYPES
+
+    if conversation.type in CONTENT_GATED_TYPES:
+        raise PermissionDenied("Read this thread through its correspondence/announcement.")
+
+
 class _ConversationMixin:
     permission_classes = [IsAuthenticated]
 
@@ -77,6 +89,7 @@ class MessageListCreateView(_ConversationMixin, APIView):
     def get(self, request, conversation_id):
         conversation = self._conversation(conversation_id)
         require_active_member(conversation, request.user)
+        _forbid_gated(conversation)
 
         after_seq = request.query_params.get("after_seq")
         limit = request.query_params.get("limit")
@@ -160,6 +173,7 @@ class WsTicketView(_ConversationMixin, APIView):
     def get(self, request, conversation_id):
         conversation = self._conversation(conversation_id)
         require_active_member(conversation, request.user)
+        _forbid_gated(conversation)
         return Response({"ticket": issue_ws_ticket(request.user, conversation)})
 
 

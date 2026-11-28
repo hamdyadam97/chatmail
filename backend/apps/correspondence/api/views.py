@@ -255,6 +255,8 @@ class ReplyView(APIView):
             subject=data["subject"],
             body=data["body"],
             attachment_ids=data["attachment_ids"],
+            to_ids=data["to_user_ids"],
+            cc_ids=data["cc_user_ids"],
         )
         sent = services.send_correspondence(requester=request.user, correspondence=prepared.correspondence)
         return Response(_detail_payload(request, sent), status=status.HTTP_201_CREATED)

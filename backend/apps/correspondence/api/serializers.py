@@ -121,6 +121,11 @@ class DraftUpdateSerializer(_ContentFields):
 
 
 class ReplySerializer(_ContentFields):
+    # Omitted (null) = reply-all as before; given = the sender's edited list.
+    to_user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, allow_null=True,
+                                        default=None)
+    cc_user_ids = serializers.ListField(child=serializers.UUIDField(), required=False, allow_null=True,
+                                        default=None)
     priority = serializers.ChoiceField(choices=[c for c, _ in Correspondence.PRIORITIES], default="normal")
     due_date = serializers.DateField(required=False, allow_null=True, default=None)
     sender_membership_id = serializers.UUIDField(required=False, allow_null=True, default=None)

@@ -579,7 +579,10 @@ async function main() {
     check('mohamed: المحتوى باقٍ بعد إعادة التحميل', (await mohamed.page.locator(`text=${body.slice(0, 20)}`).count()) > 0);
 
     section('4) الرد عبر الواجهة (داخل المحادثة نفسها)');
-    await mohamed.page.click('button:has-text("رد على الجميع")');
+    await mohamed.page.getByRole('button', { name: 'رد', exact: true }).first().click();
+    const replyPeople = mohamed.page.locator('[data-testid="reply-recipients"] button[aria-label="إزالة"]');
+    await replyPeople.first().waitFor({ timeout: 10000 }).catch(() => undefined);
+    check('الرد: المستلمون معروضون ويمكن تعديلهم', (await replyPeople.count()) > 0);
     await mohamed.page.fill('textarea[aria-label="نص الرد"]', 'تم الاستلام.');
     await mohamed.page.getByRole('button', { name: 'إرسال الرد', exact: true }).click();
     const cards = mohamed.page.locator('[aria-label="رسائل المحادثة"] article');

@@ -163,6 +163,34 @@ def test_reply_stays_in_thread_and_addresses_original_sender(api_client, office)
     assert bodies == ["نص المراسلة", "تم"]
 
 
+def test_reply_with_edited_recipients_adds_and_drops_people(api_client, office):
+    """Edited To/Cc on a reply: the dropped person gets nothing of it, the
+    added one reads this reply only — never the thread's earlier history,
+    neither through the correspondence API nor the chat API."""
+    root = prepare_and_send(api_client, office["h_s"], [office["r1"]], [office["r2"]],
+                            subject="طلب", body="سر قديم")
+    r = reply(api_client, office["h_r1"], root["id"], body="رد جديد",
+              to_user_ids=[str(office["s"].id)], cc_user_ids=[str(office["o"].id)])
+    assert r.status_code == 201, r.content
+    rep = r.json()
+    kinds = {(p["user"]["id"], p["kind"]) for p in rep["participants"]}
+    assert kinds == {(str(office["s"].id), "to"), (str(office["o"].id), "cc")}
+    # r2 was left out: no access to the reply, its thread view stays as before
+    assert _get(api_client, office["h_r2"], rep["id"]).status_code == 403
+    assert [i["body"] for i in _get(api_client, office["h_r2"], root["id"]).json()["thread_items"]] == ["سر قديم"]
+    # o was added: reads the reply only
+    seen = _get(api_client, office["h_o"], rep["id"]).json()
+    assert [i["body"] for i in seen["thread_items"]] == ["رد جديد"]
+    assert _get(api_client, office["h_o"], root["id"]).status_code == 403
+    assert api_client.get(f"{CONV_URL}{root['thread_id']}/messages/", **office["h_o"]).status_code == 403
+    # o can answer in the thread in turn (default reply-all = this reply's people)
+    again = reply(api_client, office["h_o"], rep["id"], body="شكرًا")
+    assert again.status_code == 201, again.content
+    # validation as for a new correspondence
+    assert reply(api_client, office["h_r1"], root["id"], to_user_ids=[]).status_code == 400
+    assert reply(api_client, office["h_r1"], root["id"], to_user_ids=[str(office["r1"].id)]).status_code == 400
+
+
 def test_outsider_cannot_reply_and_closed_refuses(api_client, office):
     root = prepare_and_send(api_client, office["h_s"], [office["r1"]])
     assert reply(api_client, office["h_o"], root["id"]).status_code == 403

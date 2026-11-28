@@ -33,7 +33,16 @@ import {
   type Participant,
   type Priority,
 } from './api';
-import { ArchiveNotice, ClassificationBadge, PrivacyNote, PriorityBadge, formatDate, formatDay } from './components';
+import {
+  ArchiveNotice,
+  ClassificationBadge,
+  PrivacyNote,
+  PriorityBadge,
+  RecipientPicker,
+  formatDate,
+  formatDay,
+  useDirectory,
+} from './components';
 import { downloadAttachment, formatBytes } from './content';
 import { replyToCorrespondence } from './service';
 
@@ -147,11 +156,40 @@ function ReplyBox({
   onSent: (id: string) => void;
   onCancel: () => void;
 }) {
+  const { user } = useAuth();
+  const { data: directory } = useDirectory();
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState<Priority>('normal');
   const [files, setFiles] = useState<File[]>([]);
   const subjectBase = detail.content?.subject || `المراسلة ${detail.reference_number}`;
   const [error, setError] = useState<string | null>(null);
+
+  // نفس اختيار الخادم الافتراضي (رد على الجميع): المرسل في «إلى» والباقون نسخة؛
+  // ومتابعة مراسلتي = نفس «إلى» و«نسخة». ثم يعدّلها المستخدم: يضيف أو يحذف.
+  const initial = useMemo(() => {
+    const me = String(user?.id ?? '');
+    const people = detail.participants.filter((p) => (p.kind === 'to' || p.kind === 'cc') && p.user.id !== me);
+    if (detail.sender.id !== me) {
+      return {
+        to: [detail.sender.id],
+        cc: people.filter((p) => p.user.id !== detail.sender.id).map((p) => p.user.id),
+      };
+    }
+    return {
+      to: people.filter((p) => p.kind === 'to').map((p) => p.user.id),
+      cc: people.filter((p) => p.kind === 'cc').map((p) => p.user.id),
+    };
+  }, [detail, user]);
+  const [to, setTo] = useState<string[]>(initial.to);
+  const [cc, setCc] = useState<string[]>(initial.cc);
+  // من أُرشف حسابه لا يُقترح (الخادم يرفض المعطّل).
+  useEffect(() => {
+    if (!directory) return;
+    const active = new Set(directory.map((u) => String(u.id)));
+    setTo((v) => v.filter((id) => active.has(id)));
+    setCc((v) => v.filter((id) => active.has(id)));
+  }, [directory]);
+
   const mutation = useMutation({
     mutationFn: () =>
       replyToCorrespondence(detail, {
@@ -160,24 +198,27 @@ function ReplyBox({
         priority,
         dueDate: null,
         files,
+        to,
+        cc,
       }),
     onSuccess: (sent) => onSent(sent.id),
     onError: (err) => setError(toUserMessage(err, 'تعذر إرسال الرد')),
   });
-  const recipients = detail.participants.filter((p) => p.kind !== 'bcc').length;
   return (
     <Card id="reply-box" className="space-y-3 p-5">
       <div className="flex items-center justify-between">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
           <Reply className="h-4 w-4" />
-          رد على الجميع
+          رد
         </h3>
-        <span className="flex items-center gap-3 text-xs text-gray-500">
-          يصل الرد إلى أطراف الخيط ({recipients}) فقط
-          <button type="button" onClick={onCancel} className="rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="إلغاء الرد">
-            <X className="h-4 w-4" />
-          </button>
-        </span>
+        <button type="button" onClick={onCancel} className="rounded p-1 text-gray-500 hover:bg-gray-100" aria-label="إلغاء الرد">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="space-y-2" data-testid="reply-recipients">
+        <RecipientPicker id="reply-to" label="إلى" value={to} onChange={setTo} exclude={cc} inline />
+        <RecipientPicker id="reply-cc" label="نسخة" value={cc} onChange={setCc} exclude={to} inline />
+        <p className="text-xs text-gray-500">من تضيفه هنا يرى هذا الرد وما بعده فقط، لا الرسائل السابقة.</p>
       </div>
       <textarea
         value={body}
@@ -211,7 +252,7 @@ function ReplyBox({
             <input type="file" multiple className="hidden" onChange={(e) => setFiles(e.target.files ? [...e.target.files] : [])} />
           </label>
         </div>
-        <Button onClick={() => mutation.mutate()} loading={mutation.isPending} disabled={!body.trim()}>
+        <Button onClick={() => mutation.mutate()} loading={mutation.isPending} disabled={!body.trim() || to.length === 0}>
           إرسال الرد
         </Button>
       </div>
@@ -460,7 +501,7 @@ export function Details({ id, embedded = false }: { id: string; embedded?: boole
             }}
           >
             <Reply className="h-4 w-4 text-primary-600" />
-            رد على الجميع
+            رد
           </button>
         )}
         {canForward && (
