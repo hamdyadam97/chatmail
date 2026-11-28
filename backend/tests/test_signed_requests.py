@@ -119,6 +119,23 @@ def test_file_sign_and_download(api_client, org):
     assert rid not in [x["id"] for x in api_client.get(f"{API}?box=received", **h["sr_out"]).json()]
 
 
+@pytest.mark.parametrize("who, approver", [("sr_bm", "ex"), ("sr_exec", "bm")])
+def test_approver_files_their_own_request_type_without_their_step(api_client, org, who, approver):
+    """An approver of the type may file it: they leave their own request, and
+    the step that was theirs alone is skipped (user decision 2026-11-28)."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    r = api_client.post(f"{API}file-request/", {
+        "workflow_id": org["wf"]["id"], "title": "تأمين سيارة",
+        "file": SimpleUploadedFile("x.jpg", _scan(), content_type="image/jpeg")},
+        format="multipart", **org["h"][who])
+    assert r.status_code == 201, r.content
+    req = ApprovalRequest.objects.get(id=r.json()["id"])
+    steps = list(req.steps.order_by("step_order"))
+    assert len(steps) == 1 and steps[0].status == "active"
+    assert [str(a.user_id) for a in steps[0].approvers.all()] == [str(org[approver].id)]
+
+
 def _pages(n: int) -> bytes:
     from PIL import Image
 

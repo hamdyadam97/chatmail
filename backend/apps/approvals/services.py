@@ -137,7 +137,12 @@ def validate_step_specs(steps) -> list[dict]:
     return out
 
 
-def _steps_from_workflow(workflow, correspondence) -> list[dict]:
+def _steps_from_workflow(workflow, correspondence, requester=None) -> list[dict]:
+    """The type's steps for this correspondence. The requester never approves
+    their own request (user decision 2026-11-28): they leave every step, and a
+    step that was theirs alone (e.g. the branch manager filing a request whose
+    first step is the branch manager) is skipped — the next level decides."""
+    me = str(requester.id) if requester is not None else None
     steps = []
     for tpl in workflow.steps.order_by("step_order"):
         ids: list[str] = []
@@ -145,7 +150,12 @@ def _steps_from_workflow(workflow, correspondence) -> list[dict]:
             ids.extend(i for i in _resolve_selector(selector, correspondence) if i not in ids)
         if not ids:
             raise ValidationError({"workflow": f"تعذر تحديد معتمدي الخطوة {tpl.step_order} لهذه المراسلة."})
+        ids = [i for i in ids if i != me]
+        if not ids:
+            continue
         steps.append({"type": tpl.step_type, "approver_ids": ids[:MAX_APPROVERS_PER_STEP]})
+    if not steps:
+        raise ValidationError({"workflow_id": "أنت المعتمد الوحيد لهذا النوع — لا يعتمد أحد طلبه بنفسه."})
     return validate_step_specs(steps)
 
 
@@ -161,7 +171,7 @@ def create_request(*, requester, correspondence, steps=None, workflow_id=None) -
         workflow = ApprovalWorkflow.objects.filter(id=workflow_id, is_active=True).first()
         if workflow is None:
             raise ValidationError({"workflow_id": "مسار غير معروف أو غير مفعّل."})
-        specs = _steps_from_workflow(workflow, correspondence)
+        specs = _steps_from_workflow(workflow, correspondence, requester)
     else:
         specs = validate_step_specs(steps)
 
@@ -782,9 +792,10 @@ def file_request(*, requester, workflow_id, title: str, note: str, data: bytes, 
         ids = [i for sel in tpl.approver_selectors for i in _resolve_for_membership(sel, membership)]
         if not ids:
             raise ValidationError({"workflow_id": f"لا يوجد معتمد للخطوة {tpl.step_order} لفرعك — راجع مدير النظام."})
-        approvers.extend(i for i in ids if i not in approvers)
-    if str(requester.id) in approvers:
-        raise ValidationError({"workflow_id": "أنت من معتمدي هذا الطلب — لا يعتمد أحد طلبه بنفسه."})
+        # the requester leaves their own request (see _steps_from_workflow)
+        approvers.extend(i for i in ids if i not in approvers and i != str(requester.id))
+    if not approvers:
+        raise ValidationError({"workflow_id": "أنت المعتمد الوحيد لهذا النوع — لا يعتمد أحد طلبه بنفسه."})
     deliver_to, deliver_cc = clean_delivery(requester, deliver_to, deliver_cc)
 
     pdf = signing.to_pdf(data)
